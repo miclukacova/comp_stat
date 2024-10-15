@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r source, include=FALSE}
-source("~/Desktop/Uni/5aar/CompStat/Assignments/Stochastic Optimization/SO_source.R")
+source("~/comp_stat/Stochastic_Optimization_ML/SO_source.R")
 ```
 
 # Implement stochastic optimization algorithms for estimating the parameters of this model
@@ -49,18 +49,23 @@ $$
 1 - \frac{1}{1 + e^{\beta \log(x) - \alpha}} \\ \frac{1}{1 + e^{\beta \log(x) - \alpha}} \end{pmatrix}
 
 $$
-The $\rho_{n+1}$ is implemented in the function grad. We have implemented two different sampling functions. One of them samples from $\log(x)$'s from a normal distribution and calculates the $y$'s by $y_i = f(x_i|\alpha, \b)
+The $\rho_{n+1}$ is implemented in the function grad. We have created a parameters class. The parameter class has a simulate method, which per default samples $\log(x)$'s from a normal distribution and calculates the $y$'s by $y_i = f(x_i|\alpha, \b)
 
 ```{r}
 N <- 1000
-sample0 <- my_sample1(N, par = c(2,1,2,1), omega = 1)
-x <- sample0$x
-y <- sample0$y
+param <- parameters(2,1,2,1)
+data <- sim(param, N)
+x <- data$x
+y <- data$y
+head(data)
+```
+
+We have furthermore implemented a SGD class
+```{r}
+sgd0 <- SGD(c(1,1,1,1), grad = grad, n = N, gamma = 0.01, maxiter = 100)
 
 
-sgd(c(1,1,1,1), grad, N, 0.01, maxiter = 100) 
-
-
+summary(sgd0)
 ```
 
 # Compare the resulting optimization algorithm(s) with non-stochastic algorithms e.g. gradient descent or the Newton algorithm

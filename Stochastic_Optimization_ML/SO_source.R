@@ -64,14 +64,14 @@ grad <- function(par, i) {
 
 ## Sampler  ##############################################
 
-my_sample1 <- function(N, par, omega = 3) {
+gauss_sample <- function(N, par, omega = 3) {
   log_x <- rnorm(N, 0, omega^2)
   x <- exp(log_x)
   y <- f(par, x) + rnorm(N, 0, 1)
   return(data.frame(x = x, y = y))
 }
 
-my_sample2 <- function(N, par) {
+grid_sample <- function(N, par) {
   grid <- seq(exp(1), exp(10), length = 10^4)
   sample(grid, N, replace = TRUE)
 }
@@ -126,4 +126,70 @@ H <- function(par) {
 } 
 
 grad_gd <- function(par) 1 / length(x) * sum(grad(par, 1:length(x)))    
+
+
+##### Tracer #####################################
+
+SGD_tracer <- tracer(c("par", "k"), Delta = 0) 
+
+squared_error_mult <- function(alpha, beta, gamma, rho){
+  param <- cbind(alpha, beta, gamma, rho)
+  apply(param, 1, function(par) H(par))
+}
+
+SGD_trace <- function(trace) {
+  transform(
+    trace,
+    loss = squared_error_mult(par.1, par.2, par.3, par.4) #,
+    #H_distance = abs(H(test, parameters[1], parameters[2], parameters[3], parameters[4]) - 
+    #                   squared_error(test, par.1, par.2, par.3, par.4))
+    )
+}
+
+###### S3 Classes ###########################################
+
+# Parameters class
+
+parameters <- function(alpha, beta, gamma, rho) {
+  structure(
+    list(
+      alpha = alpha,
+      beta = beta,
+      gamma = gamma, 
+      rho = rho,
+      par = c(alpha, beta, gamma, rho)),
+    class = "My_params"
+  )
+}
+
+sim <- function(x) {
+  UseMethod("sim")
+}
+
+sim <- function(object, N, omega = 1, grid = FALSE) {
+  if(grid){
+    grid_sample(object$par, N)
+  }
+  gauss_sample(N, object$par, omega)
+}
+
+# SGD class
+
+SGD <- function(par0, grad, n, gamma, maxiter = 100, 
+                sampler = sample, cb = SGD_tracer$tracer) {
+  structure(
+    list(
+      est = sgd(par0, grad, n, gamma, maxiter, sampler, cb),
+      trace = summary(SGD_tracer),
+      start_par = par0),
+    class = "My_SGD"
+  )
+}
+
+summary.My_SGD <- function(object) {
+  SGD_trace(object$trace)
+}
+
+plot.My_SGD <- function(x) {}
+
 
