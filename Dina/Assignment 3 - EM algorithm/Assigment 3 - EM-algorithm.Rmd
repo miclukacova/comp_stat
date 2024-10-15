@@ -1,0 +1,197 @@
+---
+title: "EM-algortihm"
+author: "Dina Jensen (vbz248)"
+date: "2024-10-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We first derive the marginal distribution and see that it is exactly equal to the distribution function of a t-distribution with parameters $\mu, \sigma^2 $ and $\nu$.
+
+We then compute the max of the complete loglik analytically. 
+
+We now implement this as a function:
+```{r}
+theo_par <- function(x, w, param){
+  mu_opt <- sum(w * x) / sum(w)
+  sigma_opt <- 1/(length(x) * param$ny) * sum(w * (x - mu_opt)^2)
+  return(data.frame(mu = mu_opt, sigma = sigma_opt ))
+}
+```
+
+We would like to be able to sample from this fucker. So lets implement a sampler:
+```{r}
+samp_our_distribution <- function(n, param){
+  w <- rchisq(n, df = param$ny)
+  x <- rnorm(n, mean = param$mu, sd = sqrt((param$ny * param$sigma) / w))
+  y <- cbind(x, w)
+  return(y)
+}
+
+parameters <- data.frame(mu = 1, sigma = 2, ny = 3)
+
+samp <- data.frame(samp_our_distribution(100, parameters))
+
+```
+So this is looking decent. Now it is time to implement the EM-algorithm.
+
+We first derive analytical expressions for both the E-step and the M-step. We note that we actually do not even need to calculate the Q-function to maximize the parameters, as we have found analytical expressions for them:
+
+```{r}
+EM_alg <- function(x, param, max_iter = 20, epsilon = 1e-10, cb = NULL){
+  #Defining initial parameters:
+  mu_mark <- param$mu
+  sigma_mark <- param$sigma
+  ny <- param$ny
+  
+  #Defining i and k, which only depends on ny:
+  k <- (ny + 1) / 2
+  i <- 0
+  
+  while (i < max_iter) {
+    mu_old <- mu_mark
+    sigma_old <- sigma_mark
+    t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))
+    
+    mu_mark <- sum(t_old * x) / sum(t_old)
+    sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)
+    
+    #Calling the cb
+    if(!is.null(cb)) cb()
+    #Checking convergence
+    if (sum((c(mu_mark, sigma_mark) - c(mu_old, sigma_old))^2) <= epsilon * (sum(c(mu_mark, sigma_mark)^2) + epsilon)) break
+    
+    i <- i + 1
+  }
+  c(mu_mark, sigma_mark)
+}
+```
+
+We now do a simple check to see if the EM-algorithm works:
+
+```{r}
+samp <- data.frame(samp_our_distribution(1000, parameters))
+
+EM_alg(samp$x,parameters, eps = 1e-10, max_iter = 40, cb = NULL)
+theo_par(samp$x, samp$w, parameters)
+```
+
+It seems to work decently for the optimal parameters as starting points, but it does seem to depend on the parameters, for some it always does the maximal number of iterations. Which is not so neat.
+
+I would now like to implement a good cb-function using the tracer functionality from the CSwR package. 
+
+```{r}
+library(CSwR)
+
+EM_tracer <- tracer(c("mu_mark", "sigma_mark", "mu_old", "sigma_old", "ny", "i"))
+EM_alg(samp$x, data.frame(mu = 1, sigma = 2, ny = 3), eps = 1e-10, max_iter = 40, cb = EM_tracer$tracer)
+```
+
+So we can now trace the parameters. Now I really want to trace both the loglikelihood and the convergence rate of the parameters. But which log-likelihood? The one only dependent on x, or the one dependent on x and w? 
+
+So implement loglikelihood:
+```{r}
+log_lik <- function(m, s, ny = parameters$ny, x = samp$x){
+  k <- (ny + 1) / 2
+  return( - length(x) * log(sqrt(s)) - sum(k * log(1 + (x - m)^2 / (ny * s))))
+}
+```
+
+Now we can implement this in the tracer along with the convergence criterion: 
+```{r}
+EM_trace <- summary(EM_tracer)
+
+EM_trace <- transform(
+  EM_trace,
+  par_norm_diff = sqrt((mu_old - mu_mark)^2 + (sigma_old - sigma_mark)^2),
+  loglik = log_lik(mu_mark, sigma_mark)
+)
+EM_trace
+
+```
+
+Just for fun we'll be plotting some heatmaps of the loglikelihood, we can always change the loglikelihood you know
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(tidyr)
+
+# Create a grid of m and s values
+m_values <- seq(-3, 3, length.out = 100)
+s_values <- seq(0.01, 5, length.out = 100)
+
+# Create a dataframe to store the values of m, s, and log_lik
+results <- expand.grid(m = m_values, s = s_values)
+results$log_lik <- apply(results, 1, function(row) log_lik(row['m'], row['s'], x = samp$x))
+EM_param <- EM_alg(samp$x, parameters, eps = 1e-10, max_iter = 40, cb = NULL)
+theo_param <- theo_par(samp$x, samp$w, parameters)
+
+# Plot the heatmap with contours and a point using ggplot2
+ggplot(results, aes(x = m, y = s, fill = log_lik)) +
+  geom_tile() +
+  geom_contour(aes(z = log_lik), color = "darkseagreen4", bins = 50) +
+  scale_fill_gradient2(mid = "darkseagreen1", high = "coral1", low = "seagreen4", midpoint = -3500) +
+  geom_point(aes(x = theo_param$mu, y = theo_param$sigma), colour = "coral1", size = 2.5) +
+  geom_point(aes(x = EM_param[1], y = EM_param[2]), colour = "seagreen", size = 2.5) +
+  labs(x = "mu", y = "sigma", fill = "loglikelihood") +
+  theme_minimal()
+```
+
+
+
+Lets see if we can plot the convergence rate:
+```{r}
+ggplot(EM_trace, aes(x = .time, y = log(par_norm_diff))) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Time", y = "log(Convergence rate)", title = "Convergence rate of mu and sigma") +
+  theme_bw()
+```
+That looks comfortingly linear.
+
+
+Now as a function of the iterations:
+```{r}
+ggplot(EM_trace, aes(x = i, y = log(par_norm_diff))) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Iterations", y = "log(Convergence rate)", title = "Convergence rate of mu and sigma") +
+  scale_x_continuous(breaks = seq(min(EM_trace$i), max(EM_trace$i), by = 1)) +
+  theme_bw() +
+  theme(panel.grid.major.x = element_line(),  # Major gridlines at integer positions
+        panel.grid.minor.x = element_blank())  # Remove minor gridlines
+```
+
+
+
+
+
+Jins notes for EM-algorithm
+
+-marginal likelihood calculations
+
+- W | X = x is a gamma distribution
+
+- plot heatmaps over your loglikelihood
+
+- callbacks in while loops are real nice - save value for each iteration. 
+
+- convergence rate is just an lm taken on the convergence values that you plot on the log-notlog scale.
+
+- If vectorized rcpp is not faster, then turn all of your vector operation into a loop. Or use the armadillo package.
+
+- If you are using gradient descent you can do gradient clipping. 
+
+ - Plot convergence rate of mu and sigma for both gradient descent and the EM-algorithm
+ - Also for convergence of log-likelihood.
+ 
+ 
+ 
+ 
+ 
+ 
+ 

@@ -1,0 +1,588 @@
+---
+title: "Assignment 1"
+author: "Dina Jensen (vbz248)"
+date: "2024-09-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We will start out by implementing a naive kernel density estimator with the Epanechnikov kernel:
+
+```{r}
+kernel <- function(z) (abs(z) <= 1) * 3 / 4 * (1 - z^2) 
+
+kern_dens_epa <- function(x, h, m = 512) {
+  rg <- range(x)
+  xx <- seq(rg[1] - 3 * h, rg[2] + 3 * h, length.out = m)
+  y <- numeric(m)
+  for (i in seq_along(xx)) {
+    for (j in seq_along(x)) {
+        y[i] <- y[i] + kernel((xx[i] - x[j])/h)
+    }
+  }
+  y <- y / (h * length(x))
+  list(x = xx, y = y)
+}
+```
+
+We will quickly check it against the density()-function in R
+
+Reading data:
+
+```{r}
+infrared <- read.table("C:/Users/birgi/OneDrive - University of Copenhagen/1. år/CompStat/Øvelser/infrared.txt", header = TRUE)
+F12 <- log(infrared$F12)
+``` 
+
+
+Creating some normally distributed testing data:
+
+```{r}
+set.seed(123)
+x_test <- rnorm(1e4)
+```
+
+Longterm we should probably also test it on the phi_psi data as we there get the opportunity to look at both a uni- and multimodal distribution
+
+
+
+Comparing visually, we remember, that we need to normalize the bandwidth in order to:
+```{r}
+dens <- density(F12, kernel = "epanechnikov", bw = 1)
+my_dens <- kern_dens_epa(F12, h = sqrt(5))
+
+j_kern <- function(z) (abs(z) <= 1) * (1 - z^2) * 3 / 4 
+
+kern_dens_vec <- function(x, h, n = 512) {
+  rg <- range(x)
+  xx <- seq(rg[1] - 3 * h, rg[2] + 3 * h, length.out = n)
+  y <- numeric(n)
+  # The inner loop from 'kern_dens_loop()' has been vectorized, and 
+  # only the outer loop over the grid points remains. 
+  for (i in seq_along(xx)) {
+      y[i] <- mean(j_kern((xx[i] - x)/h)) /h
+  }
+  list(x = xx, y = y)
+}
+
+jin <- kern_dens_vec(F12, h = sqrt(5))
+
+df <- data.frame(
+  x = c(dens$x, my_dens$x, jin$x),
+  y = c(dens$y, my_dens$y, jin$y),
+  dens = factor(rep(c("R_dens", "my_dens", "jin"), each = length(dens$x)))
+)
+
+
+ggplot() +
+  geom_histogram(data = data.frame(z = F12), aes(x = z, y = ..density..), fill = 'lightblue', color = 'white') +
+  geom_line(data = df, aes(x = x, y = y, color = dens), lwd = 0.6) +
+  xlab("F12")+
+  theme_bw()
+```
+
+
+However we are interested in perhaps constructing a better kernel density estimator. We can for instance start out by vectorizing, so that we do not have a nested for loop:
+
+```{r}
+
+kern_dens_vec <- function(x, h, m = 512) {
+  rg <- range(x)
+  xx <- seq(rg[1] - 3 * h, rg[2] + 3 * h, length.out = m)
+  y <- numeric(m)
+  for (i in seq_along(xx)) {
+        y[i] <- mean(kernel((xx[i] - x)/h))
+  }
+  y <- y / h #Now only dividing by h, as mean divides by the length of x.
+  list(x = xx, y = y)
+}
+```
+
+
+Plotting to check if the density estimators agree:
+
+```{r}
+my_dens <- kern_dens_epa(F12, h = sqrt(5))
+vec_dens <- kern_dens_vec(F12, h = sqrt(5))
+
+
+df <- data.frame(
+  x = c(my_dens$x, vec_dens$x),
+  y = c(my_dens$y, vec_dens$y),
+  dens = factor(rep(c("my_dens", "vectorised dens"), each = length(my_dens$x)))
+)
+
+
+ggplot() +
+  geom_histogram(data = data.frame(z = F12), aes(x = z, y = ..density..), fill = 'lightblue', color = 'white') +
+  geom_line(data = df, aes(x = x, y = y, color = dens), lwd = 0.6) +
+  xlab("F12")+
+  theme_bw()
+```
+
+Testing to see if they agree with the density estimator in R:
+
+```{r}
+library(testthat)
+
+test_that("Our vectorised density implementation corresponds to density()", {
+  expect_equal(kern_dens_vec(F12, h = sqrt(5))$y, density(F12, kernel = "epanechnikov")$y, 
+  tolerance = 1e-3)
+  })
+
+x <- rnorm(1e5)
+test_that("Our vectorised density implementation corresponds to density()", {
+  expect_equal(kern_dens_vec(x, h = sqrt(5))$y, density(x, kernel = "epanechnikov")$y, 
+  tolerance = 1e-3)
+  })
+
+```
+
+They do not, it might be because the gridpoints are not the same. We need to make sure the band width gets normalized AFTER we have chosen the gridpoints, should be fixed later.
+
+Moving on to try to implement the bin kernel:
+
+We start by implementing the kern_bin function, which calculates the number of points in a given bin:
+```{r}
+kern_bin <- function(x, l, u, B) {
+   w <- numeric(B)
+   delta <- (u - l) / (B - 1)
+   for (j in seq_along(x)) {
+     i <- floor((x[j] - l) / delta + 0.5) + 1
+     w[i] <- w[i] + 1
+   }
+   w / sum(w)
+}
+```
+
+
+
+```{r}
+kern_dens_bin <- function(x, h, m = 512, B) {
+  #finding the range of the data, defining our gridpoints and y
+  rg <- range(x)
+  y <- numeric(m)
+  xx <- seq(rg[1] - 3 * h, rg[2] + 3 * h, length.out = m)
+  
+  #Calculating delta and finding the center points.
+  delta <- (rg[2] - rg[1]) / (B - 1)
+  cent_points <- seq((rg[1] + delta/2), (rg[2] + delta/2), len = B) 
+  
+  #Envoking the kern_bin function to find the weights/n_j's
+  nj <- kern_bin(x, rg[1], rg[2], B)
+  
+  for (i in seq_along(xx)) {
+        y[i] <- mean(nj %*% (kernel((xx[i] - cent_points)/h)))/(h)
+  }
+  list(x = xx, y = y)
+}
+```
+
+Testing:
+
+```{r}
+bin_dens <- kern_dens_bin(F12, h = 1/sqrt(5), B = 200)
+vec_dens <- kern_dens_vec(F12, h = 1/sqrt(5))
+
+
+
+df <- data.frame(
+  x = c(bin_dens$x, vec_dens$x),
+  y = c(bin_dens$y, vec_dens$y),
+  dens = factor(rep(c("binned density", "vectorised dens"), each = length(my_dens$x)))
+)
+
+
+ggplot() +
+  geom_histogram(data = data.frame(z = F12), aes(x = z, y = ..density..), fill = 'lightblue', color = 'white') +
+  geom_line(data = df, aes(x = x, y = y, color = dens), lwd = 0.6) +
+  xlab("F12")+
+  theme_bw()
+```
+
+Plotting the difference between the two:
+```{r}
+plot(
+  bin_dens$x,
+  bin_dens$y - vec_dens$y,
+  type = "l",
+  lwd = 2,
+  xlab = "x",
+  ylab = "Difference"
+)
+```
+
+So there is quite a big difference between the two. Possibly has to do with the number of bins. How do we choose the number of bins optimally? Should we do crossvalidation for this too?
+
+## Implementing the AMISE way to choose the bandwidth.
+
+We first write a function to compute the pilot bandwidth hat(r), based on our estimates.
+```{r}
+r_hat <- function(x){
+  r_hat <- 2.34*min(sd(x), IQR(x)/1.34)*length(x)^(-1/5)
+  return(r_hat)
+}
+```
+
+
+
+And we then use these two functions to write a function that calculates the optimal bandwidth using the minimized AMISE. We are using the function outer in base-r to vectorize the computations for the L2-norm of f-tilde:
+
+```{r}
+h_N_am <- function(x){
+  #Defining parameters:
+  r <- r_hat(x)
+  n <- length(x)
+  
+  #Calculating the f-tilde L2 norm
+  f_norm <- 9/4 * 1/(r^6 * n^2) * sum(pmax(0, outer(x, x, pmin) - outer(x, x, pmax) + 2 * r))
+  
+  #Calculating the optimal bandqwidth using the f_norm:
+  h_N <- ( (3/5) / (f_norm * 1/25) )^(1/5) * n^(-1/5)
+  
+  return(h_N)
+}
+```
+
+
+Now we rewrite our bin kernel density estimator, so that it chooses the optimal bandwidth using the AMISE-method. We do this to compare it with R's implementation, to make sure our implementation is correct:
+
+```{r}
+kern_dens_bin_am <- function(x, h, m = 512, B) {
+  #Using AMISE to find optimal bandwidth:
+  h <- h_N_am(x)
+  
+  #finding the range of the data, defining our gridpoints and y
+  rg <- range(x)
+  y <- numeric(m)
+  xx <- seq(rg[1] - 3 * h, rg[2] + 3 * h, length.out = m)
+  
+  #Calculating delta and finding the center points.
+  delta <- (rg[2] - rg[1]) / (B - 1)
+  cent_points <- seq((rg[1] + delta/2), (rg[2] + delta/2), len = B) 
+  
+  #Envoking the kern_bin function to find the weights/n_j's
+  nj <- kern_bin(x, rg[1], rg[2], B)
+  
+  for (i in seq_along(xx)) {
+        y[i] <- sum(nj %*% (kernel((xx[i] - cent_points)/h)))/(h)
+  }
+  list(x = xx, y = y)
+}
+```
+
+
+Comparing it with the density function in R on F12 data:
+```{r}
+my_dens <- kern_dens_bin_am(F12, B = 400)
+R_dens <- density(F12, kernel = "epanechnikov", bw = h_N_am(F12))
+
+df <- data.frame(
+  x = c(R_dens$x, my_dens$x),
+  y = c(R_dens$y, my_dens$y),
+  dens = factor(rep(c("R's density", "My impl."), each = length(my_dens$x)))
+)
+
+
+ggplot() +
+  geom_histogram(data = data.frame(z = F12), aes(x = z, y = ..density..), fill = 'lightblue', color = 'white') +
+  geom_line(data = df, aes(x = x, y = y, color = dens), lwd = 0.6) +
+  xlab("F12")+
+  theme_bw()
+```
+
+Comparing on test_data:
+
+```{r}
+my_dens <- kern_dens_bin_am(x_test, B = 500)
+R_dens <- density(x_test, kernel = "epanechnikov", bw = h_N_am(x_test))
+
+
+
+df <- data.frame(
+  x = c(R_dens$x, my_dens$x),
+  y = c(R_dens$y, my_dens$y),
+  dens = factor(rep(c("R's density", "My impl."), each = length(my_dens$x)))
+)
+
+
+ggplot() +
+  geom_histogram(data = data.frame(z = x_test), aes(x = z, y = ..density..), fill = 'lightblue', color = 'white') +
+  geom_line(data = df, aes(x = x, y = y, color = dens), lwd = 0.6) +
+  xlab("x")+
+  theme_bw()
+```
+Just for fun we'll try with the vectorised estimator as well:
+
+```{r}
+j_kern <- function(z) (abs(z) <= 1) * (1 - z^2) * 3 / 4 
+
+kern_dens_vec_am <- function(x, n = 512) {
+  #Finding the AMISE-optimal bandwidth:
+  h <- h_N_am(x)
+  
+  rg <- range(x)
+  xx <- seq(rg[1] - 3 * h, rg[2] + 3 * h, length.out = n)
+  y <- numeric(n)
+  # The inner loop from 'kern_dens_loop()' has been vectorized, and 
+  # only the outer loop over the grid points remains. 
+  for (i in seq_along(xx)) {
+      y[i] <- mean(j_kern((xx[i] - x)/h)) /h
+  }
+  list(x = xx, y = y)
+}
+
+```
+
+
+Comparing on test_data:
+
+```{r}
+my_dens <- kern_dens_vec_am(x_test)
+R_dens <- density(x_test, kernel = "epanechnikov", bw = h_N_am(x_test))
+
+
+
+df <- data.frame(
+  x = c(R_dens$x, my_dens$x),
+  y = c(R_dens$y, my_dens$y),
+  dens = factor(rep(c("R's density", "My impl."), each = length(my_dens$x)))
+)
+
+
+ggplot() +
+  geom_histogram(data = data.frame(z = x_test), aes(x = z, y = ..density..), fill = 'lightblue', color = 'white') +
+  geom_line(data = df, aes(x = x, y = y, color = dens), lwd = 0.6) +
+  xlab("F12")+
+  theme_bw()
+```
+
+The bin-kernel is sensitive. If the number of bins is too low things are nooot good. How do we adequately correct for this? Do we need to go into the selection of B? And how does that affect the bin-kernel estimator's performance in comparison to the vectorized.
+
+
+Trying out some benchmarking:
+NAh not right now.
+
+
+## Cross-validation:
+We want to implement some crossvalidation as well. We will be using the log-likelihood CV-approach, as it is not based on the AMISE or MISE and as such provides us with a very different approach to the AMISE, that we just implemented:
+
+First attempt at implementing - probs going to be slow:
+
+```{r}
+cv_bw_M <- function(x, k = 5, h = seq(0.01, 2, by = 0.01)){
+  #Partition
+  n <-length(x)
+  groups <- sample(rep(1:k, length.out = n))
+  
+  #Number of observations in each group:
+  N <- sapply(seq(1,k), function(x) sum (groups == x), simplify = T)
+  
+  #bandwidth log likelihoods:
+  bw_l <- numeric(length(h))
+  
+  for (j in seq_along(h)) {
+    #kernel density estimates:
+    f_hat_i <- numeric(length(x))
+    
+    #Calculating CV density estimates
+    for (i in seq_along(x)) {
+      k <- groups[i]
+      x_m_i <- x[groups != k]
+      condition <- abs((x[i] - x_m_i)/h[j]) <= 1
+      f_hat_i[i] <- 3 / (N[k] * 4 * h[j]) * sum((1-(x[i] - x_m_i)^2/h[j]^2) * condition)
+      #if(any(f_hat_i < 0 )) {print(f_hat_i)} #Check for negative values of f_hat
+    }
+    
+    #Calculating log likelihood
+    bw_l[j] <- sum(log(f_hat_i))
+    #print(c(bw_l[j], h[j]))
+    
+  }
+  
+  #returning max likelihood:
+  return(h[which.max(bw_l)])
+}
+```
+
+
+```{r}
+bw_cv_vec <- function(x, k = 5, h = seq(0.01, 2, by = 0.01)) {
+  # Creating the kernel function:
+  kernel <- function(z) (abs(z) <= 1) * 3 / 4 * (1 - z^2)
+  # Creating the h's to loop over:
+  h <- seq(0.01, 2, 0.02)
+  # Defining n, the length of the dataset:
+  n <- length(x)
+  # Randomly dividing the number of indices so that we get k-groups
+  group <- sample(rep(1:k, length.out = n))
+  
+  # Creating our return vectors:
+  ll <- numeric(length(h))  # To store log-likelihood for each h
+  
+  # For each h, calculate the log-likelihood estimate:
+  for (j in 1:length(h)) {
+    f_hat <- numeric()  # Reset f_hat for each h
+    
+    # For each fold, calculate the f_hat_i's
+    for (i in 1:k) {
+      # Number of indices not in group i
+      N_i <- length(x[group != i])
+      # Creating a matrix consisting of all points (x_i - x_j)/h
+      x_matrix <- 1 / h[j] * outer(x[group != i], x[group == i], "-")
+      # Evaluating the kernel in each point
+      kerns <- kernel(x_matrix)
+      # Summing the kernel values over columns
+      kern_sums <- colSums(kerns)
+      
+      # Calculating f_hat for the given group
+      f_hat_i <- 1 / (h[j] * N_i) * kern_sums
+      # Store the results
+      f_hat <- c(f_hat, f_hat_i)
+      
+      #if(any(f_hat_i < 0 )) {print(f_hat_i)} #Check for negative values of f_hat
+      
+    }
+    # Calculate log-likelihood for current h
+    ll[j] <- sum(log(f_hat))
+    #print(c(ll[j], h[j]))
+  }
+  return(h[which.max(ll)])
+}
+
+```
+
+
+Test:
+```{r}
+x <- rnorm(10000)
+bw_cv_vec(x)
+cv_bw_M(x)
+```
+
+
+Benchmarking the two:
+
+```{r}
+# Load necessary libraries
+library(bench)
+library(ggplot2)
+
+# Construct the vector
+x <- rnorm(2^13)
+
+# Define the sequence of k values
+k_values <- 2^(5:13)
+
+# Benchmark the computation of optimal bandwidth
+benchmark_results <- bench::mark(
+  bw_cv_vec(x[1:k_values[1]]),
+  bw_cv_vec(x[1:k_values[2]]),
+  bw_cv_vec(x[1:k_values[3]]),
+  bw_cv_vec(x[1:k_values[4]]),
+  #bw_cv_vec(x[1:k_values[5]]),
+  #bw_cv_vec(x[1:k_values[6]]),
+  #bw_cv_vec(x[1:k_values[7]]),
+  #bw_cv_vec(x[1:k_values[8]]),
+  #bw_cv_vec(x[1:k_values[9]]),
+  check = F
+)
+
+# Summarize the benchmarking results
+autoplot(benchmark_results)
+benchmark_results
+```
+
+```{r}
+# Load necessary libraries
+library(bench)
+library(ggplot2)
+
+# Construct the vector
+x <- rnorm(2^13)
+
+# Define the sequence of k values
+k_values <- 2^(5:13)
+
+# Benchmark the computation of optimal bandwidth
+benchmark_results <- bench::mark(
+  cv_bw_M(x[1:k_values[1]]),
+  cv_bw_M(x[1:k_values[2]]),
+  cv_bw_M(x[1:k_values[3]]),
+  cv_bw_M(x[1:k_values[4]]),
+  #cv_bw_M(x[1:k_values[5]], 0.2),
+  #cv_bw_M(x[1:k_values[6]], 0.2),
+  #cv_bw_M(x[1:k_values[7]], 0.2),
+  #cv_bw_M(x[1:k_values[8]], 0.2),
+  #cv_bw_M(x[1:k_values[9]], 0.2),
+  check = F
+)
+
+
+# Summarize the benchmarking results
+autoplot(benchmark_results)
+benchmark_results
+```
+So it is substantially slower. Just for fun benchmarking them together:
+
+```{r}
+
+x <- rnorm(100)
+
+bench::mark('cv_bw_M' = cv_bw_M(x), 'bw_cv_vec' = bw_cv_vec(x), check = F)
+
+```
+
+
+```{r}
+library(profvis)
+
+source("Functions - assignment 1.R", keep.source = TRUE)
+
+# Sample data
+set.seed(123)
+x <- rnorm(1000)  # Example input data
+
+
+# Profile the function using profvis
+profvis({
+  cv_bw_M(x)  # Call the function here
+})
+```
+
+
+```{r}
+library(profvis)
+
+source("Functions - assignment 1.R", keep.source = TRUE)
+
+# Sample data
+set.seed(123)
+x <- rnorm(1000)  # Example input data
+
+
+# Profile the function using profvis
+profvis({
+  bw_cv_vec(x)  # Call the function here
+})
+```
+
+
+Should possibly consider parallelization in order to make LOOCV to find bw fast. Should do LOOCV? 
+
+
+##remaining things:
+
+- comparing to density properly so you are sure it is right
+
+- compare what bandwidths you get from the different approaches. In simulations you can compute the right bandwidth??? Or at least sort of the "true" error, by taking the density in the current point.
+
+- Johan likes geyser-data..
+
+- Build an interface for your function - i.e make ONE nice function with possible arguments :)
+
+- Catch the negative inf's and give the user an error! Thats a nice suggestion. 
+

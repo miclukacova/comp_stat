@@ -1,0 +1,535 @@
+---
+title: "Assignment 2"
+author: "Dina Jensen (vbz248)"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Assignment - Rejection Sampling
+
+Getting data
+```{r}
+library(readr)
+poisson_data <- read_csv("C:/Users/birgi/OneDrive - University of Copenhagen/1. år/CompStat/poisson.csv")
+```
+
+Defining and plotting the density.
+
+```{r}
+product_function <- function(y) {
+  sapply(y, function(yi) prod(exp(yi * poisson_data$z * poisson_data$x - exp(yi * poisson_data$x))))
+}
+
+curve(product_function, from = 0, to = 1, col = "blue", lwd = 2,
+      xlab = "y", ylab = "Product Value", main = "Product Function Plot")
+```
+
+Since we have:
+$$
+
+f(y)  \propto \prod_{i=1}^{100} \exp(yx_iz_i - \exp(yx_i))\\
+= \exp(\sum_{i=1}^{100}yx_iz_i - \exp(yx_i)) \\
+= \exp (y\sum_{i=1}^{100} x_i z_i - \sum_{i=1}^{100}e^{yx_i}) 
+
+$$
+We can implement our target density as such instead. This is most likely going to be less computationally expensive, as we the can then calculate one of the sums only once, and since we do not have to use prod():
+
+```{r}
+zx <- sum(poisson_data$x*poisson_data$z)
+
+tar_dens <- function(y){
+  sapply(y, function(y) exp(y * zx - sum(exp(y*poisson_data$x))))
+}
+
+curve(tar_dens, from = 0, to = 1, col = "red", lwd = 2,
+      xlab = "y", ylab = "Product Value", main = "Target density", add = T)
+```
+When looking at the density, there does not seem to be an immediate analytical bound. This could definitely be explored further, but for the time being, we are going to focus on implementing rejection sampling with a Gaussian envelope. From CSwR we know that an envelope must satisfy:
+
+$$
+\alpha f(x) \leq g(x) \ \ \forall x
+$$
+So we need to keep check of this.
+
+Well make a quick plot alongside a standard normal distribution, to see how things are looking:
+
+```{r}
+library(ggplot2)
+
+# Generate a range of y values
+y_values <- seq(-3, 3, length.out = 100)
+tar_density <- tar_dens(y_values)
+
+# Calculate standard normal distribution density
+normal_density <- 17e-41 * dnorm(y_values)
+
+# Combine the data into a data frame for plotting
+density_data <- data.frame(
+  y = y_values,
+  tar_density = tar_density,
+  normal_density = normal_density
+)
+
+# Plot using ggplot2
+ggplot(density_data, aes(x = y)) +
+  geom_line(aes(y = tar_density, color = "Target Density"), size = 1) +
+  geom_line(aes(y = normal_density, color = "Standard Normal Density"), size = 1, linetype = "dashed") +
+  labs(title = "Target Density vs Standard Normal Density",
+       x = "y",
+       y = "Density") +
+  scale_color_manual(values = c("Target Density" = "blue", "Standard Normal Density" = "red")) +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+```
+So initially this seems fairly bad. We obviously need to adjust the parameters, and then find a good estimate of $\alpha'$.
+
+Seeing as our target density seems fairly symmetrical, we will simply set the mean of the Gaussian envelope to be $ \mu = \max_y f(y)$. We will simply use the optim function for this. One could also search a grid of $y$'s.:
+```{r}
+mu_opt <- optimize(function(y) - tar_dens(y), interval = c(0, 1))$minimum
+mu_opt
+```
+
+We now want to find $\alpha'$ so that $\alpha' \leq \frac{f(y)}{g(y)}$. This ensures that our envelope fulfills its requirements. We do not need to take normalizing constants into account - these are simply included in $\alpha'$. 
+
+The best estimate of $\alpha'$ is found by minimizing the ratio between the envelope and target density over y:
+$$
+\frac{f(y)}{g(y)}
+$$
+
+So in our case we want to find:
+$$
+\alpha' = \min_y \frac{f(y)}{g(y)} = \min_y \log  \frac{f(y)}{g(y)} = \min_y(-\frac{-(y-\mu_{opt})^2}{2\sigma^2} - y\sum_{i=1}^{100}x_iz_i+\sum_{i=1}^{100}\exp(yx_i))
+$$
+By finding the first and second derivative of this function, we can see, that it is convex in y, and as such it should be fairly easy to minimize for $\alpha'$. You might be missing the normalization constant in this. You have it in the code as you calculate using dnorm. 
+
+$$
+\frac{d}{dy} \log  \frac{f(y)}{g(y)} = -\frac{-(y-\mu_{opt})}{\sigma^2} - \sum_{i=1}^{100}x_iz_i+\sum_{i=1}^{100}x_i\exp(yx_i)\\
+\frac{d^2}{dy^2} \log  \frac{f(y)}{g(y)} = -\frac{1}{\sigma^2} +\sum_{i=1}^{100}x_i^2\exp(yx_i)\\
+$$
+But we also need to find a good estimate for $\sigma^2$. We will find an estimate for $\sigma^2$, by taking.
+$$
+\arg\max_{\sigma^2}(\min_{y} \log\frac{f(y)}{g(y)})
+$$
+We will do this numerically by creating a grid of y's and sigma's and then finding the optimal. Based on our plot of the target density, most of its density lies between $[0,1]$, so we will generate a sequence og y-values in this interval, and the maximize it to find $\sigma_{opt}^2$:
+
+```{r}
+y_seq <- seq(0,1, 0.001)
+sigma <- function(s){
+  alpha_star <- min(dnorm(y_seq, mu_opt, s)/tar_dens(y_seq))
+  return(-alpha_star)
+}
+
+sigma_opt <- optimize(sigma, c(0,1))$minimum
+alpha_s <- -optimize(sigma, c(0,1))$objective
+sigma_opt 
+
+```
+
+Plot of target density scaled with alpha alongside envelope:
+```{r}
+# Calculate tar_dens for each y in y_seq
+tar_density <- alpha_s * tar_dens(y_seq)  
+
+# Calculate the standard normal density for each y in y_seq
+normal_density <- dnorm(y_seq, mean = mu_opt, sd = sigma_opt)
+
+# Combine the data into a data frame for plotting
+density_data <- data.frame(
+  y = y_seq,
+  tar_density = tar_density,
+  normal_density = normal_density
+)
+
+# Plot using ggplot2
+ggplot(density_data, aes(x = y)) +
+  geom_line(aes(y = tar_density, color = "Target Density"), size = 1) +  # Tar density
+  geom_line(aes(y = normal_density, color = "Standard Normal"), linetype = "dashed", size = 1) +  # Standard normal density
+  labs(title = "Target Density vs Standard Normal Density",
+       x = "y",
+       y = "Density") +
+  scale_color_manual(values = c("Target Density" = "red", "Standard Normal" = "blue")) +  # Color settings
+  theme_minimal() +
+  theme(legend.title = element_blank()) 
+```
+And as a sanity check we also make sure that $\alpha * f(y) \leq g(y)$ for all y:
+
+```{r}
+test_y <- seq(0, 1, length.out = 6999)
+values <- data.frame(y = test_y, values = dnorm(test_y, mean = mu_opt, sd = sigma_opt) - tar_dens(test_y) * alpha_s)
+values$values[values$values < 0]
+```
+This is because we find $\alpha '$ by taking the minimum over a finite sequence of y's so when testing it on a finer grid, we may get small discrepancies.
+
+And we plot the difference between the envelope and the target density:
+```{r}
+ggplot(values, aes(x = y)) +
+  geom_line(aes(y = values), color = "blue")+
+    labs(title = "Difference between Target Density and envelope",
+       x = "y",
+       y = "difference") +
+  theme_bw()
+```
+
+Now moving on to the actual implementation of the rejection sampler. First we just sample on to get an estimate of our rejection rate.
+
+
+Rejection sampler - initial slow one:
+```{r}
+rej_sample_slow <- function(n) {
+  y <- numeric(n)
+  rejection_count <- 0
+  total <- 0
+  
+  for (i in seq_len(n)) {
+    reject <- TRUE
+    while (reject) {
+      y0 <- rnorm(1, mean = mu_opt, sd = sigma_opt)
+      u <- runif(1)
+      reject <- u > 1/(sqrt(2*pi*sigma_opt)) * alpha_s * tar_dens(y0) / dnorm(y0, mean = mu_opt, sd = sigma_opt)
+      
+      #Counting no of rejections 
+      if (reject) {
+        rejection_count <- rejection_count + 1  
+        total <- total + 1
+      } else {
+        total <- total + 1
+      }
+    }
+    y[i] <- y0
+  }
+  return(list(y = y, total_iter = total, rejections = rejection_count))
+}
+
+y1 <- rej_sample_slow(100000)
+
+1-y1$rejections/y1$total_iter
+```
+So this is our current acceptance probability. 
+
+We are now interested in seeing, whether og samples line up with our target density:
+```{r}
+samp <- data.frame(y = y1$y)
+
+ggplot() +
+  geom_histogram(aes(x = samp$y, y = ..density..), bins = 70, fill = "lightblue", color = "black") +
+  geom_line(data = density_data, aes(x = y, y = tar_density), color = "darkred", size = 1.2) +
+  labs(title = "Rejection Sampling vs Target Density",
+       x = "Values",
+       y = "Density") +
+  theme_minimal()
+
+```
+So this is looking decent. We need to profile and optimize it ;) Potentially also calculate the true rejection rate - finding normalization constants for things using integrals.
+
+
+##Alas lets look at the log-affine shit.
+We first check whether our target density is log-convex or -concave:
+$$
+\log f(y)  \propto \log \prod_{i=1}^{100} \exp(yx_iz_i - \exp(yx_i))\\
+= \sum_{i=1}^{100} (yx_iz_i - \exp(yx_i))\\
+=y\sum_{i=1}^{100} x_i z_i-\sum_{i=1}^{100}\exp(yx_i)
+$$
+We check whether it is convex or concave by finding its second derivative:
+$$
+\frac{d \log f(y)}{d y} = \sum_{i=1}^{100} x_i z_i-\sum_{i=1}^{100}x_i\exp(yx_i)\\
+\frac{d^2 \log f(y)}{d y^2} = -\sum_{i=1}^{100}x_i\exp(yx_i)\\
+$$
+As the $x_i$ values are all positive and $\exp(yx_i)\geq 0$ for all $y$, we see that the second derivative is negative for all $y$. This means that our target density is log concave. This also becomes clear if you plot it:
+
+Plotting this for fun:
+```{r}
+zx <- sum(poisson_data$x*poisson_data$z)
+
+tar_dens_log <- function(y){
+  sapply(y, function(y) log(tar_dens(y)))
+}
+
+curve(tar_dens_log, from = 0, to = 1, col = "red", lwd = 2,
+      xlab = "y", ylab = "Product Value", main = "Target density", add = T)
+```
+
+So we can construct an envelope for which $\alpha f(y) \leq g(y)$. We use the method described in 6.2.1 of CSwR. We have already defined a function given by log of our target density. We now define functions to calculate the a-coefficients i.e a function that simply calculates the derivative of log of our density in a given point. We note that:
+$$
+\frac{d f(y)}{dy} =\exp\left( \sum_{i=1}^{100}(x_iz_iy-\exp(x_iy))\right)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right) =f(y)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right)
+$$
+This means that we simply get $a =  \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) $
+
+We implement that and a function to calculate the H_i's as $\frac{1}{a_i}e^{b_i}(e^{a_i y}-e^{a_iz_{i-1}}) $, we do then need to check that $a_i\neq 0$. We also define a function that can choose the z_i's correctly, given start and endpoint and a, b. Furthermore, a function that can check which interval a point falls into.
+
+```{r}
+#The derivative of log(tar_dens) in point y
+tar_dens_log_difference <- function(y){
+  diff <- sapply(y, function(y) zx - sum(poisson_data$x * exp(y * poisson_data$x)))
+  diff
+}
+
+#Calculating H_i's
+H_i <- function(as, bs, zs, n) {
+    1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
+}
+
+z_fun <- function(a, b, start_point, end_point){
+  # Defining z:
+  z <- numeric(length(a) + 1)  # length(a) + 1 because we have z_0 and z_m
+  
+  # Set the boundary points
+  z[1] <- start_point  # z_0
+  z[length(z)] <- end_point  # z_m
+  
+  # Calculating intermediate z_i values
+  for (i in 1:(length(a) - 1)) {
+    z[i + 1] <- (b[i + 1] - b[i]) / (a[i] - a[i + 1])
+  }
+  
+  # Return the resulting z vector
+  return(z)
+}
+
+
+cor_interval <- function(points, interval_sum){
+  # Find which interval each point belongs to
+  intervals <- findInterval(points, interval_sum, left.open = T)
+  
+  # Create a matrix of 0's with rows = length(points) and columns = length(cumsum_vec)
+  result_matrix <- matrix(0, nrow = length(points), ncol = length(interval_sum))
+  
+  # Set the appropriate interval to 1 for each point
+  result_matrix[cbind(seq_along(points), intervals + 1)] <- 1
+  
+  return(result_matrix)
+}
+
+
+extract_nonzero_indices <- function(mat) {
+  apply(mat, 1, function(row) which(row != 0))
+}
+
+cor_interval(c(1,2,3), c(0,))
+```
+
+
+```{r}
+adap_log_rej_sampler <- function(N, breakpoints, log_tar_dens, log_tar_dens_diff){
+  
+  #Calculating a's, b's and z's given the breakpoints:
+  a <- log_tar_dens_diff(breakpoints)
+  #Checking that a is non-zero, and that they are unique
+  if( anyDuplicated(a) > 0 || any(a == 0) ){
+    stop("\n
+    Error: The a-coefficients are required to be non-zero and unique. 
+    Change the choice of breakpoints."
+    )
+  }
+  b <- log_tar_dens(breakpoints) - a * breakpoints
+  z <- z_fun(a, b, 0, 5)
+  
+  #Now calculating R_i and Q_i's
+  R_i <- H_i(a, b, z, length(a))
+  Q_i <- cumsum(R_i)
+  
+  #Defining d:
+  d <- Q_i[length(Q_i)]
+  
+  #Calculating dq, and checking whether it falls into the right intervals:
+  dq <- d * runif(N)
+  I_matrix <- cor_interval(dq, Q_i)
+  
+  #Now we transform this matrix into the one containing dq, and extract the indices of the rows, so we know which a_i, b_i etc. 
+  #correspond to each dq:
+  dq_matrix <- I_matrix * dq
+  interval_indicator <- extract_nonzero_indices(I_matrix)
+  
+  
+  #Now we calculate the necessary Q_i-1's, a_i's etc.
+  a_i <- a[interval_indicator]
+  b_i <- b[interval_indicator]
+  Q_i_minus <- c(0, Q_i[-length(Q_i)])[interval_indicator]
+  z_i_minus <- z[-length(z)][interval_indicator]
+  
+  # Finally we sample from the proposal distribution
+  x <- 1 / a_i * log(a_i * exp(-b_i) * (dq - Q_i_minus) + exp(a_i*z_i_minus))
+  
+  accept <- logical(N)
+  u <- runif(N)
+  
+  for (i in 1:length(a)){ #1 to m
+    group_i <- as.logical(I_matrix[, i]) # Index to select observations belonging to interval i
+    
+    accept[group_i] <- u[group_i] <= exp(log_tar_dens(x[group_i]) - a[i] * x[group_i] - b[i])
+  }
+  return(x[accept])
+  #return(list(x[accept], a = a, b = b, z = z))
+}
+
+m <- matrix(c(1,2,3,4), nrow = 2)
+m[,1]
+
+samp1 <- adap_log_rej_sampler(100, c(0.1, 0.2, 0.3), tar_dens_log, tar_dens_log_difference)
+
+
+length(samp)/10000
+
+#samp$a
+#samp$b
+#samp$z
+
+```
+
+Trying to get the function factory from the slides to get the samples we need:
+```{r}
+new_rejection_sampler <- function(generator) {
+  function(n, ...) {
+    alpha <- 1
+    y <- numeric(0)
+    n_accepted <- 0
+    while (n_accepted < n) {
+      m <- ceiling((n - n_accepted) / alpha)
+      y_new <- generator(m, ...)
+      n_accepted <- n_accepted + length(y_new)
+      if (length(y) == 0) {
+        alpha <- (n_accepted + 1) / (m + 1) # Estimate of alpha
+      }
+      y <- c(y, y_new)
+    }
+    list(x = y[seq_len(n)], alpha = alpha)
+  }
+}
+```
+
+```{r}
+log_affine_samp <- new_rejection_sampler(adap_log_rej_sampler)
+
+samp <- log_affine_samp(1000, c( 0.2, 0.25, 0.3), tar_dens_log, tar_dens_log_difference)
+```
+
+Lets plot it:
+```{r}
+samp <- data.frame(y = samp$x)
+
+ggplot() +
+  geom_histogram(aes(x = samp$y, y = ..density..), bins = 70, fill = "lightblue", color = "black") +
+  geom_line(data = density_data, aes(x = y, y = tar_density), color = "darkred", size = 1.2) +
+  labs(title = "Rejection Sampling vs Target Density",
+       x = "Values",
+       y = "Density") +
+  theme_minimal()
+```
+Lets plot the envelopes as well. First on logscale:
+```{r}
+y_values <- seq(0, 1, length.out = 100)
+
+#Affine value function:
+affine_values <- function(y, a, b) {
+  # Create a matrix to hold the affine values
+  val_matrix <- matrix(NA, nrow = length(a), ncol = length(y))
+  
+  # Calculate the affine values for each a and b
+  for (i in 1:length(a)) {
+    val_matrix[i, ] <- a[i] * y + b[i]  # Vectorized operation for each row
+  }
+  
+  return(val_matrix)
+}
+
+
+f_s <- affine_values(y_values, samp1$a, samp1$b)
+
+# Calculate target density values
+density_values <- tar_dens_log(y_values)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(y = y_values
+                        ,density = density_values
+                        ,f1 = f_s[1,]
+                        ,f2 = f_s[2,] )
+
+
+# Plot using ggplot2
+ggplot(data = plot_data) +
+  geom_line(aes(x = y, y = density), color = "red", size = 1.2) +
+  geom_line(aes(x = y, y = f1), color = "darkblue", linetype = "dashed", size = 1) +
+  geom_line( aes(x = y, y = f2), color = "green", linetype = "dashed", size = 1) +
+  labs(x = "y", y = "Product Value", title = "Target Density with Affine Functions") +
+  theme_minimal()
+```
+
+On regular scale:
+```{r}
+y_values <- seq(0, 1, length.out = 100)
+
+#Affine value function:
+exp_affine_values <- function(y, a, b) {
+  # Create a matrix to hold the affine values
+  val_matrix <- matrix(NA, nrow = length(a), ncol = length(y))
+  
+  # Calculate the affine values for each a and b
+  for (i in 1:length(a)) {
+    val_matrix[i, ] <- exp(a[i] * y + b[i])  # Vectorized operation for each row
+  }
+  
+  return(val_matrix)
+}
+
+
+f_s <- exp_affine_values(y_values, samp1$a, samp1$b)
+
+# Calculate target density values
+density_values <- tar_dens(y_values)
+
+# Create a data frame for ggplot
+plot_data <- data.frame(y = y_values
+                        ,density = density_values
+                        ,f1 = f_s[1,]
+                        ,f2 = f_s[2,]
+                        ,f3 = f_s[3,])
+
+
+# Plot using ggplot2
+ggplot(data = plot_data) +
+  geom_line(aes(x = y, y = density), color = "darkred", size = 1.2) +
+  geom_line(aes(x = y, y = f1), color = "darkblue", linetype = "dashed", size = 1) +
+  geom_line( aes(x = y, y = f2), color = "darkblue", linetype = "dashed", size = 1) +
+  geom_line( aes(x = y, y = f3), color = "darkblue", linetype = "dashed", size = 1) +
+  labs(x = "y", y = "Product Value", title = "Target Density with Affine Functions") +
+  ylim(c(0, 1e-40))+
+  theme_minimal()
+```
+
+
+Jins approach
+
+- Optimal mean for Gaussian envelope we can guess might be be at the max of the density! 
+
+- Optimal variance found by minimizing rejection rate - an integral. Use numerical integration no need to calculate complicated things.
+
+- Mean and variance are hyperparameters. Computational vs. mathematical thinking. 
+
+- Check numerically that your sample density really is smaller than the envelope. 
+
+- Make your implementation faster by using parallelization. Independent operations means parallelization is a good idea. Otherwise dont ;)
+
+- Inline your constant "andpercent"????
+
+ -Make it even faster by implementing in c++. Start by some and then go all the way.
+ 
+ From presentations:
+ 
+ Rejection sampling.
+ 
+ - implementing it as a sum rather than a product makes is slightly faster 
+ 
+ - you can also create a function of both mu and sigma and use optim to minimize
+ 
+ - optimize over number of breaks for your log-affine stuff. 
+ 
+
+
+
+
+
+
+

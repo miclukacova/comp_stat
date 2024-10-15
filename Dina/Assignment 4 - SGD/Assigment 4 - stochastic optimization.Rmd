@@ -1,0 +1,215 @@
+---
+title: "Assignment 4"
+author: "Dina Jensen (vbz248)"
+date: "2024-10-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Log-logistic Dose-response curves:
+
+We first define the x-function:
+
+```{r}
+x_dens <- function(x, alpha, beta, gamma, rho){
+  return(gamma + (rho - gamma) / (1 + exp(beta * log(x) - alpha)))
+}
+```
+
+Now we define the squared error function:
+
+```{r}
+squared_error_single <- function(data, par){
+  x <- data$x
+  y <- data$y
+  return(sum((y - x_dens(x, par[1], par[2], par[3], par[4]))^2))
+}
+
+squared_error <- function(data, alpha, beta, gamma, rho){
+  param <- cbind(alpha, beta, gamma, rho)
+  apply(param, 1, function(par) squared_error_single(data, par))
+}
+```
+
+Now we define our gradient function for a single point:
+
+```{r}
+log_logistic_dose_response_model <- function(x, par){
+  alpha <- par[1]
+  beta <- par[2]
+  gamma <- par[3]
+  rho <- par[4]
+  
+  return(gamma + (rho - gamma) / (1 + exp(beta * log(x) - alpha)))
+}
+
+
+
+gradient <- function(par, i, ...){
+  alpha <- par[1]
+  beta <- par[2]
+  gamma <- par[3]
+  rho <- par[4]
+  x <- x[i]
+  y <- y[i]
+  
+  expbetalogxalpha <- exp(beta * log(x) - alpha)
+  
+  identical_part <- - 2 * (y - log_logistic_dose_response_model(x, par))
+  
+  grad_alpha <- identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2
+  grad_beta <- - identical_part * (rho - gamma) * log(x) * expbetalogxalpha / (1 + expbetalogxalpha)^2
+  grad_gamma <- identical_part * (1 - 1 / (1 + expbetalogxalpha))
+  grad_rho <- identical_part / (1 + expbetalogxalpha)
+  
+  return(c(grad_alpha, grad_beta, grad_gamma, grad_rho))
+}
+```
+
+```{r}
+sgd <- function(
+    par,
+    grad, # Function of parameter and observation index
+    data, # Data
+    n, # Sample size
+    gamma, # Decay schedule or a fixed learning rate
+    maxiter = 100, # Max epoch iterations
+    sampler = sample, # How data is resampled. Default is a random permutation
+    cb = NULL,
+    ...) {
+  x <- data$x
+  y <- data$y
+  gamma <- if (is.function(gamma)) gamma(1:maxiter) else rep(gamma, maxiter)
+  for (k in 1:maxiter) {
+    if (!is.null(cb)) cb()
+    samp <- sampler(n)
+    for (j in 1:n) {
+      i <- samp[j]
+      par <- par - gamma[k] * grad(par, i, ...)
+    }
+  }
+  par
+}
+
+gradient(c(5,3,1,2), 1)
+```
+
+Creating a sampler for our function:
+
+```{r}
+samp <- function(n, par){
+  log_x <- rnorm(n, 0, 6)
+  x <- exp(log_x)
+  y <- x_dens(x, par[1], par[2], par[3], par[4]) + rnorm(n, 0, 0.1)
+  return(data.frame(x = x, y = y))
+}
+```
+
+And one that samples from a grid - not done:
+
+```{r}
+samp_grid <- function(n, par){
+  x <- sample(seq(1e-15, 1e15, length.out = 10000), n, replace = TRUE)
+  y <- x_dens(x, par[1], par[2], par[3], par[4]) + rnorm(n, 0, 0.1)
+  return(data.frame(x = x, y = y))
+}
+```
+
+Lets test our sgd function:
+
+```{r}
+#We define our initial parameters:
+parameters <- c(5,3,1,2)
+test <- samp(5000, parameters)
+
+
+sgd(c(1,1,1,1), gradient, data = test, nrow(test), 0.01, maxiter = 100)
+```
+
+We now implement callback using the tracer function from CSwR:
+
+```{r}
+library(CSwR)
+
+SGD_tracer <- tracer(c("par", "k"))
+sgd(c(1,1,1,1), gradient, data = test, nrow(test), 0.01, maxiter = 100, cb = SGD_tracer$tracer)
+```
+
+```{r}
+SGD_trace <- summary(SGD_tracer)
+
+SGD_trace <- transform(
+  SGD_trace,
+  loss = squared_error(test, par.1, par.2, par.3, par.4),
+  H_distance = abs(squared_error(test, parameters[1], parameters[2], parameters[3], parameters[4]) - squared_error(test, par.1, par.2, par.3, par.4))
+)
+SGD_trace
+
+```
+
+Now we want to plot the convergence of the loss-function both for time and k:
+
+```{r}
+library(ggplot2)
+library(tidyr)
+
+ggplot(SGD_trace, aes(x = k, y = log(loss))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Convergence of the loss function", x = "Epoch", y = "log(Loss)") + 
+  theme_bw()
+
+ggplot(SGD_trace, aes(x = .time, y = log(loss))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Convergence of the loss function", x = "time", y = "log(Loss)") + 
+  theme_bw()
+
+ggplot(SGD_trace, aes(x = k, y = log(H_distance))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Convergence of |H(theta_n) - H(theta_inf)|", x = "Epoch", y = "log(|H(theta_n) - H(theta_inf)|)") + 
+  theme_bw()
+
+ggplot(SGD_trace, aes(x = .time, y = log(H_distance))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Convergence of |H(theta_n) - H(theta_inf)|", x = "time", y = "log(|H(theta_n) - H(theta_inf)|)") + 
+  theme_bw()
+```
+
+
+
+##Attempt at profiling:
+
+```{r}
+library(profvis)
+source("SGD.R")
+
+profvis({
+  sgd(c(1,1,1,1), gradient, data = test, nrow(test), 0.01, maxiter = 100)
+})
+```
+
+So what we can see is that the computation of the gradient in each iteration is what takes the most time. We will try to implement the gradient function in rcpp in order to test if that can improve the performance:
+
+
+
+Sanity check:
+
+```{r}
+gradient_rcpp(c(5,3,1,2), 1, 1)
+gradient(c(5,3,1,2), 1, 1)
+```
+
+Now we will benchmark this against the original gradient function:
+```{r}
+library(bench)
+
+
+```
+
+
