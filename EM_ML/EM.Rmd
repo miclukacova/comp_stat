@@ -1,0 +1,242 @@
+---
+title: 'EM algorithm A: The EM algorithm for the t-distribution'
+author: "Michaela Lukacova"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  fig_height: 5
+  fig_width: 5
+  theme: flatly
+  html_document: null
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r source, include=FALSE}
+source("~/Desktop/Uni/5aar/CompStat/Assignments/EM/EM_source.R")
+```
+
+# The marginal distribution of $X$ is the $t$-distribution
+
+The joint density of $Y = \left( X, W \right)$ is given by
+$$
+f(x,w) = \frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)}  w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right)
+$$
+Let $C = \frac{1}{\sqrt{\pi \nu  \sigma^2} \Gamma(\nu/2)}$
+$$
+f(x) = \int f(x,w) dw =C \int \frac{1}{2^{(\nu+1)/2}} w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) dw  
+$$
+Let $z = \frac{\nu+1}{2}$, implying that $z-1 = \frac{\nu-1}{2}$. 
+$$
+f(x) =\int \frac{1}{2^{z}} w^{z - 1} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) dw  
+$$
+And let $t = \frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)$, implying that $w = 2t\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$ and $dw = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} dt$. Note that the limits of the integral are still the same ($(0,\infty)$). 
+$$
+f(x)  =C \int \frac{1}{2^{z}} w^{z-1} \exp\left(-t \right) dw  
+$$
+Substituting $w$ and $dw = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} dt$ we obtain
+$$
+f(x) =C \int \frac{1}{2^{z}} \left(2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right)^{-z}  t^{z-1} \exp\left(-t\right) dt  = C  \left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-z}\int t^{z-1} \exp\left(-t\right) dt
+$$
+Recognizing the gamma function we finally obtain
+$$
+f(x) = \frac{\Gamma(\frac{\nu+1}{2})}{\sqrt{\pi \nu  \sigma^2} \Gamma(\nu/2)} \left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-\frac{\nu+1}{2}}\ 
+$$
+Which is recognized as the density of the $t$-distribution. 
+
+## Maximize the complete data log-likelihood and implement this as a function
+
+The complete data log likelihood is
+
+$$
+\mathcal{l}(Y) = \sum_{i=1}^n \log\left(f\left(f(x_i,w_i\right)\right) \\
+= \sum_{i=1}^n -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)\right) + \frac{\nu -1}{2}\log(w_i) -\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) \\
+\propto \sum_{i=1}^n - \log(\sigma) + \frac{\nu -1}{2}\log(w_i) -\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) = f(\mu,\sigma)
+$$
+
+Finding the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$
+
+$$
+\frac{\partial f}{\partial \mu} = \sum_{i=1}^n \frac{w_i(x_i-\mu)}{\nu \sigma^2} \\
+\frac{\partial f}{\partial \sigma^2} = - \frac{n}{\sigma} + \sum_{i=1}^n \frac{w_i}{2\nu \sigma^3}(x_i-\mu)^2 
+$$
+
+Setting the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$  equal to zero results in the following estimators:
+
+$$
+\hat{\mu} = \frac{\sum_{i=1}^n w_i x_i}{\sum_{i=1}^n w_i} \\
+\hat{\sigma}^2 = \frac{\sum_{i=1}^n w_i (x_i - \hat{\mu})^2}{\nu n}
+$$
+These estimators might only be valid if the problem is convex. 
+The estimates could also be found by using numerical optimization, but since the problems have a nice analytical solution, there is no need for this.
+
+## Testing and data generation
+
+In order to test the estimators throughout the project we have created a class called My_parameters. The class takes three slots, mu, sigma2 and nu. Furthermore there is a data slot where data from the above distribution with the given parameters is generated. 2000 points are generated as default. The class is created by the function parameters
+ We will in the following test our implementations of estimators for four different parameter settings. For each set of parameters we create an My_parameters object and generate data from the distribution. 
+
+```{r}
+set.seed(3564)
+params_list <- list(parameters(mu = 0, sigma2 = 1, nu = 1),
+                    parameters(mu = 0, sigma2 = 1, nu = 10),
+                    parameters(mu = 0, sigma2 = 100, nu = 15),
+                    parameters(mu = 10, sigma2 = 100, nu = 1),
+                    parameters(mu = 10, sigma2 = 3, nu = 10),
+                    parameters(mu = 10, sigma2 = 3, nu = 15))
+```
+
+For each set of data generated we estimate the parameters using the MLE estimators. We first only use 20 data points, then we use 50, 100, 200, 500, 1000 and 2000 data points. The MLE estimates are plotted below
+```{r}
+MLE_est_list <- list()
+n_vals <- c(30, 50, 100, 200, 500, 1000, 2000, 3000, 4000)
+
+for(j in 1:6){
+  MLE_est <- matrix(ncol = 2, nrow = 9)
+  temp <- params_list[[j]]$data[[1]]
+  for(i in 1:9){
+    n <- n_vals[i]
+    mu_mle <- mle.mu(temp$x[1:n], temp$w[1:n])
+    MLE_est[i,] <- c(mu_mle, 
+                     mle.sigma2(temp$x[1:n],
+                                temp$w[1:n],
+                                mu_mle = mu_mle,
+                                nu = params_list[[j]]$nu))
+  }
+  MLE_est_list[[j]] <- MLE_est
+}
+```
+
+
+We plot the MLE estimates for the four different parameter settings. 
+```{r}
+plot_list <- list()
+for(i in 1:6){
+  temp <- data.frame(mu = MLE_est_list[[i]][,1] - params_list[[i]]$mu, 
+                     sigma = MLE_est_list[[i]][,2] - params_list[[i]]$sigma2)
+  
+  plot_list[[i]] <- ggplot(data = data.frame(temp), aes(x = n_vals)) +
+    geom_line(aes(y = mu), color = "red") +
+    geom_line(aes(y = sigma), color = "blue") +
+    geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+    geom_hline(yintercept = 0, color = "blue", linetype = "dashed")+
+    labs(title = paste(params_list[[i]]$mu, ",", 
+                       params_list[[i]]$sigma2, ",",
+                       params_list[[i]]$nu),
+         x = "n",
+         y = "Error")
+}
+
+grid.arrange(plot_list[[1]], plot_list[[2]], plot_list[[3]], 
+             plot_list[[4]], plot_list[[5]], plot_list[[6]], ncol = 3)
+```
+
+
+## Implement the EM algorithm
+
+Suppose we only observe the $X$'s. We wish to use the EM algorithm to estimate the parameters $\mu$ and $\sigma^2$. We denote the pair of parameters by $\theta = (\mu, \sigma^2)$. 
+
+### The E-step of the algorithm amounts to computing the expectation
+
+$$
+Q(\theta | \theta ') = E_{\theta'} \left(\sum_{i=1}^{n}\log \left( f\left(x,w| \theta\right)\right) | X = x\right) \\
+= \sum_{i=1}^{n} -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)\right) + \frac{\nu -1}{2}E_{\theta'} \left(\log(W_i) | X = x \right) -E_{\theta'} \left(W_i | X = x \right)\frac{1}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) 
+$$
+We need to compute $E_{\theta'} \left(W_i | X = x \right)$ and $E_{\theta'} \left(\log(W_i) | X = x \right)$. Note that
+$$
+    f_{w|x = x'} (w) = \frac{f(x',w)}{f(x')} \propto f(x',w)
+$$
+The conditional density of $W$ given $X=x$ is proportional to the joint density with fixed $x$. Note also 
+$$
+    f(x,w)  = \frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)}  w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) \\
+     =\frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)} w^{k-1} \exp{- \frac{w}{\lambda}}
+$$
+Where we have defined $k = \frac{\nu + 1}{2}$ and $\lambda = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$. 
+$$
+    f(x,w) = \frac{\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-(\frac{\nu + 1}{2})}}{\sqrt{\pi \nu  \sigma^2}\Gamma(\nu/2)} \frac{1}{\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}} 
+$$
+Note also that
+$$
+    \frac{\Gamma(\frac{\nu}{2})}{\Gamma(\frac{\nu}{2} + \frac{1}{2})} &= 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Leftrightarrow \\
+    \Gamma(\frac{\nu}{2}) = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Gamma(k)
+$$
+Substituting we obtain
+$$
+    f(x,w) = Q  \frac{1}{\Gamma(k)\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}} 
+$$
+Where we have defined $Q = \frac{\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-(\frac{\nu + 1}{2})}}{\pi \sqrt{ \nu  \sigma^2} 2^{1-\nu} \Gamma(\nu)}$. We can recognize $f(x,w)$ for fixed $x$ as the gamma density multiplied by the factor $Q$. It follows that $W | X = x \sim \Gamma\left(\frac{\nu + 1}{2}, 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}\right)$. 
+
+Thus
+$$
+    E_{\theta'} \left(W_i | X = x \right) = (\nu + 1)\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}
+$$
+Using that $E(X) = k \lambda$ for random variable $X \sim \Gamma(k, \lambda)$. Furthermore we have $E(\log(X)) = \psi(k) + \log \lambda$. Where $\psi$ is the digamma function. Thus
+$$
+    E_{\theta'} \left(\log W_i | X = x \right) = \psi\left(\frac{\nu + 1}{2}\right) + \log \left( 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} \right)
+$$
+
+### M-step
+
+The M-step amounts to optimizing the Q-function. Note that when optimizing the Q-function wrt. $\mu$ one obtains
+$$
+    \max_{\mu} Q(\theta | \theta') = \max_{\mu} \sum_{i=1}^n -E_{\theta'} \left(W_i | X = x \right)\frac{1}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) = g(\mu)
+$$
+Finding the first and second derivative 
+$$
+    \frac{d}{d\mu} g(\mu) = \sum_{i=1}^n E_{\theta'} \left(W_i | X = x \right)\frac{(x_i-\mu)}{\nu \sigma^2} \\
+    \frac{d^2}{d\mu^2} g(\mu) = \sum_{i=1}^n -  E_{\theta'} \left(W_i | X = x \right)\frac{1}{\nu \sigma^2} < 0
+$$
+The second derivative is negative and the function is concave, the optimum can therefore be found by setting the first derivative equal to 0. 
+$$
+    \frac{d}{d\mu} g(\mu) = 0  \Leftrightarrow \\ 
+    \hat{\mu} = \frac{\sum_{i=1}^n  E_{\theta'} \left(W_i | X = x \right) x_i}{\sum_{i=1}^n  E_{\theta'} \left(W_i | X = x \right)}
+$$
+Repeating the procedure wrt. $\sigma$, we obtain
+$$
+    \max_{\sigma} Q(\theta | \theta') = \max_{\sigma} \sum_{i=1}^{n} -\log\left(\sigma \right) -E_{\theta'} \left(W_i | X = x \right)\frac{1}{2}\frac{(x_i-\mu)^2}{\nu \sigma^2} = h(\sigma)
+$$
+Finding the first and second derivative 
+$$
+    \frac{d}{d\sigma} h(\sigma) = \sum_{i=1}^n - \frac{1}{\sigma} + E_{\theta'} \left(W_i | X = x \right)\frac{(x_i-\mu)^2}{\nu \sigma^3} \\
+    \frac{d^2}{d\sigma^2} h(\sigma) = \sum_{i=1}^n \frac{1}{\sigma^2} \left( 1 - 3 E_{\theta'} \left(W_i | X = x \right)\frac{(x_i-\mu)^2}{\nu \sigma^2} \right)
+$$
+The second derivative is negative (???) and the function is concave, the optimum can therefore be found by setting the first derivative equal to 0. 
+$$
+    \frac{d}{d\sigma} h(\sigma) = 0  \Leftrightarrow \\ 
+    \hat{\sigma}^2 = \frac{\sum_{i=1}^n E_{\theta'}\left(W_i | X = x \right) (x_i - \mu)^2}{n \nu} 
+$$
+We have implemented the E-step as the $E.W$ function. $E.W$ takes as input the parameters $\theta$ and data $X$, and computes the conditional expectation of $W$ given $X$, and returns this as a vector. The M-step is implemented as the $M.step$ function. $M.step$ takes as input the conditional expectation of $W$ given $X$ and the data $X$, and returns the estimates of $\mu$ and $\sigma^2$ that maximize the Q-function.
+
+```{r}
+nu <- 5
+EM_alg <- em_factory(E.W, M.step, eps = 1e-6)
+EM_alg(par = c(0, 1), X = sample$x)
+
+EM_est_list <- list()
+
+for(j in 1:6){
+  MLE_est <- matrix(ncol = 2, nrow = 9)
+  temp <- params_list[[j]]$data[[1]]
+  nu <- params_list[[j]]$nu
+  for(i in 1:9){
+    n <- n_vals[i]
+    mu_mle <- mle.mu(temp$x[1:n], temp$w[1:n])
+    MLE_est[i,] <- c(mu_mle, 
+                     mle.sigma2(temp$x[1:n],
+                                temp$w[1:n],
+                                mu_mle = mu_mle,
+                                nu = params_list[[j]]$nu))
+  }
+  MLE_est_list[[j]] <- MLE_est
+}
+```
+
+
+
+
+# Compare it to other optimization algorithms based on the marginal log-likelihood
+
+# Compute the Fisher information
+
+# Generalizing to estimating the shape parameter $\nu$

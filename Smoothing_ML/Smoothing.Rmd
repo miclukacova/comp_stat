@@ -1,0 +1,361 @@
+---
+title: 'Smoothing: A. Density Estimation'
+author: "Michaela Lukacova"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  fig_height: 5
+  fig_width: 5
+  theme: flatly
+  html_document: null
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r source, include=FALSE}
+source("~/Desktop/Uni/5aar/CompStat/Assignments/Smoothing_source.R")
+```
+
+*Implement a kernel density estimator using the Epanechnikov kernel, and implement one or more bandwidth selection algorithms using either AMISE plug-in methods or cross-validation methods. Test the implementation and compare the results with the results of using density() in R.*
+
+*It may be a good idea to use real data to investigate how the bandwidth selection works, but for benchmarking and profiling it is best to use simulated data. Think about how to make your implementation as general and generic as possible.*
+
+
+# Kernel density estimators
+
+The kernel density estimators approximate the unknown density of data points with the function
+
+$$ \hat{f}(x) = \frac{1}{hN} \sum_{j=1}^N K\left(\frac{x-x_j}{h}\right)$$
+For a given kernel $K: \mathbb{R} \rightarrow \mathbb{R}$ and bandwidth parameter $h$. 
+
+In our implementations we will use the Epanechnikov kernel. 
+
+$$K(x)=\frac{3}{4}\left(1-x^2\right) 1_{[-1,1]}(x)$$
+
+One issue is how should we select the bandwidth?
+
+## Bandwidth selection
+
+### AMISE plug-in
+
+The Epanechnikov kernel is a square-integrable probability density with mean 0. It can be shown that for the Epanechnikov kernel:
+
+$$
+\sigma_K^2 = \frac{1}{5} \\
+||K||_2^2 = \frac{3}{5}
+$$
+
+The AMISE is defined as
+
+$$
+AMISE(h) = \frac{||K||_2^2}{nh} + \frac{h^4 \sigma_{K}^4 ||f_0''||_2^2}{4} 
+$$
+
+$||f''_0||_2^2$ is the squared $L_2$-norm of the true unknown density. Using various estimate $AMISE(h)$ can be used to estimate the asymptotically optimal bandwidth in a mean integrated squared error sense. By minimizing $AMISE(h)$ the asymptotically optimal oracle bandwidth is 
+
+$$
+h_N = \left(\frac{||K||_2^2 }{||f''_0||_2^2 \sigma_K^4} \right)^{1/5}n^{-1/5}
+$$
+
+Inserting the values we have for the Epanechnikov kernel
+
+$$
+h_N = \left(\frac{15 }{||f''_0||_2^2 } \right)^{1/5}n^{-1/5}
+$$
+
+We have now arrived at a circular problem. In order to select bandwidth we need to know $f$, but to estimate $f$ we need the bandwidth. A solution to this problem is to estimate $h$ according to Silverman’s rule of thumb, obtain a pilot density estimate $\tilde{f}$ and compute the squared $L_2$-norm, use this estimate to find $h_N$, in order to arrive at our final kernel density estimate. 
+
+Silverman’s rule of thumb for the Epanechnikov kernel is
+
+$$
+\hat{h}_n = (40\sqrt{\pi})^{1/5} \tilde{\sigma}n^{-1/5}
+$$
+
+Where $\tilde{\sigma} = \min\{\hat{\sigma}, \frac{\operatorname{IQR}}{1.34}\}$. 
+
+For the Epanechnikov kernel ($H$) with bandwidth $h$ we can compute the squared $L_2$-norm as
+
+$$
+||\tilde{f}||^2_2 = \frac{1}{n^2 h^6} \sum_{i=1}^N\sum_{j=1}^N\int H''\left(\frac{x-x_i}{h}\right) H''\left(\frac{x-x_j}{h}\right) dx
+$$
+We have
+
+$$
+H''(x) = -\frac{3}{2} 1_{[-1,1]}(x)
+$$
+Note
+
+$$
+\left(\frac{x-x_i}{h}\right) \in [-1,1] \Leftrightarrow x \in [x_i-r,x_i+r]
+$$
+
+So
+$$
+||\tilde{f}||^2_2 = \frac{9}{4n^2 h^6} \sum_{i=1}^N\sum_{j=1}^N \int_{\max\{x_i - h, x_j -h\}}^{\min\{x_i + h, x_j + h\}} 1 dx = \frac{9}{4n^2 h^6} \sum_{i=1}^N\sum_{j=1}^N  \left(\max\{0,2h - |x_i-x_j|\} \right)
+$$
+
+We simulate data by drawing 2 times $500$ points from a normal distribution with respectively mean 0 and mean 5. This way we obtain a bimodal distribution. 
+
+```{r}
+# Simulate data
+n <- 500
+set.seed(123)
+x <- c(rnorm(n), rnorm(n, 4))
+x_dens <- function(x) 1/2 * dnorm(x) + 1/2 * dnorm(x,4)
+
+p <- ggplot(tibble(x = x), aes(x = x)) + 
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = x, y = ..density..)) +
+  geom_function(fun = x_dens, alpha = 0.5, color = "blue") 
+
+p
+```
+
+We implement the method described above in the AMISE_bw function. It is pretty fast, profiling:
+
+```{r}
+profvis::profvis({
+  AMISE_bw(x)
+})
+```
+
+We create a density object and find the optimal bandwidth found by the AMISE_bw function
+
+```{r}
+sim_obj <- density_object(x)
+sim_obj$amise_bw
+```
+
+### Cross-validation methods
+
+An alternative to finding the optimal bandwidth by the AMISE plugin method is to use crossvalidation to find the optimal bandwidth from a loglikelihood perspective. The UCV is an alternative measure to choose the optimal bandwidth. We have implemented two functions. One slow:
+
+```{r}
+profvis::profvis({
+  cv_bw_l(x)
+})
+
+profvis::profvis({
+  cv_bw_l_fast(x)
+})
+```
+
+We see that in the fast function, a lot of time is spent computing the condition (the indicator function), and computing the sum. (for loopet tror jeg godt vi kan komme af med...) But the function is much faster than our first attempt. Evt. andre evt. forbedringer: hurtigere paralleilisering, folds osv. 
+
+Our crossvalidation optimal bandwidth:
+
+```{r}
+sim_obj$cv_bw
+```
+
+Very close to the optimal bandwidth found by the AMISE function
+
+### Benchmarking bandwidth selection
+
+```{r}
+# Generate random numbers
+set.seed(19)
+y <- rnorm(2^8)
+
+bw_bench <- bench::press(
+  k = 2^(4:8),
+  {
+    bench::mark(
+      "AMISE" = cv_bw_l(y[1:k]),
+      "likelihood" = AMISE_bw(x[1:k]),
+      check = FALSE
+    )
+  }
+)
+
+bw_bench[c("expression", "k", "min", "median", "itr/sec", "n_gc")]
+autoplot(bw_bench)
+```
+
+## Naive density estimator
+
+We first implement a naive kernel density estimator. It computes density estimates along a grid of points. The number of gridpoints is given by $m$ (default 512). The naive kernal density estimator takes as input $x$ and a bandwidth parameter $h$. 
+
+We check how the naive kernel density estimator approximates the simulated data with the AMISE bandwidth and the CV bandwidth parameter. We compare the results to the results obtained by using R's density function. The line belong to density is green, while the line obtained by our function is red. The dashed lines are the lines obtained using the bandwidth selected by cross validation. The blue line is the true density. 
+
+```{r}
+# Compute kernel density estimates along grid using our functions
+sim_obj$kd_cv <- as.data.frame(kern_dens(sim_obj, h = "CV")[1:2])
+sim_obj$kd_AMISE <- as.data.frame(kern_dens(sim_obj, h = "AMISE")[1:2])
+
+# Compute kernel density estimates along grid using R's density
+dens_r_cv <- as.data.frame(density(x, kernel = "epanechnikov", sim_obj$amise_bw)[1:2])
+dens_r <- as.data.frame(density(x, kernel = "epanechnikov", sim_obj$cv_bw)[1:2])
+
+# Plot along with kernel
+p + 
+  geom_line(data = sim_obj$kd_cv, aes(x = x, y = y), color = "red", linetype = "dashed") +
+  geom_line(data = dens_r_cv, aes(x = x, y = y), color = "green", linetype = "dashed") +
+  geom_line(data = sim_obj$kd_AMISE, aes(x = x, y = y), color = "red") +
+  geom_line(data = dens_r, aes(x = x, y = y), color = "green")
+
+```
+
+Our implementation of kernel density looks very good, it is impossible to see the difference. We check how it approximates the r density function
+
+```{r}
+par(mfrow=c(1,2))
+plot(
+  sim_obj$kd_cv$x,
+  sim_obj$kd_cv$y - dens_r_cv$y,
+  type = "l",
+  lwd = 2,
+  xlab = "x",
+  ylab = "Difference",
+  main = "CV bw"
+)
+
+plot(
+  sim_obj$kd_AMISE[,1],
+  sim_obj$kd_AMISE$y - dens_r$y,
+  type = "l",
+  lwd = 2,
+  xlab = "x",
+  ylab = "Difference",
+  main = "AMISE bw"
+)
+
+test_that("Our kernel density estimate correspond to density", {
+  expect_equal(
+    sim_obj$kd_AMISE$y,
+    dens_r$y,
+    tolerance = 5e-2
+  )
+})
+
+test_that("Our kernel density estimate correspond to density", {
+  expect_equal(
+    sim_obj$kd_cv$y,
+    dens_r_cv$y,
+    tolerance = 5e-2
+  )
+})
+```
+
+It approximates quite well. The error is in the magnitude of $10^{-2}$. 
+
+We benchmark the naive density function against the density function in R. 
+
+```{r}
+# Generate random numbers
+set.seed(19)
+y <- rnorm(2^10)
+
+dens_bench <- bench::press(
+  k = 2^(5:10),
+  {
+    bench::mark(
+      "r density" = density(y[1:k], op_bw),
+      "Naive" = kern_dens_naive(y[1:k], op_bw),
+      check = FALSE
+    )
+  }
+)
+
+dens_bench[c("expression", "k", "min", "median", "itr/sec", "n_gc")]
+autoplot(dens_bench)
+```
+
+Our implementation is much slower. 
+
+## Which bandwidth parameter is better?
+
+```{r}
+tibble("CV MSE" = mse_dens(sim_obj$kd_cv$y, x_dens(sim_obj$kd_cv$x)),
+       "AMISE MSE" = mse_dens(sim_obj$kd_cv$y, x_dens(sim_obj$kd_AMISE$x)))
+```
+
+
+## Binned density estimator
+
+### Implementation
+
+The binned density estimator is an alteration of the previous density estimator. It has the advantage of computational efficiency. The binned density estimator is computed as
+
+$$
+\hat{f}(x) = \frac{1}{hN} \sum_{i=1}^B n_j K\left(\frac{x-c_j}{h}\right)
+$$
+The function bins the observations into $B$ equal length bins spanning the length of $x$ observations. The number of observations in each bin is $n_j$. $c_j$ is the center of each bin. The computational efficiency is achieved by, instead of computing $K$ in each data point, we only compute $K$ in each centerpoint, and then multiply by the number of observations in that bin. The concern could be that we lose accuracy, but as we'll see, this is not a problem. 
+
+We check how the binned kernel density estimator approximates data with an arbitrary bandwidth parameter. 
+
+```{r}
+# Compute kernel density estimates along grid
+dens_est2 <- as.data.frame(kern_dens_bin(x, h = op_bw)[1:2])
+
+# Plot along with kernel
+ggplot(tibble(x = x), aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.3) + 
+  geom_line(data = dens_est, aes(x = x, y = y), color = "red")+
+  geom_line(data = dens_est2, aes(x = x, y = y), color = "green")
+```
+
+
+Differences between the binned density and R's density
+
+```{r}
+plot(
+  dens_est$x,
+  dens_est$y - dens_est2$y,
+  type = "l",
+  lwd = 2,
+  xlab = "x",
+  ylab = "Difference"
+)
+
+test_that("Our binned density implementation corresponds to the naive", {
+  expect_equal(
+    kern_dens_naive(x,1)$y,
+    kern_dens_bin(x, 1)$y,
+    tolerance = 1e-2
+  )
+})
+```
+
+We benchmark the two functions. 
+
+```{r}
+# Generate random numbers
+set.seed(19)
+y <- rnorm(5^10)
+
+dens_bench <- bench::press(
+  k = 2^(5:10),
+  {
+    bench::mark(
+      "Binned density" = kern_dens_bin(y[1:k], 0.2),
+      "Naive" = kern_dens_naive(y[1:k], 0.2),
+      check = FALSE
+    )
+  }
+)
+
+dens_bench[c("expression", "k", "min", "median", "itr/sec", "n_gc")]
+autoplot(dens_bench)
+```
+
+We find a binned kernel density estimate using the optimal bandwidth found by the AMISE. 
+
+```{r}
+# Compute kernel density estimates along grid
+dens_est3 <- as.data.frame(kern_dens_bin(x, h = op_bw, norm = FALSE)[1:2])
+
+# Plot along with kernel
+ggplot(tibble(x = x), aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.3) + 
+  geom_line(data = dens_est3, aes(x = x, y = y), color = "red")
+```
+
+## Test of the implementations using simulated data
+
+Compute the error of the density estimates on simulated data. 
+
+## Test of implementation using real data
+
+volcano

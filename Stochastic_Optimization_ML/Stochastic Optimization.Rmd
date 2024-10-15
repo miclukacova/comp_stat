@@ -1,0 +1,81 @@
+---
+title: 'Stochastic Optimization A: '
+author: "Michaela Lukacova"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  fig_height: 5
+  fig_width: 5
+  theme: flatly
+  html_document: null
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r source, include=FALSE}
+source("~/Desktop/Uni/5aar/CompStat/Assignments/Stochastic Optimization/SO_source.R")
+```
+
+# Implement stochastic optimization algorithms for estimating the parameters of this model
+
+The four-parameter log-logistic dose-response model is the nonlinear model of the mean of a real valued random variable $Y$ given $x$ defined as
+
+$$
+f(x|\alpha, \beta, \gamma, \rho) = \gamma + \frac{\rho - \gamma}{1 + e^{\beta \log(x) - \alpha}}
+$$
+
+$\theta = (\alpha, \beta, \gamma, \rho) \in \RR^4$. We wish to minimize
+
+$$
+f(x| \alpha, \beta, \gamma, \rho) = \frac{1}{N} \sum_{i=1}^{n} \left( y_i -  f(x_i|\alpha, \beta, \gamma, \rho ) \right)^2 
+$$
+By stochastic gradient descent. The optimization works by the update rule
+
+$$\theta_{n+1} = \theta_n - \gamma_{n+1} \rho_{n+1}$$
+
+where $\gamma_n$ is the learning rate. And $\rho_{n+1}$ is the gradient of the loss function at the $n+1$-th iteration. Since we are performing SGD we will find the gradient of a single random observation instead of the entire sum
+
+$$
+\rho_{n+1} = -\nabla_{\theta} f(x_i| \alpha, \beta, \gamma, \rho) (y_i - f(x_i| \alpha, \beta, \gamma, \rho))
+$$
+
+We implement the gradient of the $f$ function as follows:
+
+$$
+\nabla f(x| \alpha, \beta, \gamma, \rho) = \begin{pmatrix} \frac{\rho- \gamma}{(1 + e^{\beta \log(x) - \alpha})^2} e^{\beta \log(x) - \alpha} \\
+- \frac{\log(x) (\rho - \gamma)}{(1 + e^{\beta \log(x) - \alpha})^2} e^{\beta \log(x) - \alpha} \\
+1 - \frac{1}{1 + e^{\beta \log(x) - \alpha}} \\ \frac{1}{1 + e^{\beta \log(x) - \alpha}} \end{pmatrix}
+
+$$
+The $\rho_{n+1}$ is implemented in the function grad. We have implemented two different sampling functions. One of them samples from $\log(x)$'s from a normal distribution and calculates the $y$'s by $y_i = f(x_i|\alpha, \b)
+
+```{r}
+N <- 1000
+sample0 <- my_sample1(N, par = c(2,1,2,1), omega = 1)
+x <- sample0$x
+y <- sample0$y
+
+
+sgd(c(1,1,1,1), grad, N, 0.01, maxiter = 100) 
+
+
+```
+
+# Compare the resulting optimization algorithm(s) with non-stochastic algorithms e.g. gradient descent or the Newton algorithm
+
+
+```{r}
+grad_desc(c(2,1,2,1),
+    grad = grad_gd,
+    H = H,
+    t0 = 1e-2,
+    maxit = 1000,
+    cb = NULL,
+    epsilon = 1e-4,
+    beta = 0.5,
+    alpha = 0.1)
+```
+
+
