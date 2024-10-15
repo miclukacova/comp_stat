@@ -1,0 +1,485 @@
+---
+title: "Computation Statistics - first assignment. A: Density Estimation"
+output:
+  html_document:
+    toc: TRUE
+    code_folding: hide
+---
+
+```{r warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(results = "hold")
+#Read required libraries
+library(ggplot2)          # For plotting
+library(grid)             # For arranging plots
+library(gridExtra)        # For arranging plots
+
+library(bench)            # For benchmarking
+library(microbenchmark)   # For benchmarking code
+library(testthat)         # For testing
+
+library(Rcpp)             # For C++ code
+
+library(dplyr)            # For data manipulation
+library(Rfast)            # For fast matrix operations
+library(parallel)         # For parallel processing
+library(doParallel)       # For parallel processing
+
+library(MASS)             # For ucv
+library(CSwR)
+
+# Source relevant scripts
+source("EpanechnikovKernels.R")
+source("FunctionLibrary.R")
+source("BandwidthSelectionAlgorithms.R")
+```
+
+For all assignments in the course you should have the following five points in mind:
+
++ How can you test that your implementation is correct?
++ Can you implement alternative solutions?
++ Can the code be restructured e.g. by modularization, abstraction or object oriented programming to improve generality, extendability and readability?
++ How does the implementation perform (benchmarking)?
++ Where are the bottlenecks (profiling), and what can you do about them?
+
+
+
+
+
+#TODO
+Write three version of the epanechnikov kernel
+
++ Version 1: A loop-based version of the kernel
++ Version 2: The vectorized kernel
++ Version 3: The binned kernel
+
+Then compare the three versions of the kernel density estimator
+Think about how to restructuring the code to improve generality, extendability and readability
+
+Benchmark and profile the three functions and check for bottlenecks. If any resolve them.
+
+Write code for the bandwidth selection algorithms
+
+
+Compare bandwidth selection results
+Compute error for different bandwidths using the true density estimates as benchmark
+Implement Gaussian pilot in AMISE bandwidth selection
+Implement Epnaechnikov kernel in Rcpp
+Volcanos dataset
+
+
+# Theoretical background
+
+Recall that the general Kernel estimator is given by
+
+$$ \hat f_h (x) = \frac{1}{hN} \sum_{j = 1}^N K \left(\frac{x - x_j}{h} \right) $$
+The Epanechnikov kernel is given by:
+
+$$ K(x) = \frac{3}{4}(1-x^2) \cdot 1_{[-1,1]}(x) $$
+so the Epanechnikov kernel density estimator will be given by
+
+$$ \hat f_h (x) = \frac{1}{hN} \sum_{j = 1}^N \frac{3}{4}\biggl(1-\biggl(\frac{x-x_j}{h}\biggr)^2 \biggr) \cdot 1_{[-1,1]}(\frac{x-x_j}{h}) $$
+
+# Implementation
+
+
+## Make it work - first implementations
+
+We try three different implementations of the kernel.
+
++ Version 1: A loop-based version of the kernel
++ Version 2: The vectorized kernel
++ Version 3: The binned kernel
+
+Checking that all implementations result in about the same result as the density function in `R`:
+
+```{r}
+#Simulate data to test the kernel function
+set.seed(123)
+x <- rnorm(10000)
+h <- 0.25
+n <- 512
+
+
+hist(x, prob = T)
+legend(1.2, 0.4, legend=c("R density estimate", 
+                       "Loop density estimate", 
+                       "Vectorized density estimate", 
+                       "Binned density estimate"),
+       col=c("green", "red", "blue", "darkgreen"), lty=1:4, cex=0.8)
+lines(density(x, bw = h, n = n, kernel = "epanechnikov"), col = "green", lwd = 2)
+lines(kern_dens_loop(x, h, n, normalization = T), col = "red", lty = 2, lwd = 1)
+lines(kern_dens_vec(x, h, n, normalization = T), col = "blue", lty = 3, lwd = 1)
+lines(kern_dens_bin(x, h, n, normalization = T, B = 100), col = "darkgreen", lty = 4, lwd = 1)
+```
+
+We can numerically confirm that the density estimates are about the same
+
+```{r}
+r_dens_x <- density(x, bw = h, n = n, kernel = "epanechnikov")$x
+r_dens_y <- density(x, bw = h, n = n, kernel = "epanechnikov")$y
+loop_dens_y <- kern_dens_loop(x, h, n, normalization = T)$y
+vec_dens_y <- kern_dens_vec(x, h, n, normalization = T)$y
+bin_dens_y <- kern_dens_bin(x, h, n, normalization = T, B = 100)$y # Here using 100 bins. This could of course also be a parameter to tune
+
+# We then check that the results are about the same
+mean(r_dens_y - loop_dens_y)
+mean(r_dens_y - vec_dens_y)
+mean(r_dens_y - bin_dens_y)
+
+
+# We can also use test_that to check that the results are about the same
+test_that("Vectorized density implementation corresponds to density() with tolerance 1e-3", {
+  expect_equal(
+    r_dens_y,
+    vec_dens_y,
+    tolerance = 1e-3
+    )
+})
+
+test_that("Binned density implementation corresponds to density() with tolerance 1e-3", {
+  expect_equal(
+    r_dens_y,
+    bin_dens_y,
+    tolerance = 1e-3
+    )
+})
+
+
+```
+
+We note that all results are about the same. The binned kernel estimate is a bit off, but this is expected as we are only approximating the kernel with the bins. We can increase the number of bins to get a better estimate.
+
+```{r}
+par(mfrow = c(2,2))
+plot(r_dens_x, r_dens_y - kern_dens_bin(x, h, n, normalization = T, B = 100)$y, 
+                    type = "l", col = "red", xlab = "x", ylab = "Density difference",
+     main = "B = 100")
+plot(r_dens_x, r_dens_y - kern_dens_bin(x, h, n, normalization = T, B = 200)$y, 
+                    type = "l", col = "red", xlab = "x", ylab = "Density difference",
+     main = "B = 200")
+plot(r_dens_x, r_dens_y - kern_dens_bin(x, h, n, normalization = T, B = 512)$y, 
+                    type = "l", col = "red", xlab = "x", ylab = "Density difference",
+     main = "B = 512")
+plot(r_dens_x, r_dens_y - kern_dens_bin(x, h, n, normalization = T, B = 1024)$y, 
+                    type = "l", col = "red", xlab = "x", ylab = "Density difference",
+     main = "B = 1024")
+
+```
+
+```{r}
+test_that("Test that B = 512 is as good as the vectorized density implementation", {
+  expect_equal(
+    r_dens_y,
+    kern_dens_bin(x, h, n, normalization = T, B = 512)$y,
+    tolerance = 1e-3
+    )
+})
+```
+
+We note that the number of bins has to be quite high to get the same performance with the binned kernel as with the vectorized kernel. We can also see that the binned kernel is a bit off in the middle of the distribution. This is expected as the absolute value of the density is larger in the middle of the distribution. In practice one might argue that this is also a hyperparameter which should be chosen with care. It is a pay-off between computational time and accuracy.
+
+We can see that the difference between the density estimate and the binned kernel estimate decreases as we increase the number of bins. We also note, that the difference is larger toward the middle. This can be explained as the absolute value trying to be estimated is larger in the middle of the distribution. Relative to the value of the density, the difference is smaller in the middle of the distribution.
+
+```{r}
+par(mfrow = c(2,2))
+plot(r_dens_x, (r_dens_y - kern_dens_bin(x, h, n, normalization = T, B = 100)$y)/r_dens_y, 
+                    type = "l", col = "red", xlab = "x", ylab = "Density difference",
+     main = "B = 100")
+plot(r_dens_x, (r_dens_y - kern_dens_bin(x, h, n, normalization = T, B = 200)$y)/r_dens_y, 
+                    type = "l", col = "red", xlab = "x", ylab = "Density difference",
+     main = "B = 200")
+plot(r_dens_x, (r_dens_y - kern_dens_bin(x, h, n, normalization = T, B = 512)$y)/r_dens_y, 
+                    type = "l", col = "red", xlab = "x", ylab = "Density difference",
+     main = "B = 512")
+plot(r_dens_x, (r_dens_y - kern_dens_bin(x, h, n, normalization = T, B = 1024)$y)/r_dens_y, 
+                    type = "l", col = "red", xlab = "x", ylab = "Density difference",
+     main = "B = 1024")
+```
+This time we see that the difference is larger in the tails of the distribution. This can be explained by the little amount of data in the tails, that makes the estimates quite different.
+
+
+## Make it better - profiling and benchmarking
+
+
+
+```{r}
+# Benchmark the three functions against the density estimate
+bench::mark(kern_dens_loop(x, h, n, normalization = T),
+            kern_dens_vec(x, h, n, normalization = T),
+            kern_dens_bin(x, h, n, normalization = T),
+            density(x, bw = h, n = n, kernel = "epanechnikov"),
+            check = F)
+```
+```{r warning =FALSE}
+kern_benchmarks <- bench::press(
+  k = 2^(4:13),
+  {
+      bench::mark(
+        loop = kern_dens_loop(x[1:k], h, n, normalization = T),
+        vectorized = kern_dens_vec(x[1:k], h, n, normalization = T),
+        binned = kern_dens_bin(x[1:k], h, n, normalization = T),
+        r_dens = density(x[1:k], bw = h, n = n, kernel = "epanechnikov"),
+        check = F)
+  }
+)
+
+plot(kern_benchmarks)
+
+kern_benchmarks %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+```
+
+We see that the binned kernel density estimator is the fastest of our three implementations. We profile the function to see if there is any obvious way to make it faster.
+
+```{r}
+x <- rnorm(1e7)
+profvis::profvis(kern_dens_bin(x, h, n, normalization = T, fast = F))
+```
+
+We see, that the main bottleneck is the for loop in the `kern_bin()` function. We try to resolve this by implementing this loop in C++ using the `Rcpp` package. We make a quick check that the function gives the correct output:
+
+```{r}
+test_that("Binned density implementation corresponds to density() with tolerance 1e-3", {
+  expect_equal(
+    kern_bin(x, l = range(x)[1], u = range(x)[2], B = 100)$weights,
+    kern_bin_Rcpp(x = x, l = range(x)[1], u = range(x)[2], B = 100)$weights,
+    tolerance = 1e-3
+  )
+})
+```
+We note that the implementation went well so we implement a new binned kernel with this implementation.
+
+```{r}
+profvis::profvis(kern_dens_bin_Rcpp(x, h, n, normalization = T, fast = T))
+```
+
+we see that it reduced the runtime. We can benchmark the function again:
+
+```{r}
+kern_benchmarks_bin <- bench::press(
+  k = 2^(4:13),
+  {
+      bench::mark(
+        slow = kern_dens_bin(x[1:k], h, n, normalization = T, fast = F),
+        Rcpp = kern_dens_bin_Rcpp(x[1:k], h, n, normalization = T, fast = F),
+        Rcpp_fast = kern_dens_bin_Rcpp(x[1:k], h, n, normalization = T, fast = T),
+        r_dens = density(x[1:k], bw = h, n = n, kernel = "epanechnikov"),
+        check = F)
+  }
+)
+
+plot(kern_benchmarks_bin)
+
+kern_benchmarks_bin %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+```
+
+
+
+```{r}
+x <- rnorm(10000)
+bench::mark(kern_dens_loop(x, h, n, normalization = T), 
+            kern_dens_bin_Rcpp(x, h, n, normalization = T, fast = T),
+            density(x, bw = h, n = n, kernel = "epanechnikov"),
+            check = F)
+```
+Note however, that the memory allocation and gc/sec is much higher for the binned kernel. This may be due to the extra calculations involved in the binning procedure.
+
+
+
+
+
+# Bandwidth selection
+We consider two approaches. The bandwidth selection using asymptotics and the bandwidth selection using cross validation. We start with the asymptotic approach.
+
+
+## AMISE approach
+In this approach we use the AMISE (Asymptotic Mean Integrated Squared Error) to select a bandwidth. The AMISE is given by
+
+$$ AMISE(h) = \frac{||K||^2_2}{nh} + \frac{h^4 \sigma_K^4 ||f_0''||_2^2}{4} $$
+
+where $K$ is the kernel and $||K||^2_2 = \int K^2(x)dx$. $h$ is the bandwidth and $\sigma_K^2 = \int x^2 K(x)dx$ is the variance of the kernel. $f_0''$ is the second derivative (assumed to exist) of the true/oracle density and both the kernel function and the second derivative of the true density are assumed to be square integrable. It can be shown that the MISE and AMISE are asymptotically equivalent which we use to select the bandwidth. By minimizing the AMISE with respect to $h$ we obtain the optimal oracle bandwidth:
+
+$$ h = \biggl(\frac{||K||^2_2}{\sigma_K^4 ||f_0''||^2_2} \biggr)^{1/5} n^{-1/5} $$
+We can determine all components of the above expression except the true density $f_0$ which has to be estimated. To do this we estimate a pilot estimate:
+
+$$\|\tilde{f}''\|^2_2 = \frac{1}{n^2r^6} \sum_{i = 1}^N \sum_{j=1}^N 
+\int H''\left( \frac{x - x_i}{r} \right) H''\left( \frac{x - x_j}{r} \right) \mathrm{d} x.$$
+
+where $H$ is a Kernel (usually assumed to be Gaussian) and $r$ is the pilot bandwidth. If we assume $f_0$ is Gaussian this pilot bandwidth can be estimated by
+
+$$h_n = \left( \frac{8 \sqrt{\pi} \|K\|_2^2}{3 \sigma_K^4} \right)^{1/5} \tilde\sigma n^{-1/5}, \qquad \tilde \sigma = \min \{\hat \sigma, IQR/1.34 \}$$
+In this estimator, IQR denotes the empirical interquartile range, and $1.34$ is approximately the interquartile range, $\Phi^{-1}(0.75) - \Phi^{-1}(0.25)$ of the standard Gaussian distribution. 
+
+We implement this for the Epanechnikov kernel. For the Epanechnikov kernel, we have $||K||^2_2 = 3/5$ and $\sigma_K^2 = 1/5$, so the pilot bandwidth is given by
+
+$$\hat h_n = \left( \frac{8 \sqrt{\pi} 3/5}{3 (1/5)^2} \right)^{1/5} \tilde\sigma n^{-1/5} = (40 \sqrt{\pi}) ^{1/5} \tilde \sigma n^{-1/5} $$
+Having found the pilot bandwidth we determine an estimate for $\|\tilde{f}''\|^2_2$. A few calculations show that this gives
+
+$$ \|\tilde{f}''\|^2_2 = \frac{9}{4n^2 r^6} \sum_{i = 1}^n \sum_{j = 1}^n \max \{0, (2r + \min \{x_i, x_j \} - \max \{x_i, x_j \} ) \}$$
+We can now determine the optimal bandwidth by plugging in the pilot bandwidth and the estimate for $\|\tilde{f}''\|^2_2$ into the formula for the optimal bandwidth. We implement this in the following function:
+
+```{r}
+AMISE_epa_bandwidth <- function(x){
+  n <- length(x)
+  K_square_norm <- 3/5
+  k_sigma_4 <- 1/25
+  
+  f_tilde_norm2 <- epanechnikov_f_tilde_norm2(x)
+  
+  (K_square_norm/(k_sigma_4 * f_tilde_norm2))^(1/5) * n^(-1/5)
+}
+
+x <- rnorm(1000)
+AMISE_epa_bandwidth(x)
+```
+
+We profile the function:
+
+```{r}
+profvis::profvis(AMISE_epa_bandwidth(x))
+```
+
+We note that it is quite slow and that it is one function that is the bottleneck. We may therefore consider writing an Rcpp function to take care of this step. We test that the Rcpp implementation results in the same as the old implementation:
+
+```{r}
+test_that("AMISE_epa_bandwidth", {
+  x <- rnorm(10000)
+  r <- 0.5
+  expect_equal(min_max_diff_sum_faster(x, r), min_max_diff_sum_Rcpp(x = x, r_hat = r))
+})
+```
+
+```{r}
+x <- rnorm(1000)
+microbenchmark::microbenchmark(AMISE_epa_bandwidth(x), AMISE_epa_bandwidth_rcpp(x))
+```
+
+We see that the Rcpp did not solve the issue. What we could do instead is use a Gaussian kernel as pilot kernel:...
+
+
+## Cross validation
+In the cross validation approach we split the data set into $K$ parts:
+
+$I_1, \ldots, I_k$ that form a partition of the index set $\{1, \ldots, N\}$
+and define 
+
+$$  I^{-i} = \bigcup_{l: i \not \in I_l} I_l. $$
+Let also $n_i = |I^{-i}|$ and 
+
+$$\hat{f}^{-i}_h = \frac{1}{h n_i} \sum_{j \in I^{-i}} K\left(\frac{x_i - x_j}{h}\right).$$
+such that $\hat{f}^{-i}_h$ is the kernel density estimate based on data with indices in $I^{-i}$ and evaluated in $x_i$. Note that the density estimate evaluated in $x_i$ is not based on $x_i$, so $\hat{f}^{-i}_h$ assesses how well the density estimate computed using a bandwidth $h$ concur with the data point $x_i$. This can be summarized using the log-likelihood 
+
+$$\ell_{\mathrm{CV}}(h) = \sum_{i=1}^N \log (\hat{f}^{-i}_h),$$
+
+that we will refer to as the cross-validated log-likelihood, and we define the bandwidth estimate as
+
+$$ \hat{h}_{\mathrm{CV}} = \arg \max_h \ \ \ell_{\mathrm{CV}}(h).$$
+This cross-validation based bandwidth can then be used for computing kernel density estimates using the entire dataset. 
+
+We benchmark the functions and ensure that they produce the same result:
+
+```{r}
+x <- rnorm(1000)
+bench::mark(cv_naive(x, h_grid, folds = 5, seed = 1),
+            cv_outer(x, h_grid, folds = 5, seed = 1),
+            cv_Outer(x, h_grid, folds = 5, seed = 1))
+```
+
+It appears that the `cv_outer()` function is the fastest. We can profile the `cv_outer` function to see where the bottleneck is:
+
+```{r}
+profvis::profvis(cv_outer(x, h_grid, folds = 5))
+```
+
+We see that it is the calculation of the Epanechnikov kernel that is slow. We implement this in Rcpp instead.
+
+
+```{r}
+test_that("expect equalt", {
+  expect_equal(cv_outer(x, h_grid, folds = 5, kernel = epanechnikov, seed = 1)$best_h,
+               cv_outer(x, h_grid, folds = 5, kernel = epanechnikovMatrixRcpp, seed = 1)$best_h)
+})
+```
+
+
+benchmark
+
+```{r}
+bench::mark(cv_outer(x, h_grid, folds = 5, kernel = epanechnikov, seed = 1),
+               cv_outer(x, h_grid, folds = 5, kernel = epanechnikovMatrixRcpp, seed = 1))
+```
+
+```{r}
+profvis::profvis(cv_outer(x, h_grid, folds = 5, kernel = epanechnikovMatrixRcpp, seed = 1))
+```
+
+With the current implementation it is probably difficult to make it much faster.
+
+
+# Putting it all together
+Having profiled and benchmarked we ended up with the best functions:
+
+`kern_dens_bin_Rcpp()`, `AMISE_epa_bandwidth` and `cv_outer()` with an Rcpp based kernel density.
+
+
+
+
+
+```{r}
+#Simulate data to test the kernel function
+x <- rnorm(5000)
+h_AMISE <- AMISE_epa_bandwidth(x)
+
+h_CV_list <- numeric(50)
+for (i in seq_along(h_CV_list)){
+  h_CV_list[i] <- cv_outer(x, h_grid, folds = 10, kernel = epanechnikovMatrixRcpp)$best_h
+  print(i)
+}
+h_CV <- mean(h_CV_list)
+n <- 512
+
+
+hist(x, prob = T)
+legend(1.2, 0.4, legend=c("AMISE", "CV"),
+       col=c("red", "blue"), lty=1:4, cex=0.8)
+lines(kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100), col = "red", lty = 1, lwd = 1)
+lines(kern_dens_bin_Rcpp(x, h_CV, n, normalization = T, B = 100), col = "blue", lty = 2, lwd = 1)
+```
+
+```{r}
+kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100)
+
+
+AMISE_est <- kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100)$y
+AMISE_gridpoints <- kernel_prep(x, h_AMISE, n)$gridpoints
+AMISE_analytical <- dnorm(AMISE_gridpoints)
+
+CV_est <- kern_dens_bin_Rcpp(x, h_CV, n, normalization = T, B = 100)$y
+CV_gridpoints <- kernel_prep(x, h_CV, n)$gridpoints
+CV_analytical <- dnorm(CV_gridpoints)
+
+# Plot the difference between the analytical and the estimated density
+plot(CV_gridpoints, CV_est - CV_analytical, col = "blue", type = "l", lwd = 2, xlab = "x", ylab = "Difference")
+lines(AMISE_gridpoints, AMISE_est - AMISE_analytical, lwd = 2, col = "red")
+legend(2, -0.01, legend=c("AMISE", "CV"), col=c("red", "blue"), lty=1:4, cex=0.8)
+
+
+mean(AMISE_est - AMISE_analytical)
+mean(CV_est - CV_analytical)
+
+```
+
+
+
+Maybe also add a nice interface, that is an S3 class.
+
+
+
+
+
+

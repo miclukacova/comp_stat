@@ -1,0 +1,415 @@
+---
+title: "Computation Statistics - first assignment. A: Density Estimation"
+output:
+  html_document:
+    toc: TRUE
+    code_folding: hide
+---
+  
+```{r warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(results = "hold")
+#Read required libraries
+
+library(ggplot2)          # For plotting
+library(grid)             # For arranging plots
+library(gridExtra)        # For arranging plots
+
+
+library(bench)            # For benchmarking
+library(microbenchmark)   # For benchmarking code
+
+library(Rfast)            # For fast matrix operations
+library(Matrix)           # For matrix operations and sparse matrices
+
+library(dplyr)            # For data manipulation
+
+library(testthat)         # For testing
+
+
+library(parallel)         # For parallel processing
+library(doParallel)       # For parallel processing
+
+library(CSwR)             # For data set
+
+# Source relevant scripts
+source("Functions.R")
+source("GaussianEnvelope.R")
+Rcpp::sourceCpp("RcppFunctions.cpp")
+```
+
+
+
+TODO:
+
++ Argue why we find sigma using a grid and not an optimization algorithm
++ Understand the Rcpp implementation of the gaussian envelope
++ Optimze the adaptive envelope
++ Build S3 objects to increase user friendliness and readability
++ Convert into slides
+
+
+Read poisson data
+```{r warning = FALSE}
+poisson <- read.csv("poisson.csv")
+head(poisson)
+dim(poisson)
+```
+
+
+# What is rejection sampling and why to use
+Sample from complex distributions by sampling from a simpler distribution and rejecting samples that do not resemble the target distribution.
+
+# Brief theoretical introduction
+Rejection sampling builds on the idea, that we can sample from a distribution $f(y)$ by sampling from a proposed distribution $g(y)$ and then reject the samples from $g(y)$ that does not resemble $f(y)$. This is based on some criteria.
+
+To be more specific. Let $f(y)$ be the target distribution and $g(y)$ be the proposal distribution such that
+
+$$ g(y) = 0 \Rightarrow f(y) = 0$$
+
+We then sample random variables $X_1, X_2,...$ with density $g(y)$ on $\mathbb{R}$ and random variables $U_1, U_2,...$ with density $unif(0,1)$ and independent of the $X_i$'s. Next let $\alpha \in (0,1]$ and define
+
+$$ \sigma = \inf \biggl\{ n \in \mathbb{N}:U_n \leq \alpha \frac{f(X_n)}{g(X_n)} \biggl\} $$
+It can then be shown that if $\alpha f(y) \leq g(y)$ for all $x \in \mathbb{R}$ then the random variables $X_\sigma$ is a random variable with density $f(x)$ on $\mathbb{R}$. It can further be shown that $\alpha = \mathbb{P}(U_1 \leq \alpha \frac{f(X_1)}{g(X_1)})$ is the rejection probability. We would like this to be small, so we often accept a proposal and do not have to run the sampling algorithm many times.
+
+
+# Implementation of Gaussian envelope
+The purpose is to sample from the distribution
+
+$$ f(y) \propto \prod_{i = 1}^{100} \exp(yz_ix_i - \exp(yx_i)), \quad y \geq 0  $$
+using a Gaussian envelope of $f$. That is, using a proposal distribution $g(y) \sim \mathcal{N}(\mu, \sigma^2)$. We can plot the target distribution (or something proportional to it, to see how it looks):
+
+```{r, echo = FALSE}
+plot(seq(0,0.6,0.005), target_distribution_pois(seq(0,0.6,0.005)), type = "l",
+     lwd = 2, col = "blue", xlab = "x", ylab = "Scaled Density", main = "Target distribution")
+grid()
+```
+
+In order to get an efficient algorithm we should choose find a suitable normal distribution as our proposal distribution. That is, we need to determine values for $\mu$ and $\sigma$ as well as a proper value of $\alpha$. Note that instead of choosing a Gaussian density for $g(y)$ we can find a function that is proportional to $g(y)$. In particular, for some constants $c$ and $d$ we let
+
+$$ f^*(y) = \frac{f(y)}{c} = \prod_{i = 1}^{100} \exp(yz_ix_i - \exp(yx_i)), \quad y \geq 0 $$
+and $$g^*(y) = \frac{g(y)}{d}.$$
+
+We can then choose
+
+$$\alpha^* = \frac{c}{d} \alpha$$ 
+such that
+
+$$ u \leq \alpha \frac{f(y)}{g(y)} \iff u \leq \alpha^* \frac{f^*(y)}{g^*(y)}$$
+We already know $f^*(y)$ and we can pick any function $g^*(y)$ that is proportional to $g(y)$ including $g(y)$ itself such that $d=1$ and $\alpha^* = \alpha c$. We let $\alpha^*$ be the number $$ \alpha^* = \inf_{y:f^*(y) > 0} \frac{g^*(y)}{f^*(y)} > 0.$$
+
+as this $\alpha^*$ satisfy $ \alpha^* f^*(y) \leq g^*(y) \iff \alpha f(y) \leq g(y)$.
+
+We start naively by determining $\alpha^*$ using a standard normal Gaussian envelope and plot the result:
+
+```{r}
+y_seq <- seq(0, 0.6, 0.005)
+
+naive_alpha_star <- optimize(f = function(y) proportion_function(target_distribution = target_distribution_pois,
+                                                            proposal_distribution = dnorm, y = y,
+                                                            mean = 0, sd = 1), 
+                        interval = c(0, 1), maximum = FALSE)$objective
+
+plot(y_seq, 
+     dnorm(y_seq, mean = 0, sd = 1)/naive_alpha_star, 
+     type = 'l',
+     xlim = c(0,0.6),
+     ylim = c(0, 1/naive_alpha_star),
+     xlab = "x", ylab = "Scaled density", main = "Proposal distribution with mean = 0 and sd = 1",
+     col = "red", lwd = 2
+     )
+lines(y_seq, target_distribution_pois(y_seq), col = "blue", lwd = 2)
+legend("topright", legend = c("Proposal distribution", "Target distribution"), col = c("red","blue"), lty = 1, cex = 0.8)
+```
+
+We see that this is not a very good fit. Instead we try to determine values $\hat \mu$ and $\hat \sigma$ such that the Gaussian is a better fit. We choose $\hat \mu$ to be the mean of the target distribution. Although our target distribution may not be entirely symmetric it is from the plot fair to assume that the mean value is somewhere close to where it attains its maximum value. We can determine this by numerical optimization:
+
+```{r echo = FALSE}
+mu_hat <- optimize(f = function(x) target_distribution_pois(x), interval = c(0.2, 0.3), maximum = TRUE)$maximum
+mu_hat
+```
+
+We can use this value to determine a suitable value for $\hat \sigma$. Our rejection rate is the area between our target distribution and our proposal distribution. That is
+
+$$ 1 - \alpha = \int_{\mathbb R} g(z,\hat \mu, \hat \sigma) - f(z) dz = \int_{\mathbb R} p(z, \hat \mu, \hat \sigma) - cq(z) dz $$
+
+we can numerically estimate this
+
+```{r}
+sigma_hat <- sigma_hat_func(sigma_seq = seq(0.01, 0.1, 0.0001), y_vec = y_seq)
+
+alpha_star <- optimize(f = function(y) 
+    proportion_function(target_distribution = target_distribution_pois,
+                        proposal_distribution = dnorm, 
+                        y = y,
+                        mean = mu_hat, 
+                        sd = sigma_hat),
+    interval = c(0, 1), maximum = FALSE)$objective
+
+plot(y_seq, 
+     dnorm(y_seq, mean = mu_hat, sd = sigma_hat), 
+     type = 'l',
+     xlab = "x", ylab = "Density", main = paste0("Proposal distribution with mean = ", round(mu_hat, 4)," and sd = ",round(sigma_hat,4)),
+     col = "red"
+     )
+lines(y_seq, target_distribution_pois(y_seq) * alpha_star, col = "blue")
+legend("topright", legend = c("Proposal distribution", "Target distribution"), col = c("red","blue"), lty = 1, cex = 0.8)
+```
+
+
+```{r}
+plot(y_seq, 
+     dnorm(y_seq, mean = mu_hat, sd = sigma_hat) - target_distribution_pois(y_seq) * alpha_star, type = 'l', col = "blue", lwd = 2, xlab = "x", ylab = "Difference", main = "Difference between proposal and target distribution")
+abline(0,0)
+```
+
+Having determined the values of $\hat \mu$, $\hat \sigma$ and $\alpha^*$ we can now implement a function that samples from the target distribution using rejection sampling:
+
+```{r}
+gaussian_loop
+```
+
+Note we can plot the theoretical distribution by estimating $\alpha$ as $\hat \alpha = \frac{N}{N + \text{rejection_count}}$ and then plotting the scaled target distribution with the estimated $\alpha$:
+
+$$ f(y) \approx \frac{\alpha^*}{\hat \alpha}q(y) $$
+
+Plugging in the values of the mean, standard deviation, $\alpha^*$ and $\hat \alpha$ we get the following samples:
+
+```{r}
+N <- 100000
+rejection_list <- gaussian_loop(N, mu_hat, sigma_hat, alpha_star)
+rejection_sample <- rejection_list$samples
+n_rejections <- rejection_list$rejection_count
+alpha_hat <- rejection_list$alpha_hat
+
+hist(rejection_sample, 
+     probability = TRUE, 
+     breaks = 50, main = "Histogram of samples from rejection sampling", 
+     xlab = "x", ylab = "Density", xlim = c(0, 0.6), ylim = c(0, 8))
+lines(seq(0,0.6,0.005), 
+      (alpha_star/alpha_hat) * target_distribution_pois(seq(0,0.6,0.005)), 
+      col = "blue")
+legend("topright", legend = c("Estimated alpha"), col = c("blue"), lty = 1, cex = 0.8)
+
+```
+
+# Profiling and improving rejection sampler
+We then start by profiling
+
+```{r}
+profvis::profvis(gaussian_loop(N, mu_hat, sigma_hat, alpha_star))
+```
+
+We see that it is calculating the target distribution that takes a long time. We therefore put in effort here to optimize
+
+
+New implementations
+
+
+
+Check they are the same
+
+```{r}
+test_seq <- seq(0, 1, 0.0001)
+x_poisson <- poisson$x
+z_poisson <- poisson$z
+xz_poisson <- x_poisson*z_poisson
+
+
+test_that("Check that the two implementations are the same", {
+  expect_equal(target_distribution_pois(test_seq), 
+               target_distribution_pois1(test_seq, x = x_poisson, z = z_poisson, xz = xz_poisson),
+               tolerance = 1e-45)
+})
+
+test_that("Check that the two implementations are the same", {
+  expect_equal(target_distribution_pois(test_seq), 
+               target_distribution_pois2(test_seq, x = x_poisson, z = z_poisson, xz = xz_poisson),
+               tolerance = 1e-45)
+})
+
+
+test_that("Check that the two implementations are the same", {
+  expect_equal(target_distribution_pois(test_seq), 
+               target_distribution_pois3(test_seq, x = x_poisson, z = z_poisson, xz = xz_poisson),
+               tolerance = 1e-45)
+})
+
+test_that("Check that the two implementations are the same", {
+  expect_equal(target_distribution_pois(test_seq), 
+               rcpp_target_distribution_pois(test_seq, x = x_poisson, z = z_poisson, xz = xz_poisson),
+               tolerance = 1e-45)
+})
+```
+
+
+Benchmark
+
+
+```{r}
+microbenchmark(target_distribution_pois(test_seq),
+               target_distribution_pois1(test_seq, x = x_poisson, z = z_poisson, xz = xz_poisson),
+               target_distribution_pois2(test_seq, x = x_poisson, z = z_poisson, xz = xz_poisson),
+               target_distribution_pois3(test_seq, x = x_poisson, z = z_poisson, xz = xz_poisson),
+               rcpp_target_distribution_pois(test_seq, x = x_poisson, z = z_poisson, xz = xz_poisson))
+```
+
+
+```{r}
+profvis::profvis(gaussian_fast_loop(N, mu_hat, sigma_hat, alpha_star))
+```
+
+
+We see that it is still slow that we generate samples at every iterations. We therefore try to generate a large sample and then accepct or reject this sample.
+
+
+```{r}
+N <- 100000
+rejection_list <- gaussian_random(N = N, mu = mu_hat, sigma = sigma_hat, alpha_star = alpha_star)
+rejection_sample <- rejection_list$samples
+alpha_hat <- rejection_list$alpha_hat
+
+hist(rejection_sample, 
+     probability = TRUE, 
+     breaks = 50, main = "Histogram of samples from rejection sampling", 
+     xlab = "x", ylab = "Density", xlim = c(0, 0.6), ylim = c(0, 8))
+lines(seq(0,0.6,0.005), 
+      (alpha_star/alpha_hat) * target_distribution_pois(seq(0,0.6,0.005)), 
+      col = "blue")
+legend("topright", legend = c("Estimated alpha"), col = c("blue"), lty = 1, cex = 0.8)
+```
+
+
+```{r}
+profvis::profvis(gaussian_random(N, mu_hat, sigma_hat, alpha_star))
+```
+
+```{r}
+profvis::profvis(gaussian_vec(N = 100000, mu = mu_hat, sigma = sigma_hat, alpha_star = alpha_star))
+```
+
+```{r}
+microbenchmark((gaussianRcpp(N = 100000, mu = mu_hat, sigma = sigma_hat, alpha_star = alpha_star, x_poisson = x_poisson, z_poisson = z_poisson, xz_poisson = xz_poisson)), gaussian_vec(N = 100000, mu = mu_hat, sigma = sigma_hat, alpha_star = alpha_star))
+```
+
+
+Adjust the functions to be more alike. Then use the fastest to create a S3 object in R.
+
+
+Different implementations of the target density to optimize code - maybe benchmark before optimizing.
+
+Estimated rejection probability is the gap between the envelope and the target density. Integrate difference
+
+Plot difference between envelope and target distribution to make sure the difference is positive
+
+
+
+parallelization as samples are independent
+
+Vertical scaling: Scaling individual code pieces making them more efficient
+Horizontal scaling: Paralleling the code
+
+xaringan presentation tool
+
+gradually implement things in Cpp
+
+When using & you pass a memory reference and not a copy of the object. This is useful when you want to change the object in the function. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Adaptive rejection sampling algorithm with piecewise log-affine envelope
+
+## Introduction
+In the following we introduce a data-adaptive strategy to constructing a piecewise log-affine envelope. The strength of this approach is, that as long as the target distribution is log-concave, the envelope will be a good approximation of the target distribution. Hence, we do not have to 'find' a good envelope, but can construct it on the fly. The downside is that the algorithm is more computationally expensive than the previous rejection sampling algorithm, so it may not suitable or feasible for all problems.
+
+## Brief theoretical introduction
+Let $f$ be the target distribution as before. We seek to construct a suitable proposal distribution. The proposal distribution is defined on an open interval $I \subset \mathbb{R}$ partioned into $m$ non-empty intervals $I_1 = (z_0, z_1], \ldots, I_m = (z_{m-1},z_m]$. For suitable $a_i$ and $b_i$ we define the piecewise affine function
+
+$$ V(y) = \sum_{i = 1}^m (a_iy + b_i) \mathbb{1}_{I_i}(y) $$
+where $\mathbb{1}_{I_i}(y)$ is the indicator function of $I_i$. If
+
+$$ d = \int_{z_0}^{z_m} \exp (V(y)) dy < \infty$$
+then we can use a proposal distribution with a piecewise log-affine density
+
+$$ g(x) = \frac{1}{d} \exp(V(x)) $$
+
+The distribution function for $g$ is given by
+
+$$ G(x) = \int_{z_0}^x g(y) dy = \frac{1}{d} \int_{z_0}^x \exp(V(y)) dy $$
+We can sample from this distribution by inverting the distribution function and evaluating the inverse at a uniform random variable $u \sim U(0,1)$. To compute the inverse of $G(x)$ we need to do a few tricks which involves a bit of book keeping.
+
+### Inverting the distribution function
+Define for $i = 1,...,m$ the functions
+
+$$ H_i(x) = \int_{z_{i-1}}^x \exp(a_i z + b_i) dz  $$
+and let $R_i = H_i(z_i)$ and $Q = \sum_{i = 1}^m R_i$. Then $d = Q_m$ and for $q \in (0,1)$ solving $G(x) = q$ is equivalent to solving
+
+$$ H_i(x) = dq - Q_{i-1} $$
+
+### Implementation
+
+We let $a_i = (\log (f(x_i)))' = \frac{f'(x_i)}{f(x_i)}$ and $b_i = \log(f(x_i)) - a_i x_i$. In this way, $a_i x + b_i$ is the tangent to $\log f(x)$ at $x_i$. By log-concavity we then have 
+
+$$\log(f(x)) \leq \frac{f'(x_i)}{f(x_i)} (x- x_i) + \log(f(x_i)) = a_i x + b_i$$ 
+for $x \in I_i$. Thus 
+
+$$\log(f(x)) \leq V(x) = \sum_{i = 1}^m (a_iy + b_i) \mathbb{1}_{I_i}(x) $$
+and provided that $d < \infty$ the piecewise log-affine density proportional to $V(x)$ is a valid proposal distribution for rejection sampling from $f(x)$ with $\alpha^* = 1$. We can tighten the envelope by choosing the $z_i$'s such that they are at the intersection of the lines $a_i x + b_i$ and $a_{i+1}x + b_{i+1}$. This is achieved by setting 
+
+$$z_i = \frac{b_{i+1} - b_i}{a_i - a_{i+1}}$$.
+
+
+
+## Implementing the adaptive rejection sampler
+We start by checking that target distribution (or something propoportaional) is in fact log-concave.
+
+$$ \log f^*(y) = \log \prod_{i = 1}^{100} \exp(yz_ix_i - \exp(yx_i)) = \sum_{i = 1}^{100} (yz_ix_i - \exp(yx_i))$$
+
+$$ \frac{d \log f^*(y)}{dy} = \sum_{i = 1}^{100} (z_ix_i - x_i \exp(yx_i))  $$
+
+Having the check in place we implement the adaptive rejection sampler
+
+
+```{r}
+log_target_dist <- log_target_distribution_pois
+log_target_dist_diff <- log_target_distribution_diff_pois
+
+
+length(adaptive_rejection_sampler(N = 250000, 
+                                  break_points = c(0.2,0.25,0.3), 
+                                  log_target_dist, log_target_dist_diff))
+
+hist(adaptive_rejection_sampler(N = 250000, break_points = c(0.1,0.2,0.25,0.3), 
+                                log_target_dist, log_target_dist_diff), probability = TRUE, breaks = 50)
+lines(seq(0,0.6,0.005), 
+      (alpha_star$objective/alpha_hat) * target_distribution_pois(seq(0,0.6,0.005)), 
+      col = "blue")
+legend("topright", legend = c("Estimated alpha"), col = c("blue"), lty = 1, cex = 0.8)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

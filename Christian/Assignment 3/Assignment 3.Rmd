@@ -1,0 +1,145 @@
+---
+title: "Computation Statistics - third assignment. A: EM algorithm"
+output:
+  html_document:
+    toc: TRUE
+    code_folding: hide
+---
+  
+```{r warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(results = "hold")
+#Read required libraries
+
+library(ggplot2)          # For plotting
+library(grid)             # For arranging plots
+library(gridExtra)        # For arranging plots
+
+
+library(bench)            # For benchmarking
+library(microbenchmark)   # For benchmarking code
+
+library(Rfast)            # For fast matrix operations
+library(Matrix)           # For matrix operations and sparse matrices
+
+library(dplyr)            # For data manipulation
+
+library(testthat)         # For testing
+
+
+library(parallel)         # For parallel processing
+library(doParallel)       # For parallel processing
+
+library(CSwR)             # For data set
+
+# Source relevant scripts
+```
+
+
+# Theoretical introduction
+The EM algorithm is used in cases where we may not observe the entire data we are interested in. For instance, we may observe a more crude division of our data, than we believe is of interest. That is, if $X$ is the random variable of interest we only observe $Y = M(X)$ where $M$ is some map coarsening $X$ - for instance collapsing $X$ into fewer categories. In this exercise we consider the random variable $Y = (X, W)$ with density:
+
+\[
+  f(x,w | \theta) = \frac{1}{\sqrt{\pi \nu \sigma^2} 2^{(\nu + 1)/2} \Gamma(\nu/2)} w^{\frac{\nu - 1}{2}} \exp(- \frac{w}{2} (1 + \frac{(x-\mu)^2}{\nu \sigma^2}) )
+\]
+
+where $\theta = (\mu, \sigma)$. We then define
+
+\[
+  Q(\theta|\theta') = \mathbb{E}[\log f(X,W \ | \ \theta) \ |\ X = x]
+\]
+
+and we wish to iteratively compute 
+
+\[
+  \theta_{n+1} = \arg \max_\theta Q(\theta \ | \ \theta_n)
+\]
+
+# Deriving the marginal density of X
+
+
+
+# Maximizing the full data log likelihood and implementation
+
+
+
+```{r}
+
+alpha_prime_func <- function(nu){
+  return((nu + 1)/2)
+}
+
+beta_prime_func <- Vectorize(function(x, nu, mu, sigma){
+  return(1/2 * (1 + (x - mu)^2 / (nu * sigma^2)))
+}, vectorize.args = "x")
+
+
+
+mu_hat_func <- function(x, beta_prime){
+  return(sum(x * beta_prime) / sum(1 / beta_prime))
+}
+
+sigma_hat_func <- function(x, nu, mu_hat, alpha_prime, beta_prime){
+  return(sqrt(alpha_prime/nu * mean((x - mu_hat)^2 / beta_prime)))
+}
+
+
+EM_algorithm <- function(x, init_theta, nu, max_iter = 100, tolerance = 1e-6, cb = NULL){
+  mu_hat <- init_theta[1]
+  sigma_hat <- init_theta[2]
+  
+  alpha_prime <- alpha_prime_func(nu)
+  
+  for(i in 1:max_iter){
+    mu_old <- mu_hat
+    sigma_old <- sigma_hat
+    beta_prime <- beta_prime_func(x, nu, mu_old, sigma_old)
+    
+    if(!is.null(cb)) cb()
+    
+    mu_hat <- mu_hat_func(x, beta_prime)
+    sigma_hat <- sigma_hat_func(x, nu, mu_hat, alpha_prime, beta_prime)
+    
+    if(abs(mu_hat - mu_old) < tolerance & abs(sigma_hat - sigma_old) < tolerance){
+      break
+    }
+    
+    mu <- mu_hat
+    sigma <- sigma_hat
+    
+    iterations <- i
+  }
+  
+  return(c(mu, sigma))
+}
+
+
+```
+
+
+
+
+```{r}
+
+# Simulate data
+N <- 5000
+nu <- 3
+sigma_oracle <- 5
+mean_oracle <- 3
+
+w <- rchisq(N, nu)
+x <- rnorm(N, mean = mean_oracle, sd = sqrt(nu * sigma_oracle^2 / w))
+
+init_theta <- c(0, 4)
+
+EM_algorithm(x, init_theta, nu, max_iter = 10000, tolerance = 1e-12)
+
+```
+
+
+
+
+
+
+
+
+

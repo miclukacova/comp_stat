@@ -1,0 +1,77 @@
+---
+title: "Computation Statistics - fourth assignment. B: Stochastic gradient descent"
+output:
+  html_document:
+    toc: TRUE
+    code_folding: hide
+---
+  
+```{r warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(results = "hold")
+#Read required libraries
+
+library(ggplot2)          # For plotting
+library(grid)             # For arranging plots
+library(gridExtra)        # For arranging plots
+
+
+library(bench)            # For benchmarking
+library(microbenchmark)   # For benchmarking code
+
+library(Rfast)            # For fast matrix operations
+library(Matrix)           # For matrix operations and sparse matrices
+
+library(dplyr)            # For data manipulation
+
+library(testthat)         # For testing
+
+
+library(parallel)         # For parallel processing
+library(doParallel)       # For parallel processing
+
+library(CSwR)             # For data set
+
+# Source relevant scripts
+```
+
+
+# Theoretical introduction
+We have the density
+
+\[
+  f(x \ | \ \alpha, \beta, \gamma, \rho) = \gamma + \frac{\rho - \gamma}{1 + \exp(\beta \log x - \alpha)}
+\]
+
+The loss function is given by
+
+\[
+  L(x, \theta) = \frac{1}{N} \sum_{i = 1}^N (y - f(x \ | \ \alpha, \beta, \gamma, \rho))^2
+\]
+
+The gradient of the loss function is given by:
+
+
+
+# Decay scheduler
+The precise way that the learning rate decays is known as the decay schedule, and a flexible three-parameter power law family of decay schedules is given by
+
+\[
+  \gamma_t = \frac{\gamma_0}{1 + K^{-1} n^a}
+\]
+for some initial learning rate $\gamma_0 > 0$ and constants $K > 0$ and $a \in (0.5,1]$. If we have a target rate, $\gamma_1$, that we want to hit after $n_1$ iterations, and we fix the exponent $a$, we can also solve for K to find
+
+\[
+  K = \frac{n_1^a\gamma_1}{\gamma_0 - \gamma_1}
+\]
+This gives us a decay schedule that interpolates between $\gamma_0$ and $\gamma_1$ over the range $0, ... , n_1$ of iterations.
+
+We implement `decay_scheduler()` as a function that returns a particular decay schedule, with the possibility to determine $K$ automatically from a target rate. Making the right choice—or even a suitable choice—of decay schedule depends heavily on the problem considered and the gradient used. It is a problem specific challenge to find a good schedule—and even just to choose the three parameters when we use the power law schedule.
+
+# Adaptive learning rate
+Adapting the learning rate is equivalent to scaling the gradient adaptively, and to achieve a form of automatic standardization of parameter scales, we will consider algorithms that adaptively scale each coordinate of the gradient separately.
+
+
+
+
+
+
