@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 We first derive the marginal distribution and see that it is exactly equal to the distribution function of a t-distribution with parameters $\mu, \sigma^2 $ and $\nu$.
 
-We then compute the max of the complete loglik analytically. 
+We then compute the max of the complete loglik analytically. Lets try
 
 We now implement this as a function:
 ```{r}
