@@ -1,4 +1,4 @@
-log_logistic_dose_response_model <- function(x, par){
+f <- function(x, par){
   alpha <- par[1]
   beta <- par[2]
   gamma <- par[3]
@@ -20,7 +20,7 @@ gradient <- function(par, i, x, y,...){
   
   expbetalogxalpha <- exp(beta * log(x_i) - alpha)
   
-  identical_part <- - 2 * (y_i - log_logistic_dose_response_model(x_i, par))
+  identical_part <- - 2 * (y_i - f(x_i, par))
   
   grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
   grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
@@ -34,28 +34,32 @@ gradient <- function(par, i, x, y,...){
 
 
 sgd <- function(
-    par,
+    par0,
     N, # Sample size
     gamma, # Decay schedule or a fixed learning rate
     epoch = NULL,
-    maxit = 100, # Max epoch iterations
+    maxiter = 100, # Max epoch iterations
     sampler = sample, # How data is resampled. Default is a random permutation
     cb = NULL,
     ...) {
   
-  if (is.function(gamma)) gamma <- gamma(1:maxit) 
-  gamma <- rep_len(gamma, maxit)
+  if (is.function(gamma)) gamma <- gamma(1:maxiter)
   
-  for (n in 1:maxit) {
+  gamma <- rep_len(gamma, maxiter)
+  
+  par <- par0
+  
+  for (n in 1:maxiter) {
     if (!is.null(cb)) cb()
     
     samp <- sampler(N)
     
     if (is.null(epoch)){
-      for (j in 1:N) {
-        i <- samp[j]
-        par <- par - gamma[n] * grad(par, i, ...)
-      }
+      par <- vanilla(par, i, samp, gamma, n, ...)
+      # for (j in 1:N) {
+      #   i <- samp[j]
+      #   par <- par - gamma[n] * grad(par, i, ...)
+      # }
     } else {
       par <- epoch(par, samp, gamma[n], ...)
     }

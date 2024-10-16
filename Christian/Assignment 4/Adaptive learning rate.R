@@ -7,6 +7,23 @@ decay_scheduler <- function(gamma0 = 1, a = 1, K = 1, gamma1, n1){
 }
 
 
+vanilla <- function(
+    par,
+    i,
+    samp,
+    gamma,
+    grad,
+    n,
+    ...){
+  for (j in 1:N) {
+    i <- samp[j]
+    par <- par - gamma[n] * grad(par, i, ...)
+  }
+  return(par)
+}
+
+
+
 batch <- function(
     par,
     samp,
@@ -20,7 +37,7 @@ batch <- function(
     i <- samp[(j * m + 1):(j * m + m)]
     par <- par - gamma * grad(par, i, ...)
   }
-  par
+  return(par)
 }
 
 

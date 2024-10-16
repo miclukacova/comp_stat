@@ -16,7 +16,7 @@ library(CSwR)
 sgd <- function(
     par,
     grad, # Function of parameter and observation index
-    n, # Sample size
+    N, # Sample size
     gamma, # Decay schedule or a fixed learning rate
     maxiter = 100, # Max epoch iterations
     sampler = sample, # How data is resampled. Default is a random permutation
@@ -25,8 +25,8 @@ sgd <- function(
   gamma <- if (is.function(gamma)) gamma(1:maxiter) else rep(gamma, maxiter)
   for (k in 1:maxiter) {
     if (!is.null(cb)) cb()
-    samp <- sampler(n)
-    for (j in 1:n) {
+    samp <- sampler(N)
+    for (j in 1:N) {
       i <- samp[j]
       par <- par - gamma[k] * grad(par, i, ...)
     }
@@ -121,29 +121,20 @@ grad_desc <- function(
 
 ##### Objective function #####################################
 
-H <- function(par) {
-  sum(y - f(par, x))^2
-} 
+H <- function(x, y, par) {
+  sum(y - f(x = x, par = par))^2
+}
 
 grad_gd <- function(par) 1 / length(x) * sum(grad(par, 1:length(x)))    
 
 
 ##### Tracer #####################################
 
-SGD_tracer <- tracer(c("par", "k"), Delta = 0) 
+SGD_tracer <- tracer(c("par", "n"), Delta = 0)
 
-squared_error_mult <- function(alpha, beta, gamma, rho){
+squared_error_mult <- function(x, y, alpha, beta, gamma, rho){
   param <- cbind(alpha, beta, gamma, rho)
-  apply(param, 1, function(par) H(par))
-}
-
-SGD_trace <- function(trace) {
-  transform(
-    trace,
-    loss = squared_error_mult(par.1, par.2, par.3, par.4) #,
-    #H_distance = abs(H(test, parameters[1], parameters[2], parameters[3], parameters[4]) - 
-    #                   squared_error(test, par.1, par.2, par.3, par.4))
-    )
+  apply(param, 1, function(par) H(x = x, y = y, par))
 }
 
 ###### S3 Classes ###########################################
@@ -175,21 +166,58 @@ sim <- function(object, N, omega = 1, grid = FALSE) {
 
 # SGD class
 
-SGD <- function(par0, grad, n, gamma, maxiter = 100, 
-                sampler = sample, cb = SGD_tracer$tracer) {
+SGD <- function(par0, N, gamma, epoch = NULL, maxiter = 100,
+                sampler = sample, cb = SGD_tracer$tracer,...) {
   structure(
     list(
-      est = sgd(par0, grad, n, gamma, maxiter, sampler, cb),
+      est = sgd(par0 = par0, N = N, gamma = gamma, epoch = epoch, maxiter = maxiter, sampler = sampler, cb = cb,...),
       trace = summary(SGD_tracer),
-      start_par = par0),
+      start_par = par0,
+      additional_args = list(...)),
     class = "My_SGD"
   )
 }
 
+
+
 summary.My_SGD <- function(object) {
-  SGD_trace(object$trace)
+  return(object$trace)
 }
 
-plot.My_SGD <- function(x) {}
+
+
+print.My_SGD <- function(object){
+  cat("Optimal parameters:\n")
+  print(object$est)
+  cat("Number of iterations:\n")
+  print(tail(object$trace, 1)[,5])
+  cat("Total time:\n")
+  print(tail(object$trace, 1)[,6])
+}
+
+plot.My_SGD <- function(x) {
+  
+  x <- object$additional_args$x
+  y <- object$additional_args$y
+  
+  if ("true_par" %in% names(object$additional_args)) {
+    true_par <- object$additional_args$true_par
+  } else {
+    true_par <- NULL
+  }
+  
+  SGD_trace(x = x, y = y, trace = trace, true_par = true_par)
+  loss = squared_error_mult(x = x, y = y, 
+                            alpha = par.1, 
+                            beta = par.2, 
+                            gamma = par.3, 
+                            rho = par.4),
+  H_distance = if (is.null(true_par)) {NULL} else{ 
+    abs(H(x = x, y = y, par = true_par) - squared_error_mult(x = x, y = y, 
+                                                             alpha = par.1, 
+                                                             beta = par.2, 
+                                                             gamma = par.3, 
+                                                             rho = par.4))}
+}
 
 
