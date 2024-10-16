@@ -1,12 +1,10 @@
-decay_scheduler <- function(gamma0 = 1, a = 1, K = 1, gamma1, n1)
-{
+decay_scheduler <- function(gamma0 = 1, a = 1, K = 1, gamma1, n1){
   force(a)
   if (!missing(gamma1) && !missing(n1))
     K <- n1^a * gamma1 / (gamma0 - gamma1)
   b <- gamma0 * K
   function(n) b / (K + n^a)
 }
-
 
 
 batch <- function(
@@ -34,11 +32,11 @@ momentum <- function() {
     samp,
     gamma,
     grad,
-    m = 50,
-    beta = 0.95,
+    m = 50,         # Mini-batch size
+    beta = 0.5,    # Momentum memory
     ...
-    # Mini-batch size
-    # Momentum memory
+
+
   ){
     M <- floor(length(samp) / m) 
     for (j in 0:(M - 1)) {
@@ -61,13 +59,11 @@ adam <- function() {
     samp,
     gamma,
     grad,
-    m = 50,
-    beta1 = 0.9,
-    beta2 = 0.9,
+    m = 50,         # Mini-batch size
+    beta1 = 0.9,    # Momentum memory
+    beta2 = 0.9,    # Momentum memory
     ...
-    # Mini-batch size
-    # Momentum memory
-    # Second moment memory
+
   ){
     M <- floor(length(samp) / m) 
     for (j in 0:(M - 1)) {

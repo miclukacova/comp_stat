@@ -9,15 +9,18 @@ log_logistic_dose_response_model <- function(x, par){
 
 
 
-gradient <- function(par, i,...){
+gradient <- function(par, i, x, y,...){
   alpha <- par[1]
   beta <- par[2]
   gamma <- par[3]
   rho <- par[4]
   
-  expbetalogxalpha <- exp(beta * log(x[i]) - alpha)
+  x_i <- x[i]
+  y_i <- y[i]
   
-  identical_part <- - 2 * (y[i] - log_logistic_dose_response_model(x[i], par))
+  expbetalogxalpha <- exp(beta * log(x_i) - alpha)
+  
+  identical_part <- - 2 * (y_i - log_logistic_dose_response_model(x_i, par))
   
   grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
   grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
@@ -38,8 +41,6 @@ sgd <- function(
     maxit = 100, # Max epoch iterations
     sampler = sample, # How data is resampled. Default is a random permutation
     cb = NULL,
-    x,
-    y,
     ...) {
   
   if (is.function(gamma)) gamma <- gamma(1:maxit) 

@@ -1,19 +1,53 @@
 #Sampling
 
-N <- 20000
-omega <- 1
+N <- 5000
+omega <- 1 # Chaning this significantly changes the output. High values make the algorithm worse
 
+true_par <- c(2, 5, 1, 2)
 x_i <- exp(rnorm(N, mean = 0, sd = omega^2))
-y_i <- log_logistic_dose_response_model(x, c(5, 3, 1, 2)) + rnorm(N, mean = 0, sd = 1)
+y_i <- log_logistic_dose_response_model(x_i, true_par) + rnorm(N, mean = 0, sd = 0.01)
+
+rate <- decay_scheduler(gamma0 = 1, a = 2, gamma1 = 1e-2, n = 100)
+
+SGD_tracer <- tracer(c("par", "k"), Delta = 0) 
 
 init_par <- c(1,1,1,1)
 sgd(par = init_par, 
     grad = gradient, 
-    gamma = 0.1,
+    gamma = rate,
     N = N,
     epoch = adam(),
-    maxiter = 1000,
+    m = 500,
+    maxit = 100,
     sampler = sample,
-    cb = NULL,
+    cb = SGD_tracer$tracer,
     x = x_i,
     y = y_i)
+
+
+
+squared_error_single <- function(x, y, par){
+  return(sum((y - log_logistic_dose_response_model(x, par))^2))
+}
+
+squared_error <- function(x, y, alpha, beta, gamma, rho){
+  param <- cbind(alpha, beta, gamma, rho)
+  apply(param, 1, function(par) squared_error_single(x, y, par))
+}
+
+SGD_trace <- summary(SGD_tracer)
+SGD_trace <- transform(
+  SGD_trace,
+  loss = squared_error(x_i, y_i, par.1, par.2, par.3, par.4),
+  H_distance = abs(squared_error(x_i, y_i, true_par[1], true_par[2], true_par[3], true_par[4]) - squared_error(x_i, y_i, par.1, par.2, par.3, par.4))
+)
+SGD_trace
+
+
+# Plot on log scale
+
+ggplot(SGD_trace, aes(x = .time, y = H_distance)) +
+  geom_line() +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")
+
