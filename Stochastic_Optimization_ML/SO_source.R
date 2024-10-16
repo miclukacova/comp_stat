@@ -164,14 +164,17 @@ sim <- function(object, N, omega = 1, grid = FALSE) {
   gauss_sample(N, object$par, omega)
 }
 
-# SGD class
+#-------------------------------------------------------------------------------
+#                                   SGD class                                  #
+#-------------------------------------------------------------------------------
 
+# SGD class
 SGD <- function(par0, N, gamma, epoch = NULL, maxiter = 100,
-                sampler = sample, cb = SGD_tracer$tracer,...) {
+                sampler = sample, cb = NULL,...) {
   structure(
     list(
       est = sgd(par0 = par0, N = N, gamma = gamma, epoch = epoch, maxiter = maxiter, sampler = sampler, cb = cb,...),
-      trace = summary(SGD_tracer),
+      trace = summary(cb),
       start_par = par0,
       additional_args = list(...)),
     class = "My_SGD"
@@ -179,13 +182,13 @@ SGD <- function(par0, N, gamma, epoch = NULL, maxiter = 100,
 }
 
 
-
+# Summary method
 summary.My_SGD <- function(object) {
   return(object$trace)
 }
 
 
-
+# Print method
 print.My_SGD <- function(object){
   cat("Optimal parameters:\n")
   print(object$est)
@@ -195,29 +198,72 @@ print.My_SGD <- function(object){
   print(tail(object$trace, 1)[,6])
 }
 
-plot.My_SGD <- function(x) {
-  
+
+# Plot method
+plot.My_SGD <- function(object, plot_no = 1, ...) {
   x <- object$additional_args$x
   y <- object$additional_args$y
   
+  loss <- squared_error_mult(x = x, y = y, 
+                             alpha = object$trace$par.1, 
+                             beta = object$trace$par.2,
+                             gamma = object$trace$par.3,
+                             rho = object$trace$par.4)
+  
   if ("true_par" %in% names(object$additional_args)) {
     true_par <- object$additional_args$true_par
-  } else {
-    true_par <- NULL
+    H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
   }
   
-  SGD_trace(x = x, y = y, trace = trace, true_par = true_par)
-  loss = squared_error_mult(x = x, y = y, 
-                            alpha = par.1, 
-                            beta = par.2, 
-                            gamma = par.3, 
-                            rho = par.4),
-  H_distance = if (is.null(true_par)) {NULL} else{ 
-    abs(H(x = x, y = y, par = true_par) - squared_error_mult(x = x, y = y, 
-                                                             alpha = par.1, 
-                                                             beta = par.2, 
-                                                             gamma = par.3, 
-                                                             rho = par.4))}
+  SGD_plot_df <- data.frame(object$trace, loss, H_distance)
+  
+  if (plot_no == 1) {
+    ggplot(SGD_plot_df, aes(x = .time, y = loss)) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "Loss vs Time", x = "Time", y = "Loss")
+  } else if (plot_no == 2){
+    ggplot(SGD_plot_df, aes(x = .time, y = H_distance)) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "Distance to True Loss vs Time", x = "Time", y = "Distance") 
+  } else if (plot_no == 3){
+    ggplot(SGD_plot_df, aes(x = .time, y = abs_dist_from_par)) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "Sum of absolute distance to true parameters vs Time", x = "Time", y = "Distance") 
+  } else {
+    stop("Invalid plot number. Please choose 1 2 or 3.")
+  }
+}
+
+
+# Method to extract plot data
+plot_data <- function(x) {
+  UseMethod("plot_data")
+}
+
+
+plot_data.My_SGD <- function(object) {
+  x <- object$additional_args$x
+  y <- object$additional_args$y
+  
+  loss <- squared_error_mult(x = x, y = y, 
+                             alpha = object$trace$par.1, 
+                             beta = object$trace$par.2,
+                             gamma = object$trace$par.3,
+                             rho = object$trace$par.4)
+  
+  if ("true_par" %in% names(object$additional_args)) {
+    true_par <- object$additional_args$true_par
+    H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
+  }
+  
+  SGD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
+  
+  return(SGD_plot_df)
 }
 
 

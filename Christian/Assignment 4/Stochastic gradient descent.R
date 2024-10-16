@@ -44,13 +44,12 @@ sgd <- function(
     ...) {
   
   if (is.function(gamma)) gamma <- gamma(1:maxiter)
-  
   gamma <- rep_len(gamma, maxiter)
   
   par <- par0
   
   for (n in 1:maxiter) {
-    if (!is.null(cb)) cb()
+    if (!is.null(cb)) cb$tracer()
     
     samp <- sampler(N)
     

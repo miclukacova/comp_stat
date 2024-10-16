@@ -50,10 +50,8 @@ momentum <- function() {
     gamma,
     grad,
     m = 50,         # Mini-batch size
-    beta = 0.5,    # Momentum memory
+    beta = 0.95,    # Momentum memory
     ...
-
-
   ){
     M <- floor(length(samp) / m) 
     for (j in 0:(M - 1)) {

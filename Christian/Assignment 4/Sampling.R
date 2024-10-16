@@ -1,17 +1,5 @@
-#Sampling
-
-N <- 5000
-omega <- 1 # Chaning this significantly changes the output. High values make the algorithm worse
-
-true_par <- c(2, 5, 1, 2)
-x_i <- exp(rnorm(N, mean = 0, sd = omega^2))
-y_i <- log_logistic_dose_response_model(x_i, true_par) + rnorm(N, mean = 0, sd = 0.01)
-
-rate <- decay_scheduler(gamma0 = 1, a = 2, gamma1 = 1e-2, n = 100)
-
 SGD_tracer <- tracer(c("par", "k"), Delta = 0) 
 
-init_par <- c(1,1,1,1)
 sgd(par0 = init_par, 
     grad = gradient, 
     gamma = rate,
@@ -25,72 +13,64 @@ sgd(par0 = init_par,
     y = y_i)
 
 
+#Sampling
+set.seed(16102024)
+N <- 10000
+omega <- 0.5 # Chaning this significantly changes the output. High values make the algorithm worse
 
-squared_error_single <- function(x, y, par){
-  return(sum((y - f(x, par))^2))
-}
+true_par <- c(2, 5, 1, 2)
+init_par <- c(1,1,1,1)
+x_i <- exp(rnorm(N, mean = 0, sd = omega^2))
+y_i <- f(x_i, true_par) + rnorm(N, mean = 0, sd = 0.001)
 
-squared_error <- function(x, y, alpha, beta, gamma, rho){
-  param <- cbind(alpha, beta, gamma, rho)
-  apply(param, 1, function(par) squared_error_single(x, y, par))
-}
+iterations <- 1000
+batch_size <- 20
 
-SGD_trace <- summary(SGD_tracer)
-SGD_trace <- transform(
-  SGD_trace,
-  loss = squared_error(x_i, y_i, par.1, par.2, par.3, par.4),
-  H_distance = abs(squared_error(x_i, y_i, true_par[1], true_par[2], true_par[3], true_par[4]) - squared_error(x_i, y_i, par.1, par.2, par.3, par.4))
-)
-tail(SGD_trace)
-
-
-# Plot on log scale
-
-ggplot(SGD_trace, aes(x = .time, y = H_distance)) +
-  geom_line() +
-  scale_y_log10() +
-  labs(title = "Loss vs Time", x = "Time", y = "Loss")
-
-
+# Decay schedule
+rate_batch <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = 1e-1, n = iterations)
+rate_momentum <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = 1e-1, n = iterations)
+rate_adam <- decay_scheduler(gamma0 = 1e-1, a = 1, gamma1 = 1e-5, n = iterations)
 
 #Test objects
 
-SGD_tracer <- tracer(c("par", "n"), Delta = 0)
-SGD_object <- SGD(par0 = init_par, 
-                  grad = gradient, 
-                  gamma = rate,
-                  N = N,
-                  epoch = adam(),
-                  m = 500,
-                  maxiter = 100,
-                  sampler = sample,
-                  cb = SGD_tracer$tracer,
-                  x = x_i,
-                  y = y_i)
-SGD_object
+# SGD_tracer_vanilla <- tracer(c("par", "n"), Delta = 0)
+# SGD_object_vanilla <- SGD(par0 = init_par, grad = gradient, gamma = rate,
+#                   N = N, epoch = NULL, maxiter = iterations, sampler = sample,
+#                   cb = SGD_tracer_vanilla, x = x_i, y = y_i,
+#                   true_par = true_par)
 
-summary(SGD_object)
-print(SGD_object)
+SGD_tracer_batch <- tracer(c("par", "n"), Delta = 0)
+SGD_object_batch <- SGD(par0 = init_par, grad = gradient, gamma = rate_batch,
+                       N = N, epoch = batch, m = batch_size, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer_batch, x = x_i, y = y_i,
+                       true_par = true_par)
 
 
+SGD_tracer_momentum <- tracer(c("par", "n"), Delta = 0)
+SGD_object_momentum <- SGD(par0 = init_par, grad = gradient, gamma = rate_momentum,
+                        N = N, epoch = momentum(), m = batch_size, maxiter = iterations, sampler = sample,
+                        cb = SGD_tracer_momentum, x = x_i, y = y_i,
+                        true_par = true_par)
 
 
-# Define an S3 class and its print method
-my_class <- function(a) {
-  structure(list(a = a), class = "my_class")
-}
+SGD_tracer_adam <- tracer(c("par", "n"), Delta = 0)
+SGD_object_adam <- SGD(par0 = init_par, grad = gradient, gamma = rate_adam,
+                       N = N, epoch = adam(), m = batch_size, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer_adam, x = x_i, y = y_i,
+                       true_par = true_par)
 
-# Custom print method for my_class
-print.my_class <- function(x) {
-  cat("This is a custom object:\n")
-  print(x$a)  # Print the 'a' element
-}
+plot(SGD_object_adam, 3) + 
+  geom_line(aes(x = plot_data(SGD_object_batch)$.time, 
+                y = plot_data(SGD_object_batch)$abs_dist_from_par), col = "orange") + 
+  # geom_line(aes(x = plot_data(SGD_object_vanilla)$.time, 
+  #               y = plot_data(SGD_object_vanilla)$loss), col = "blue") + 
+  geom_line(aes(x = plot_data(SGD_object_momentum)$.time, 
+                y = plot_data(SGD_object_momentum)$abs_dist_from_par), col = "red") +
+  xlim(0,5)
 
-# Create an object of class "my_class"
-obj <- my_class(c(1, 2, 3))
 
-# When evaluating obj, print.my_class() is called
-obj
+
+
 
 
 
