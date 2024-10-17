@@ -15,7 +15,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r source, include=FALSE}
-source("~/comp_stat/Stochastic_Optimization_ML/SO_source.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
 ```
 
 # Implement stochastic optimization algorithms for estimating the parameters of this model
@@ -53,7 +55,7 @@ The $\rho_{n+1}$ is implemented in the function grad. We have created a paramete
 
 ```{r}
 N <- 1000
-param <- parameters(2,1,2,1)
+param <- parameters(2,3,2,4)
 data <- sim(param, N)
 x <- data$x
 y <- data$y
@@ -62,25 +64,50 @@ head(data)
 
 We have furthermore implemented a SGD class
 ```{r}
-sgd0 <- SGD(c(1,1,1,1), grad = grad, n = N, gamma = 0.01, maxiter = 100)
-
-
-summary(sgd0)
+set.seed(3099)
+sgd0 <- SGD(par0 = c(1,1,1,1), grad = grad, n = N, gamma = 0.01, x = x, y = y,
+            true_par = param$par, maxiter = 100)
 ```
+
+With a print function
+```{r}
+sgd0
+```
+
+A plot function
+```{r}
+plot(sgd0, 1)
+```
+
 
 # Compare the resulting optimization algorithm(s) with non-stochastic algorithms e.g. gradient descent or the Newton algorithm
 
 
 ```{r}
-grad_desc(c(2,1,2,1),
+gd0 <- GD(par = c(1,1,1,1),
     grad = grad_gd,
     H = H,
-    t0 = 1e-2,
+    t0 = 1e-1,
     maxit = 1000,
-    cb = NULL,
     epsilon = 1e-4,
     beta = 0.5,
-    alpha = 0.1)
+    alpha = 0.1, 
+    x = x, 
+    y = y)
+
+plot(gd0)
+
+
+grad_desc(par = c(1,1,1,1), 
+          grad = grad_gd, 
+          t0 = 1e-2,
+          maxit = 1000,
+          epsilon = 1e-4,
+          H = H,
+          beta = 0.5,
+          alpha = 0.1,
+          x = x, 
+          y = y)
 ```
 
 
