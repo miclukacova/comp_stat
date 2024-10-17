@@ -76,7 +76,7 @@ sgd0
 
 A plot function
 ```{r}
-plot(sgd0, 1)
+plot(sgd0, 2)
 ```
 
 
@@ -95,19 +95,9 @@ gd0 <- GD(par = c(1,1,1,1),
     x = x, 
     y = y)
 
-plot(gd0)
+gd0
 
 
-grad_desc(par = c(1,1,1,1), 
-          grad = grad_gd, 
-          t0 = 1e-2,
-          maxit = 1000,
-          epsilon = 1e-4,
-          H = H,
-          beta = 0.5,
-          alpha = 0.1,
-          x = x, 
-          y = y)
 ```
 
 

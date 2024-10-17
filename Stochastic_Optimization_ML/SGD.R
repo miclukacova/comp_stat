@@ -38,40 +38,12 @@ sgd <- function(
         par <- par - gamma[k] * grad(par, x[i], y[i])
       }
     } else {
-      par <- epoch(par, samp, gamma[n], ...)
+      par <- epoch(par, samp, gamma[k], ...)
     }
   }
   par
 }
 
-## Function  ###########################################
-
-f <- function(par, x) {
-  alpha <- par[1]
-  beta <- par[2]
-  gamma <- par[3]
-  rho <- par[4]
-  gamma + (rho - gamma)/(1 + exp(beta * log(x) - alpha))
-}
-
-## Gradient  ###########################################
-
-grad <- function(par, x, y) {
-  
-  alpha <- par[1]
-  beta <- par[2]
-  gamma <- par[3]
-  rho <- par[4]
-  
-  const_term <- (1 + exp(beta * log(x) - alpha))
-  
-  d_alpha <- (rho - gamma)/const_term^2 * exp(beta * log(x) - alpha)
-  d_beta <- - log(x) * (rho - gamma) / const_term^2 * exp(beta * log(x) - alpha)
-  d_gamma <- 1 - 1 / const_term
-  d_rho <- 1 / const_term
-  
-  return(- c(d_alpha, d_beta, d_gamma, d_rho) * (y - f(par, x)))
-}
 
 ##### Tracer #####################################
 
