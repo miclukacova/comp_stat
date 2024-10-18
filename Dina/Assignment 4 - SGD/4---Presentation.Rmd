@@ -171,7 +171,7 @@ gradient <- function(par, i, x, y,...){
 }
 
 sgd <- function(
-    par0
+    par0,
     grad,
     N, # Sample size
     gamma, # Decay schedule or a fixed learning rate
@@ -211,35 +211,59 @@ sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim_1$x, y = sim_1$
 ```{r}
 library(Rcpp)
 
-cppFunction('NumericVector gradient_rcpp(NumericVector par, int i, NumericVector x, NumericVector y) {
-  i = i - 1;
-
+cppFunction('
+NumericVector gradient_rcpp(NumericVector par, NumericVector indices, NumericVector x, NumericVector y) {
+  // Extract parameters
   double alpha = par[0];
   double beta = par[1];
   double gamma = par[2];
   double rho = par[3];
 
-  double x_i = x[i];
-  double y_i = y[i];
+  // Initialize gradients
+  double grad_alpha = 0.0;
+  double grad_beta = 0.0;
+  double grad_gamma = 0.0;
+  double grad_rho = 0.0;
 
-  // Compute f(x_i)
-  double f_x_i = gamma + (rho - gamma) / (1 + exp(beta * log(x_i) - alpha));
+  int n = indices.size(); // Number of indices
 
-  // Calculate the exp(beta * log(x_i) - alpha) term
-  double expbetalogxalpha = exp(beta * log(x_i) - alpha);
-  double identical_part = -2 * (y_i - f_x_i);
+  // Loop over the indices
+  for (int idx = 0; idx < n; ++idx) {
+    int i = indices[idx] - 1;  // Convert from r to c++ indexing
 
-  // Compute the gradients
-  double grad_alpha = identical_part * (rho - gamma) * expbetalogxalpha / pow(1 + expbetalogxalpha, 2);
-  double grad_beta = -identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha / pow(1 + expbetalogxalpha, 2);
-  double grad_gamma = identical_part * (1 - 1 / (1 + expbetalogxalpha));
-  double grad_rho = identical_part / (1 + expbetalogxalpha);
+    // Get individual data point
+    double x_i = x[i];
+    double y_i = y[i];
 
-  // Return the gradient vector
-  return NumericVector::create(grad_alpha, grad_beta, grad_gamma, grad_rho);
+    // Calculating f(x_i, par)
+    double f_x_i = gamma + (rho - gamma) / (1 + exp(beta * log(x_i) - alpha));
+
+    // Exponential term
+    double expbetalogxalpha = exp(beta * log(x_i) - alpha);
+
+    // Identical part used in gradients
+    double identical_part = -2 * (y_i - f_x_i);
+
+    // Accumulate gradients for all indices
+    grad_alpha += (identical_part * (rho - gamma) * expbetalogxalpha) / pow(1 + expbetalogxalpha, 2);
+    grad_beta += -(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha) / pow(1 + expbetalogxalpha, 2);
+    grad_gamma += identical_part * (1 - 1 / (1 + expbetalogxalpha));
+    grad_rho += identical_part / (1 + expbetalogxalpha);
+  }
+
+  // Return the mean of accumulated gradients
+  return NumericVector::create(grad_alpha / n, grad_beta / n, grad_gamma / n, grad_rho / n);
 }
 ')
+
 ```
+
+```{r}
+gradient(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
+gradient_rcpp(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
+```
+
+
 ---
 ###Exploiting the grid structure?
 
