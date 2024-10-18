@@ -245,8 +245,10 @@ NumericVector gradient_rcpp(NumericVector par, NumericVector indices, NumericVec
     double identical_part = -2 * (y_i - f_x_i);
 
     // Accumulate gradients for all indices
-    grad_alpha += (identical_part * (rho - gamma) * expbetalogxalpha) / pow(1 + expbetalogxalpha, 2);
-    grad_beta += -(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha) / pow(1 + expbetalogxalpha, 2);
+    grad_alpha += (identical_part * (rho - gamma) * expbetalogxalpha) 
+    / pow(1 + expbetalogxalpha, 2);
+    grad_beta += -(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha) 
+    / pow(1 + expbetalogxalpha, 2);
     grad_gamma += identical_part * (1 - 1 / (1 + expbetalogxalpha));
     grad_rho += identical_part / (1 + expbetalogxalpha);
   }
@@ -270,16 +272,33 @@ gradient_rcpp(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
 ---
 ###Benchmarking
 Benchmarking the RCPP implementation against the R implementation
-```{r}
-sim <- sim(param1, 100)
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+sim1 <- sim(param1, 100)
 
 bench_results <- bench::mark(
-    R = sgd(c(3,3,3,3), grad = gradient, N = 100, gamma = 0.01, x = sim$x, y = sim_1$y),
-    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 100, gamma = 0.01, x = sim$x, y = sim_1$y),
+    R = sgd(c(3,3,3,3), grad = gradient, N = 100, gamma = 0.01, x = sim1$x, y = sim_1$y),
+    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 100, gamma = 0.01, x = sim1$x, y = sim_1$y),
     iterations = 100,
     check = F
 )
-
 plot(bench_results)
+```  
+<br>
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
 ```
 
+---
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+sim1 <- sim(param1, 1000)
+
+bench_results <- bench::mark(
+    R = sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim1$x, y = sim_1$y),
+    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 1000, gamma = 0.01, x = sim1$x, y = sim_1$y),
+    iterations = 10,
+    check = F
+)
+plot(bench_results)
+
+knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
+```
