@@ -61,12 +61,6 @@ data <- sim(param, N)
 x <- data$x
 y <- data$y
 head(data)
-
-# Sim 2
-data2 <- sim(param, N, grid = TRUE)
-x2 <- data2$x
-y2 <- data2$y
-head(data2)
 ```
 
 We have furthermore implemented a SGD class
@@ -79,99 +73,140 @@ sgd0 <- SGD(par0 = c(1,1,1,1), grad = grad, gamma = 0.01, true_par = param$par,
 With a print function
 ```{r}
 sgd0
-sgd0$true_par
 ```
-
-A plot function
+The SGD algorithm does okay. We have also implemented a plot function
 ```{r}
-plot(sgd0, 1)
+plot(sgd0)
 ```
+## Different starting values
 
-For different starting values
+If we look at the algorithm for different starting values
+
 ```{r}
 set.seed(34)
 rand <- round(rnorm(4, 0, 5))
 col_name <- sprintf("SV (%s)", paste(rand, collapse = ", "))
 
+SGD_tracer$clear()
+sgd_true_sv <- SGD(par0 = param$par, grad = grad, gamma = 0.001, x = x, y = y,
+                           true_par = param$par)
+
+SGD_tracer$clear()
+sgd_rand_sv <- SGD(par0 = rand, grad = grad, gamma = 0.001, x = x, y = y,
+                           true_par = param$par)
+
 diff_start_vals_sgd <- tibble(
   "Par" = c("alpha", "beta", "gamma", "rho"),
   "True vals" = param$par,
   "Sv c(1,1,1,1)" = sgd0$est,
-  "True sv" = SGD(par0 = param$par, grad = grad, gamma = 0.01, x = x, y = y,
-                           true_par = param$par)$est,
-   !!sym(col_name) := SGD(par0 = rand, grad = grad, gamma = 0.01, x = x, y = y,
-                           true_par = param$par)$est)
+  "True sv" = sgd_true_sv$est,
+   !!sym(col_name) := sgd_rand_sv$est)
 
 diff_start_vals_sgd
-```
-It does not seem as if the SGD algorithm is very sensitive to the starting values.
 
-# Mini batch implementation
-
-Mini batches stabilizes the gradient, while maintaining the SGD speed. 
-
-```{r}
-set.seed(3099)
-sgd_mini_batch <- SGD(par0 = c(1,1,1,1), grad = grad_mult, gamma = 0.01, x = x, y = y,
-            true_par = param$par, m = 50)
-
-sgd_mini_batch
-
-grid.arrange(plot(sgd_mini_batch, 1),
-             plot(sgd_mini_batch, 2), 
-             plot(sgd_mini_batch, 3),
+grid.arrange(plot(sgd0, 1) + ggtitle("c(1,1,1,1)"),
+             plot(sgd_true_sv, 1)+ ggtitle("True vals"), 
+             plot(sgd_rand_sv, 1) + ggtitle("Random Vals"),
              nrow = 1)
 ```
+The plots and table suggests we find local optimas. But that the SGD algorithm does not necessarily have to start out in the true values in order to produce reasonable estimates. 
+
+## Decay schedule
+
+We implement a flexible three-parameter power law family of decay schedules
+
+$$
+\gamma_n = \frac{\gamma_0 K}{K + n^{a}}
+$$
+Where $a \in (0.5,1]$ and $K>0$. $\gamma_0$ is the initial learning rate. If $H$ was strongly convex and the gradient bounded this decay schedule would ensure convergence. We try different decay schedules, where we vary $a$ and $K$. 
 
 ```{r}
-diff_start_vals_sgd_mb <- tibble(
-  "Par" = c("alpha", "beta", "gamma", "rho"),
-  "True vals" = param$par,
-  "Sv c(1,1,1,1)" = sgd_mini_batch$est,
-  "True sv" = SGD(par0 = param$par, grad = grad_mult, gamma = 0.01, x = x, y = y,
-                           true_par = param$par, m = 50)$est,
-   !!sym(col_name) := SGD(par0 = rand, grad = grad_mult, gamma = 0.01, x = x, y = y,
-                           true_par = param$par, m = 50)$est)
+decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 1)
+decay2 <- decay_scheduler(gamma0 = 1, a = 0.5, K = 10)
+decay3 <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.0002)
 
-diff_start_vals_sgd_mb
+SGD_tracer$clear()
+sgd_decay1 <- SGD(par0 = param$par, grad = grad, gamma = decay1, x = x, y = y,
+                           true_par = param$par)
+
+SGD_tracer$clear()
+sgd_decay2 <- SGD(par0 = rand, grad = grad, gamma = decay2, x = x, y = y,
+                           true_par = param$par)
+
+
+SGD_tracer$clear()
+sgd_decay3 <- SGD(par0 = rand, grad = grad, gamma = decay3, x = x, y = y,
+                           true_par = param$par)
+
+grid.arrange(plot(sgd_decay1, 1) + ggtitle("a = 1, K = 1"),
+             plot(sgd_decay2, 1)+ ggtitle(" a = 0.5, K = 10"), 
+             plot(sgd_decay3, 1) + ggtitle("g1 = 0.0001, n1 = 100"),
+             nrow = 1)
 ```
+The last decay rate seems to work best. 
 
+## Mini batch implementation
+
+Mini batches stabilizes the gradient, while maintaining the SGD speed. We investigate how th
+
+
+```{r}
+set.seed(983)
+SGD_tracer$clear()
+sgd_mb_20 <- SGD(par0 = param$par, grad = grad_mult, gamma = decay3, x = x, y = y,
+            true_par = param$par, m = 10, epoch = batch)
+SGD_tracer$clear()
+sgd_mb_50 <- SGD(par0 = param$par, grad = grad_mult, gamma = decay3, x = x, y = y,
+            true_par = param$par, m = 20, epoch = batch)
+SGD_tracer$clear()
+sgd_mb_100 <- SGD(par0 = param$par, grad = grad_mult, gamma = decay3, x = x, y = y,
+            true_par = param$par, m = 100, epoch = batch)
+
+grid.arrange(plot(sgd_mb_20, 1),
+             plot(sgd_mb_50, 1), 
+             plot(sgd_mb_100, 1),
+             nrow = 1)
+```
 
 # Compare the resulting optimization algorithm(s) with non-stochastic algorithms e.g. gradient descent or the Newton algorithm
 
 
 ```{r}
 gd0 <- GD(par = c(1,1,1,1), H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+GD_tracer$clear()
+gd_true_sv <- GD(par = param$par, H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+GD_tracer$clear()
+gd_rand_sv <- GD(par = rand, H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
 
-gd0
-gd0$additional_args$true_par
+res <- rbind(gd0$est,
+gd_true_sv$est,
+gd_rand_sv$est,
+param$par)
+colnames(res) <- c("alpha", "beta", "gamma", "rho")
+rownames(res) <- c("Sv c(1,1,1,1)", "True sv", "Random sv", "True par")
+res
 ```
 
 ```{r}
 grid.arrange(
-  plot(gd0, 1),
-  plot(sgd0, 1),
-  plot(gd0, 2),
-  plot(sgd0, 2),
-  plot(gd0, 3),
-  plot(sgd0, 3),
-  nrow = 3
+  plot(gd0, 1) + ggtitle("c(1,1,1,1)"),
+  plot(gd_true_sv, 1) + ggtitle("True SV"),
+  plot(gd_rand_sv, 1) + ggtitle("Random SV"),
+  nrow = 1
 )
 ```
 
-```{r}
-diff_start_vals_gd <- tibble(
-  "Par" = c("alpha", "beta", "gamma", "rho"),
-  "True vals" = param$par,
-  "Sv c(1,1,1,1)" = gd0$est,
-  "True sv" = GD(par = param$par, H = H, x = x, t0 = 0.05, y = y, 
-                   true_par = param$par)$est,
-  "Random sv" = GD(par = rand, H = H, x = x, t0 = 0.05, 
-                             y = y, true_par = param$par)$est)
-```
 GD works very well if we start the algorithm out in the true values. 
 
 # Data sampled from a grid
+
+```{r}
+data2 <- sim(param, N, grid = TRUE)
+x2 <- data2$x
+y2 <- data2$y
+head(data2)
+```
+
 
 We see how well they do for the grid sampled data
 

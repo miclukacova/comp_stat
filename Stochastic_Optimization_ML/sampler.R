@@ -58,10 +58,10 @@ H_mult <- function(alpha, beta, gamma, rho, x, y){
 
 ## Sampler  ##############################################
 
-gauss_sample <- function(N, par, omega = 3) {
+gauss_sample <- function(N, par, omega = 1) {
   log_x <- rnorm(N, 0, omega^2)
   x <- exp(log_x)
-  y <- f(par, x) + rnorm(N, 0, 1)
+  y <- f(par, x) + rnorm(N, 0, 0.5)
   return(data.frame(x = x, y = y))
 }
 

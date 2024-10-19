@@ -64,6 +64,7 @@ GD <- function(par,
                epsilon = 1e-4,
                beta = 0.8,
                alpha = 0.1,
+               true_par = NULL,
                ...) {
   structure(
     list(
@@ -79,6 +80,7 @@ GD <- function(par,
                       ...),
       trace = summary(GD_tracer),
       start_par = par,
+      true_par = true_par,
       additional_args = list(...)),
     class = "My_GD"
   )
@@ -104,20 +106,17 @@ print.My_GD <- function(object){
 plot.My_GD <- function(object, plot_no = 1, ...) {
   x <- object$additional_args$x
   y <- object$additional_args$y
+  true_par <- object$true_par
   
   loss <- H_mult(x = x, y = y, 
                              alpha = object$trace$par.1, 
                              beta = object$trace$par.2,
                              gamma = object$trace$par.3,
                              rho = object$trace$par.4)
-  
-  
-  if ("true_par" %in% names(object$additional_args)) {
-    true_par <- object$additional_args$true_par
-    H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
-    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) 
-      sum(abs(par_est - true_par)))
-  }
+  true_par <- object$additional_args$true_par
+  H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+  abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) 
+    sum(abs(par_est - true_par)))
   
   GD_plot_df <- data.frame(object$trace, loss, H_distance)
   

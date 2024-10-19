@@ -17,10 +17,10 @@ sgd <- function(
     par,
     grad, # Function of parameter and observation index
     gamma, # Decay schedule or a fixed learning rate
-    maxiter = 100, # Max epoch iterations
+    maxiter = 150, # Max epoch iterations
     sampler = sample, # How data is resampled. Default is a random permutation
     cb = NULL,
-    epoch = NULL,
+    epoch = vanilla,
     m = 1, # Batch size
     x,
     y,
@@ -28,24 +28,17 @@ sgd <- function(
   
   n <- length(x)
   gamma <- if (is.function(gamma)) gamma(1:maxiter) else rep(gamma, maxiter)
-  M <- floor(n / m)
   
   for (k in 1:maxiter) {
+    
     if (!is.null(cb)) cb()
     samp <- sampler(n)
-    if (is.null(epoch)){
-      #par <- vanilla(par, i, samp, gamma, n, ...)
-      for (j in 0:(M - 1)) {
-        i <- samp[(j * m + 1):(j * m + m)]
-        par <- par - gamma[k] * grad(par, x[i], y[i])
-      }
-    } else {
-      par <- epoch(par, samp, gamma[k], ...)
-    }
+    par <- epoch(par = par, samp = samp, gamma = gamma[k], 
+                 grad = grad, n = n, x = x, y = y, m = m)
+    
   }
   par
 }
-
 
 ##### Tracer #####################################
 
@@ -53,7 +46,7 @@ SGD_tracer <- tracer(c("par", "k"), Delta = 0)
 
 ###### SGD class ###########################################
 
-SGD <- function(par0, grad, gamma, maxiter = 100, epoch = NULL,
+SGD <- function(par0, grad, gamma, maxiter = 150, epoch = vanilla,
                 sampler = sample, cb = SGD_tracer$tracer, m = 1, 
                 true_par = NULL, ...) {
   structure(
@@ -156,4 +149,99 @@ plot_data.My_SGD <- function(object) {
   
   return(SGD_plot_df)
 }
+
+##### Decay Scheduler #####################################
+
+vanilla <- function(par, samp, gamma, grad, n, x, y, ...){
+  for (j in 1:n) {
+    i <- samp[j]
+    par <- par - gamma * grad(par, x[i], y[i])
+  }
+  return(par)
+}
+
+batch <- function(par, samp, gamma, grad, n, x, y, m, ...){
+  M <- floor(n / m)
+  for (j in 0:(M - 1)) {
+    i <- samp[(j * m + 1):(j * m + m)]
+    par <- par - 1/ m * gamma * grad(par, x[i], y[i])
+  }
+  return(par)
+}
+
+decay_scheduler <- function(gamma0 = 1, # Initial learning rate
+                            a = 1, 
+                            K = 1, 
+                            gamma1,     # Optional target learning rate
+                            n1         # We want to reach after n1 iterations
+                            ){ 
+  force(a)
+  if (!missing(gamma1) && !missing(n1))
+    K <- n1^a * gamma1 / (gamma0 - gamma1)
+  b <- gamma0 * K
+  function(n) b / (K + n^a)
+}
+
+
+#adam <- function() {
+#  rho <- v <- 0
+#  function(
+    #    par,
+#    samp,
+#    gamma,
+#    grad,
+#    m = 50,         # Mini-batch size
+#    beta1 = 0.9,    # Momentum memory
+#    beta2 = 0.9,    # Momentum memory
+#    ...
+#    
+#  ){
+#    M <- floor(length(samp) / m) 
+#    for (j in 0:(M - 1)) {
+#      i <- samp[(j * m + 1):(j * m + m)]
+#      gr <- grad(par, i, ...)
+#      rho <<- beta1 * rho + (1 - beta1) * gr
+#      v <<- beta2 * v + (1 - beta2) * gr^2
+#      par <- par - gamma * (rho / (sqrt(v) + 1e-8))
+#    }
+#    par
+#  } 
+#}
+#
+
+momentum <- function() {
+  rho <- 0
+  function(
+    par,
+    samp,
+    gamma,
+    grad,
+    m = 50,         # Mini-batch size
+    beta = 0.95,    # Momentum memory
+    ...
+  ){
+    M <- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      # Using '<<-' assigns the value to rho in the enclosing
+      environment
+      rho <<- beta * rho + (1 - beta) * grad(par, i, ...)
+      par <- par - gamma * rho
+    }
+    par
+  } 
+}
+
+rate_momentum <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = 1e-1)
+rate_adam <- decay_scheduler(gamma0 = 1e-1, a = 1, gamma1 = 1e-5)
+
+
+
+#### SGD for grid ####################################
+
+x_vals <- seq(4,19)
+x <- sample(seq(4,19), 100, replace = TRUE)
+fs <- f(c(1,2,1,5), x_vals)
+fs[]
+
 
