@@ -15,9 +15,11 @@ grad_desc <- function(
     ...) {
   for (i in 1:maxit) {
     
+    n <- length(x)
+    
     # Calculations of objective and gradient
     value <- H(par, x, y)
-    gr <- grad(par, x, y)
+    gr <- 1 / n * grad(par, x, y)
     
     grad_norm <- sum(gr^2)
     
@@ -57,7 +59,7 @@ GD <- function(par,
                grad = grad_gd,
                H = H,
                t0 = 1e-2,
-               maxit = 1000,
+               maxit = 1200,
                cb = GD_tracer$tracer,
                epsilon = 1e-4,
                beta = 0.8,
@@ -84,7 +86,7 @@ GD <- function(par,
 
 # Summary method
 summary.My_GD <- function(object) {
-  GD_trace(object$trace)
+  object$trace
 }
 
 
@@ -109,26 +111,28 @@ plot.My_GD <- function(object, plot_no = 1, ...) {
                              gamma = object$trace$par.3,
                              rho = object$trace$par.4)
   
+  
   if ("true_par" %in% names(object$additional_args)) {
     true_par <- object$additional_args$true_par
     H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
-    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
+    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) 
+      sum(abs(par_est - true_par)))
   }
   
-  SGD_plot_df <- data.frame(object$trace, loss, H_distance)
+  GD_plot_df <- data.frame(object$trace, loss, H_distance)
   
   if (plot_no == 1) {
-    ggplot(SGD_plot_df, aes(x = .time, y = loss)) +
+    ggplot(GD_plot_df, aes(x = .time, y = loss)) +
       geom_line() +
       scale_y_log10() +
       labs(title = "Loss vs Time", x = "Time", y = "Loss")
   } else if (plot_no == 2){
-    ggplot(SGD_plot_df, aes(x = .time, y = H_distance)) +
+    ggplot(GD_plot_df, aes(x = .time, y = H_distance)) +
       geom_line() +
       scale_y_log10() +
       labs(title = "Distance to True Loss vs Time", x = "Time", y = "Distance") 
   } else if (plot_no == 3){
-    ggplot(SGD_plot_df, aes(x = .time, y = abs_dist_from_par)) +
+    ggplot(GD_plot_df, aes(x = .time, y = abs_dist_from_par)) +
       geom_line() +
       scale_y_log10() +
       labs(title = "Sum of absolute distance to true parameters vs Time", x = "Time", y = "Distance") 
@@ -143,7 +147,7 @@ plot_data <- function(x) {
 }
 
 
-plot_data.My_SGD <- function(object) {
+plot_data.My_GD <- function(object) {
   x <- object$additional_args$x
   y <- object$additional_args$y
   
@@ -159,8 +163,8 @@ plot_data.My_SGD <- function(object) {
     abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
   }
   
-  SGD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
+  GD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
   
-  return(SGD_plot_df)
+  return(GD_plot_df)
 }
 

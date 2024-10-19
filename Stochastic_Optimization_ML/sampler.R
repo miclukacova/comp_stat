@@ -21,6 +21,7 @@ f <- function(par, x) {
   gamma + (rho - gamma)/(1 + exp(beta * log(x) - alpha))
 }
 
+
 ## Gradient  ###########################################
 
 grad <- function(par, x, y) {
@@ -30,13 +31,18 @@ grad <- function(par, x, y) {
   gamma <- par[3]
   rho <- par[4]
   
-  d_alpha <- (rho - gamma)/(1 + exp(beta * log(x) - alpha))^2 * exp(beta * log(x) - alpha)
-  d_beta <- - log(x) * (rho - gamma)/(1 + exp(beta * log(x) - alpha))^2 *
-    exp(beta * log(x) - alpha)
-  d_gamma <- 1 - 1/(1 + exp(beta * log(x) - alpha))
-  d_rho <- 1/(1 + exp(beta * log(x) - alpha))
+  const_term <- exp(beta * log(x) - alpha)
   
-  return(- c(d_alpha, d_beta, d_gamma, d_rho) * (y - f(par, x)))
+  d_alpha <- (rho - gamma) / (1 + const_term)^2 * const_term
+  d_beta <- - log(x) * (rho - gamma) / (1 + const_term)^2 * const_term
+  d_gamma <- 1 - 1 / (1 + const_term)
+  d_rho <- 1 / (1 + const_term)
+  
+  return(- 2 * c(d_alpha, d_beta, d_gamma, d_rho) * (y - f(par, x)))
+}
+
+grad_mult <- function(par, x, y) {
+  rowSums(sapply(seq_along(x), function(i) grad(par, x[i], y[i])))
 }
 
 ##### Objective function #####################################
@@ -60,8 +66,10 @@ gauss_sample <- function(N, par, omega = 3) {
 }
 
 grid_sample <- function(N, par) {
-  grid <- seq(exp(1), exp(10), length = 10^4)
-  sample(grid, N, replace = TRUE)
+  grid <- exp(1:15)
+  x <- sample(grid, N, replace = TRUE)
+  y <- f(par, x) + rnorm(N, 0, 1)
+  return(data.frame(x = x, y = y))
 }
 
 ###### Parameters class ###########################################
@@ -84,7 +92,7 @@ sim <- function(x) {
 
 sim <- function(object, N, omega = 1, grid = FALSE) {
   if(grid){
-    grid_sample(object$par, N)
+    return(grid_sample(N, object$par))
   }
   gauss_sample(N, object$par, omega)
 }

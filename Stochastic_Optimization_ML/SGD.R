@@ -21,20 +21,22 @@ sgd <- function(
     sampler = sample, # How data is resampled. Default is a random permutation
     cb = NULL,
     epoch = NULL,
+    m = 1, # Batch size
     x,
     y,
     ...) {
   
   n <- length(x)
   gamma <- if (is.function(gamma)) gamma(1:maxiter) else rep(gamma, maxiter)
+  M <- floor(n / m)
+  
   for (k in 1:maxiter) {
     if (!is.null(cb)) cb()
     samp <- sampler(n)
-    
     if (is.null(epoch)){
       #par <- vanilla(par, i, samp, gamma, n, ...)
-      for (j in 1:n) {
-        i <- samp[j]
+      for (j in 0:(M - 1)) {
+        i <- samp[(j * m + 1):(j * m + m)]
         par <- par - gamma[k] * grad(par, x[i], y[i])
       }
     } else {
@@ -52,7 +54,8 @@ SGD_tracer <- tracer(c("par", "k"), Delta = 0)
 ###### SGD class ###########################################
 
 SGD <- function(par0, grad, gamma, maxiter = 100, epoch = NULL,
-                sampler = sample, cb = SGD_tracer$tracer, ...) {
+                sampler = sample, cb = SGD_tracer$tracer, m = 1, 
+                true_par = NULL, ...) {
   structure(
     list(
       est = sgd(par = par0, 
@@ -62,9 +65,11 @@ SGD <- function(par0, grad, gamma, maxiter = 100, epoch = NULL,
                 sampler = sample, 
                 cb = cb,
                 epoch = epoch,
+                m = m,
                 ...),
       trace = summary(SGD_tracer),
       start_par = par0,
+      true_par = true_par,
       additional_args = list(...)),
     class = "My_SGD"
   )
@@ -79,6 +84,8 @@ summary.My_SGD <- function(object) {
 print.My_SGD <- function(object){
   cat("Optimal parameters:\n")
   print(object$est)
+  cat("True parametes:\n")
+  print(object$true_par)
   cat("Number of iterations:\n")
   print(tail(object$trace, 1)[,5])
   cat("Total time:\n")
@@ -96,12 +103,10 @@ plot.My_SGD <- function(object, plot_no = 1, ...) {
                  gamma = object$trace$par.3,
                  rho = object$trace$par.4)
   
-  if ("true_par" %in% names(object$additional_args)) {
-    true_par <- object$additional_args$true_par
-    H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
-    abs_dist_from_par <- apply(object$trace[,1:4], 1, 
+  true_par <- object$true_par
+  H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+  abs_dist_from_par <- apply(object$trace[,1:4], 1, 
                                FUN = function(par_est) sum(abs(par_est - true_par)))
-  }
   
   SGD_plot_df <- data.frame(object$trace, loss, H_distance)
   
