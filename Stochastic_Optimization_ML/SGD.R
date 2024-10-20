@@ -236,12 +236,3 @@ rate_momentum <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = 1e-1)
 rate_adam <- decay_scheduler(gamma0 = 1e-1, a = 1, gamma1 = 1e-5)
 
 
-
-#### SGD for grid ####################################
-
-x_vals <- seq(4,19)
-x <- sample(seq(4,19), 100, replace = TRUE)
-fs <- f(c(1,2,1,5), x_vals)
-fs[]
-
-

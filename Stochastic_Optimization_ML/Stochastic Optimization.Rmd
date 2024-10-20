@@ -18,6 +18,7 @@ knitr::opts_chunk$set(echo = TRUE)
 source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
 source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
 source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/grid_gd.R")
 ```
 
 # Implement stochastic optimization algorithms for estimating the parameters of this model
@@ -168,6 +169,74 @@ grid.arrange(plot(sgd_mb_20, 1),
              nrow = 1)
 ```
 
+## Profiling
+
+```{r}
+profvis({
+  sgd(par = param$par, grad = grad, gamma = decay3, x = x, y = y,
+                           true_par = param$par)
+})
+```
+
+It takes time to calculate the gradient. 
+
+## Benchmarking
+
+Comparing minibatch and vanilla SGD
+
+```{r}
+sgd_bench1 <- bench::press(
+  k = seq(100,500, length.out = 5),
+  {
+    bench::mark(
+      "Vanilla" = sgd(par = param$par, grad = grad, gamma = decay3, x = x[1:k], y = y[1:k],
+                           true_par = param$par),
+      "Mini-batch" = sgd(par = param$par, grad = grad, gamma = decay3, x = x[1:k], y = y[1:k],
+                           true_par = param$par, m = 10, epoch = batch),
+      check = FALSE)
+    }
+  )
+
+sgd_bench1 %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+
+autoplot(sgd_bench1)
+```
+
+## Scaling the input
+
+```{r}
+scaled_data <- scale(data) 
+# Shift the data so that the minimum value is 1 (or any positive value)
+scaled_data <- scaled_data + abs(min(scaled_data)) + 1
+sc_x <- scaled_data[,1]
+sc_y <- scaled_data[,2]
+
+sgd_bench2 <- bench::press(
+  k = seq(100,500, length.out = 5),
+  {
+    bench::mark(
+      "Vanilla" = sgd(par = param$par, grad = grad, gamma = decay3, x = sc_x[1:k], 
+                      y = sc_y[1:k], true_par = param$par),
+      "Mini-batch" = sgd(par = param$par, grad = grad, gamma = decay3, x = sc_x[1:k],
+                         y = sc_y[1:k], true_par = param$par),
+      check = FALSE)
+    }
+  )
+
+sgd_bench2 %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+
+autoplot(sgd_bench2)
+```
+
+
+## RCPP implementation
+
 # Compare the resulting optimization algorithm(s) with non-stochastic algorithms e.g. gradient descent or the Newton algorithm
 
 
@@ -211,15 +280,56 @@ head(data2)
 We see how well they do for the grid sampled data
 
 ```{r}
-gd1 <- GD(par = c(1,1,1,1), grad = grad_gd, H = H, t0 = 1e-1, maxit = 1000,
-    epsilon = 1e-4, beta = 0.5, alpha = 0.1,  x = x2,  y = y2, true_par = param$par)
+gd1 <- GD(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2,  y = y2, true_par = param$par)
 
 sgd1 <- SGD(par0 = c(1,1,1,1), grad = grad, gamma = 0.01, x = x2, y = y2,
-            true_par = param$par, maxiter = 100)
+            true_par = param$par)
 
 print(gd1$est); print(sgd1$est); param$par
-
-
 ```
 
+We have implemented a faster version of the GD algorithm. Where we exploit the fact that the $x$'s are sampled from a grid. We can then use the fact that the $x$'s are unique and only calculate the $f$ function and the derivative of the $f$ function for the unique $x$'s. We benchmark the two gradient descent algorithms to compare them
+
+```{r}
+# Sanity check - should do the same
+grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2, y = y2)
+grad_desc_grid(par = c(1,1,1,1), x = x2, y = y2)
+
+# They dont:(
+```
+
+## Profiling
+
+```{r}
+
+
+profvis({
+  grad_desc_grid(par = c(1,1,1,1), x = x2, y = y2)
+})
+```
+
+It takes time to calculate the gradient. 
+
+## Benchmarking
+
+Comparing grid version with regular GD. 
+
+```{r}
+gd_bench1 <- bench::press(
+  k = seq(100,500, length.out = 5),
+  {
+    bench::mark(
+      "Regular" = grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2[1:k], y = y2[1:k]),
+      "Gird version" = grad_desc_grid(par = c(1,1,1,1), x = x2[1:k], y = y2[1:k]),
+      check = FALSE)
+    }
+  )
+
+gd_bench1 %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+
+autoplot(gd_bench1)
+```
 
