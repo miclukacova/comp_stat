@@ -212,7 +212,8 @@ sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim_1$x, y = sim_1$
 library(Rcpp)
 
 cppFunction('
-NumericVector gradient_rcpp(NumericVector par, NumericVector indices, NumericVector x, NumericVector y) {
+NumericVector gradient_rcpp(NumericVector par, NumericVector indices, 
+NumericVector x, NumericVector y) {
   // Extract parameters
   double alpha = par[0];
   double beta = par[1];
