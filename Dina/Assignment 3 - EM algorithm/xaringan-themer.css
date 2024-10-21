@@ -43,24 +43,23 @@
   --header-h3-font-size: 1.75rem;
 
   /* Colors */
-  --text-color: #000000;
+  --text-color: #272822;
   --header-color: #4f7942;
   --background-color: #FFFFFF;
-  --link-color: #00703c;
-  --text-bold-color: #00703c;
+  --link-color: #4f7942;
+  --text-bold-color: #4f7942;
   --code-highlight-color: rgba(255,255,0,0.5);
   --inverse-text-color: #FFFFFF;
-  --inverse-background-color: #00703c;
+  --inverse-background-color: #4f7942;
   --inverse-header-color: #FFFFFF;
-  --inverse-link-color: #00703c;
+  --inverse-link-color: #4f7942;
   --title-slide-background-color: #4f7942;
   --title-slide-text-color: #FFFFFF;
   --header-background-color: #4f7942;
   --header-background-text-color: #FFFFFF;
-  --primary: #4f7942;
-  --secondary: #00703c;
+  --base: #4f7942;
   --white: #FFFFFF;
-  --black: #000000;
+  --black: #272822;
 }
 
 html {
@@ -101,7 +100,7 @@ h1, h2, h3 {
 }
 .remark-inline-code {
   font-size: var(--code-inline-font-size);
-  color: #00703c;
+  color: #4f7942;
 }
 .remark-slide-number {
   color: #4f7942;
@@ -177,7 +176,7 @@ img, video, iframe {
   max-width: 100%;
 }
 blockquote {
-  border-left: solid 5px #00703c80;
+  border-left: solid 5px #4f794280;
   padding-left: 1em;
 }
 .remark-slide table {
@@ -194,7 +193,7 @@ th, td {
 .remark-slide table:not(.table-unshaded) thead,
 .remark-slide table:not(.table-unshaded) tfoot,
 .remark-slide table:not(.table-unshaded) tr:nth-child(even) {
-  background: #CCE2D8;
+  background: #DBE4D9;
 }
 table.dataTable tbody {
   background-color: var(--background-color);
@@ -204,7 +203,7 @@ table.dataTable.display tbody tr.odd {
   background-color: var(--background-color);
 }
 table.dataTable.display tbody tr.even {
-  background-color: #CCE2D8;
+  background-color: #DBE4D9;
 }
 table.dataTable.hover tbody tr:hover, table.dataTable.display tbody tr:hover {
   background-color: rgba(255, 255, 255, 0.5);
@@ -274,17 +273,11 @@ table.dataTable.hover tbody tr:hover, table.dataTable.display tbody tr:hover {
   }
 }
 
-.primary {
-  color: var(--primary);
+.base {
+  color: var(--base);
 }
-.bg-primary {
-  background-color: var(--primary);
-}
-.secondary {
-  color: var(--secondary);
-}
-.bg-secondary {
-  background-color: var(--secondary);
+.bg-base {
+  background-color: var(--base);
 }
 .white {
   color: var(--white);

@@ -1,31 +1,47 @@
 <!DOCTYPE html>
 <html lang="" xml:lang="">
   <head>
-    <title>Assignment 3</title>
+    <title>The Expectation-Maximization Algorithm</title>
     <meta charset="utf-8" />
     <meta name="author" content="Dina Gyberg Jensen (vbz248)" />
-    <meta name="date" content="2024-10-16" />
+    <meta name="date" content="2024-10-18" />
     <script src="3---Presentation_files/header-attrs/header-attrs.js"></script>
-    <link rel="stylesheet" href="xaringan-themer.css" type="text/css" />
+    <link rel="stylesheet" href="themer-new.css" type="text/css" />
   </head>
   <body>
     <textarea id="source">
 class: center, middle, inverse, title-slide
 
 .title[
-# Assignment 3
-]
-.subtitle[
-## The Expectation Maximization Algorithm
+# The Expectation-Maximization Algorithm
 ]
 .author[
 ### Dina Gyberg Jensen (vbz248)
 ]
+.institute[
+### University of Copenhagen
+]
 .date[
-### 2024-10-16
+### 2024-10-18
 ]
 
 ---
+
+&lt;style type="text/css"&gt;
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content &gt; h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+&lt;/style&gt;
+
+
 
 
 
@@ -41,12 +57,97 @@ $$f(x,w)=\frac{1}{\sqrt{\pi \sigma \nu}2^{(\nu+1)/2}\Gamma(\nu/2)}w^{\frac{\nu-1
 
 
 The marginal density of `\(X\)` is:
-`$$f(x)=\int_0^\infty f(x,w)dw=\frac{1}{\sqrt{\pi \nu \sigma}}\frac{\Gamma\left(\frac{\nu+1}{2}\right)}{\Gamma\left(\frac{\nu}{2}\right)}\left(1+\frac{(x-\mu)^2}{\nu\sigma^2}\right)^{-\frac{\nu+1}{2}}$$`
+`$$f(x)=\int_0^\infty f(x,w)dw=\frac{1}{\sqrt{\pi \sigma \nu}2^{(\nu+1)/2}\Gamma(\nu/2)} \int_0^\infty w^{\frac{\nu-1}{2}}e^{-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu\sigma^2} \right)} dw\\
+=\frac{1}{\sqrt{\pi \nu \sigma}}\frac{\Gamma\left(\frac{\nu+1}{2}\right)}{\Gamma\left(\frac{\nu}{2}\right)}\left(1+\frac{(x-\mu)^2}{\nu\sigma^2}\right)^{-\frac{\nu+1}{2}}$$`
+Where we have used that the gamma density is given by `\(\Gamma(z)=\int_0^\infty t^{z-1}e^{-t}dt\)` and used the substitution `\(t = \frac{w}{2}\left( 1+\frac{(x-\mu)^2}{\nu\sigma^2} \right)\)`. The result can be easily recognized as a Student's t-distribution with `\(\nu\)` degrees of freedom and location `\(\mu\)` and scale `\(\sigma\)`.
+
+---
+###Maximizing Complete Data log-likelihood
+Complete data log-likelihood for fixed `\(\nu\)`:
+`$$\sum_{i=1}^n\log f(x_i,w_i)=-\sum_{i=1}^n\log\left(\sigma\sqrt{\pi\nu}2^{(\nu+1)/2}\Gamma(\nu/2) \right)+\sum_{i=1}^n\log\left(w_i^{\frac{\nu-1}{2}} \right)-\sum_{i=1}^n\left(\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu\sigma^2} \right) \right)$$`
+We differentiate and set equal to 0 to find the MLEs of `\(\mu\)` and `\(\sigma^2\)` given that we observe the full dataset.
+.pull-left[ 
+`$$\frac{\partial }{\partial\mu}=\frac{1}{\nu\sigma^2}\sum_{i=1}^nw_i(x_i-\mu)$$`
+]
+
+.pull-right[ 
+`$$\frac{\partial }{\partial\sigma}=-\frac{n}{\sigma}+\sum_{i=1}^n w_i\frac{(x_i-\mu)^2}{\nu\sigma^3}$$`
+ ]
+.pull-left[ 
+`$$\mu_{opt}=\frac{\sum_{i=1}^nw_ix_i}{\sum_{i=1}^nw_i}$$`
+]
+
+.pull-right[ 
+`$$\sigma^2_{opt} =\frac{1}{n\nu}\sum_{i=1}^nw_i(x_i-\mu)^2$$`
+ ]
+
+---
+###E-step
+For the E-step we need to compute the `\(Q\)`-function
+`$$Q(\theta|\theta')=E_{\theta'}\left(\log( f(X,W \ | \ \theta) \ | \ X=x) \right)= \sum_{i=1}^nE_{\theta'}(\log( f(x_i,W_i \ | \ \theta) \ | \ X_i=x_i) )\\
+=\sum_{i=1}^nE_{\theta'}\left( \log\left( \frac{1}{\sqrt{\pi \sigma \nu}2^{(\nu+1)/2}\Gamma(\nu/2)}w^{\frac{\nu-1}{2}}e^{-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu\sigma^2} \right)}\right) \right)\\
+=-\sum_{i=1}^n\log\left(\sigma\sqrt{\pi\nu}2^{(\nu+1)/2}\Gamma(\nu/2) \right)+\frac{\nu-1}{2}\sum_{i=1}^nE_{\theta'}( \log(W_i\ | \ X_i=x_i))\\
+-\frac{1}{2}\left(1+\frac{(x_i-\mu)^2}{\nu\sigma^2} \right)\sum_{i=1}^n E_{\theta'}(W_i \ | \ X_i=x_i)$$`
+
+The conditional distribution of `\(W_i \ | X_i=x_i\)` can be recognized as the gamma distribution with shape `\(k = \frac{\nu+1}{2}\)` and scale `\(t_i = \frac{2}{1+\frac{(x_i-\mu')^2}{\nu\sigma'^2} }\)`. Hence we have:
+.pull-left[
+$$
+E_{\theta'}(W_i \ | \ X_i=x_i)=k\cdot t_i
+$$
+]
+.pull-right[
+$$
+E_{\theta'}( \log(W_i\ | \ X_i=x_i))=\psi(k)+\log(t_i)
+$$
+]
+
+---
+###M-step
+For the M-step we need to maximize the `\(Q\)`-function with respect to `\(\mu\)` and `\(\sigma^2\)`. This can be done analytically:
+.pull-left[
+`$$\frac{\partial }{\partial\mu}Q(\theta|\theta')=-\sum_{i=0}^n\frac{(x_i-\mu)}{\nu\sigma^2}kt_i\\
+\Rightarrow\hat{\mu}_{opt}=\frac{\sum_{i=1}^nx_it_i}{\sum_{i=1}^nt_i}$$`
+]
+
+.pull-right[
+`$$\frac{\partial }{\partial\sigma}Q(\theta|\theta')=\frac{n}{\sigma}-3\sum_{i=1}^n\frac{(x_i-\mu)^2}{\nu\sigma^2}kt_i \\
+\Rightarrow \hat{\sigma}^2_{opt}=\frac{1}{n\nu}k\sum_{i=1}^n(x_i-\mu)^2t_i$$`
+]
 
 
+We note that this means we can actually optimize `\(Q\)` wrt. `\(\mu\)` and `\(\sigma^2\)` without explicitly calculating `\(Q\)`.
 
 
+---
+class: reduce-spacing
 
+###Implementation
+
+``` r
+EM_alg &lt;- function(x, param, max_iter = 20, epsilon = 1e-10, cb = NULL){
+  mu_mark &lt;- param$mu #Getting initial parameters
+  sigma_mark &lt;- param$sigma
+  ny &lt;- param$ny
+  k &lt;- (ny + 1) / 2   #Defining i and k, which only depends on ny:
+  i &lt;- 0
+  
+  while (i &lt; max_iter) {
+    mu_old &lt;- mu_mark
+    sigma_old &lt;- sigma_mark
+    t_old &lt;- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))
+    
+    mu_mark &lt;- sum(t_old * x) / sum(t_old)
+    sigma_mark &lt;- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)
+    #Calling  cb
+    if(!is.null(cb)) cb()
+    #Checking convergence
+    if (sum((c(mu_mark, sigma_mark) - c(mu_old, sigma_old))^2) 
+        &lt;= epsilon * (sum(c(mu_mark, sigma_mark)^2) + epsilon)) break
+    i &lt;- i + 1
+  }
+  c(mu_mark, sigma_mark)
+}
+```
 
 
 
@@ -57,8 +158,12 @@ The marginal density of `\(X\)` is:
 "slideNumberFormat": "%current%",
 "highlightStyle": "github",
 "highlightLines": true,
+"highlightSpans": true,
 "ratio": "16:9",
-"countIncrementalSlides": true
+"countIncrementalSlides": true,
+"navigation": {
+"scroll": false
+}
 });
 if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
   window.dispatchEvent(new Event('resize'));
