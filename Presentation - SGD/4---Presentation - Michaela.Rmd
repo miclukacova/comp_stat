@@ -58,247 +58,67 @@ Where the response is given by:
 $$Y_i = f(x_i| \alpha, \beta,\gamma,\rho) + \varepsilon_i \hskip5mm \text{with}\hskip2mm \varepsilon_i \stackrel{iid}{\sim} N(0,\omega^2)$$
 And the log-logistic dose-response model is given by:
 $$f(x_i| \alpha, \beta,\gamma,\rho) = \gamma + \frac{\rho - \gamma}{1 + \exp(\beta \log(x_i) - \alpha)}$$
-
 ---
-###Stochastic Gradient Descent
-Start out implementing a standard version of the stochastic gradient descent algorithm (SGD). The gradient in a single point is given by
-$$-2\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)  $$
+### Test of Algorithm 
 
-<br>
-Where $\nabla f(x_i| \alpha, \beta,\gamma,\rho)$ is given by
-$$\nabla f(x_i| \alpha, \beta,\gamma,\rho) = \begin{pmatrix}
-  \frac{\rho-\gamma}{(1+\exp(\beta\log(x_i)-\alpha))^2}\cdot\exp(\beta\log(x_i)-\alpha)\\
-  \frac{\rho-\gamma}{(1+\exp(\beta\log(x_i)-\alpha))^2}\cdot\exp(\beta\log(x_i)-\alpha)\cdot\log(x_i)\\
-  1-\frac{1}{1+\exp(\beta\log(x_i)-\alpha)} \\
-  \frac{1}{1+\exp(\beta\log(x_i)-\alpha)}
-\end{pmatrix}$$
-So the update scheme becomes:
-$$\theta_{t+1} = \theta_t +2 \gamma_t\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)$$
-Where $\theta_t = (\alpha_t, \beta_t, \gamma_t, \rho_t)$ and $\gamma_t$ is the learning rate at time $t$.
----
-###Implementation
-The gradient function and $f$ are implemented seperately
-```{r}
+xxxx
 
-sgd <- function(
-    par0,
-    N, # Sample size
-    gamma, # Decay schedule or a fixed learning rate
-    epoch = NULL,
-    maxiter = 100, # Max epoch iterations
-    sampler = sample, # How data is resampled. Default is a random permutation
-    cb = NULL,
-    ...) {
-  
-  if (is.function(gamma)) gamma <- gamma(1:maxiter)
-  gamma <- rep_len(gamma, maxiter)
-  
-  par <- par0
-  
-  for (n in 1:maxiter) {
-    if (!is.null(cb)) cb$tracer()
-    
-    samp <- sampler(N)
-    
-    if (is.null(epoch)){
-       for (j in 1:N) {
-         i <- samp[j]
-         par <- par - gamma[n] * gradient(par, i, ...)
-       }
-    } else {
-      par <- epoch(par, samp, gamma[n], ...)
-    }
-  }
-  par
-}
-```
-
----
-###Testing
-We implement two types of samplers to test our data on. One that samples the $x_i$'s from the grid $e, e^2, ..., e^{15}$ and one that samples $\log(x)$ from $\mathcal{N}(0, \omega^2)$. We then test the algorithm on both samplers for 3 different values of parameters and 2 different starting values. Maybe??? Maybe not???
 ```{r, warning = FALSE, message = FALSE}
-source("SO_source.R")
-#Remember to source the SO_source file
-set.seed(17102024)
-param1 <- parameters(5,2,1,2)
-param2 <- parameters(4,3,6,1)
-param3 <- parameters(1,1,1,1)
-#Simulations of data
-sim_1 <- sim(param1, 1000)
-sim_2 <- sim(param2, 1000)
-sim_3 <- sim(param3, 1000)
-sim_grid_1 <- sim(param1, 1000, grid = TRUE)
-sim_grid_2 <- sim(param2, 1000, grid = TRUE)
-sim_grid_3 <- sim(param3, 1000, grid = TRUE)
-
-#Running the SGD algorithm
-```
-
----
-###Profiling the algorithm
-```{r, echo = FALSE}
-profvis({
-f <- function(x, par){
-  alpha <- par[1]
-  beta <- par[2]
-  gamma <- par[3]
-  rho <- par[4]
-  
-  return(gamma + (rho - gamma) / (1 + exp(beta * log(x) - alpha)))
-}
-
-
-
-gradient <- function(par, i, x, y,...){
-  alpha <- par[1]
-  beta <- par[2]
-  gamma <- par[3]
-  rho <- par[4]
-  
-  x_i <- x[i]
-  y_i <- y[i]
-  
-  expbetalogxalpha <- exp(beta * log(x_i) - alpha)
-  
-  identical_part <- - 2 * (y_i - f(x_i, par))
-  
-  grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
-  grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
-  grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))
-  grad_rho <- mean(identical_part / (1 + expbetalogxalpha))
-  
-  return(c(grad_alpha, grad_beta, grad_gamma, grad_rho))
-}
-
-sgd <- function(
-    par0,
-    grad,
-    N, # Sample size
-    gamma, # Decay schedule or a fixed learning rate
-    epoch = NULL,
-    maxiter = 100, # Max epoch iterations
-    sampler = sample, # How data is resampled. Default is a random permutation
-    cb = NULL,
-    ...) {
-  
-  if (is.function(gamma)) gamma <- gamma(1:maxiter)
-  gamma <- rep_len(gamma, maxiter)
-  
-  par <- par0
-  
-  for (n in 1:maxiter) {
-    if (!is.null(cb)) cb$tracer()
-    
-    samp <- sampler(N)
-    
-    if (is.null(epoch)){
-       for (j in 1:N) {
-         i <- samp[j]
-        par <- par - gamma[n] * grad(par, i, ...)
-       }
-    } else {
-      par <- epoch(par, samp, gamma[n], ...)
-    }
-  }
-  par
-}
-
-sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim_1$x, y = sim_1$y)
-})
-```
----
-###Implementing the gradient function in RCPP
-```{r}
-library(Rcpp)
-
-cppFunction('
-NumericVector gradient_rcpp(NumericVector par, NumericVector indices, NumericVector x, NumericVector y) {
-  // Extract parameters
-  double alpha = par[0];
-  double beta = par[1];
-  double gamma = par[2];
-  double rho = par[3];
-
-  // Initialize gradients
-  double grad_alpha = 0.0;
-  double grad_beta = 0.0;
-  double grad_gamma = 0.0;
-  double grad_rho = 0.0;
-
-  int n = indices.size(); // Number of indices
-
-  // Loop over the indices
-  for (int idx = 0; idx < n; ++idx) {
-    int i = indices[idx] - 1;  // Convert from r to c++ indexing
-
-    // Get individual data point
-    double x_i = x[i];
-    double y_i = y[i];
-
-    // Calculating f(x_i, par)
-    double f_x_i = gamma + (rho - gamma) / (1 + exp(beta * log(x_i) - alpha));
-
-    // Exponential term
-    double expbetalogxalpha = exp(beta * log(x_i) - alpha);
-
-    // Identical part used in gradients
-    double identical_part = -2 * (y_i - f_x_i);
-
-    // Accumulate gradients for all indices
-    grad_alpha += (identical_part * (rho - gamma) * expbetalogxalpha) 
-    / pow(1 + expbetalogxalpha, 2);
-    grad_beta += -(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha) 
-    / pow(1 + expbetalogxalpha, 2);
-    grad_gamma += identical_part * (1 - 1 / (1 + expbetalogxalpha));
-    grad_rho += identical_part / (1 + expbetalogxalpha);
-  }
-
-  // Return the mean of accumulated gradients
-  return NumericVector::create(grad_alpha / n, grad_beta / n, grad_gamma / n, grad_rho / n);
-}
-')
 
 ```
 
-```{r}
-gradient(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
-gradient_rcpp(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
-```
-
-
 ---
-###Exploiting the grid structure?
+### Gradient Descent
 
----
-###Benchmarking
-Benchmarking the RCPP implementation against the R implementation
-```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
-sim1 <- sim(param1, 100)
+xxxx
 
-bench_results <- bench::mark(
-    R = sgd(c(3,3,3,3), grad = gradient, N = 100, gamma = 0.01, x = sim1$x, y = sim_1$y),
-    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 100, gamma = 0.01, x = sim1$x, y = sim_1$y),
-    iterations = 100,
-    check = F
-)
-plot(bench_results)
-```  
-<br>
-```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
-knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
+```{r, warning = FALSE, message = FALSE}
+
 ```
 
 ---
-```{r,echo=T, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
-sim1 <- sim(param1, 1000)
+### Decay Schedule
 
-bench_results <- bench::mark(
-    R = sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim1$x, y = sim_1$y),
-    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 1000, gamma = 0.01, x = sim1$x, y = sim_1$y),
-    iterations = 10,
-    check = F
-)
-plot(bench_results)
+We implement a flexible three-parameter power law family of decay schedules
 
-knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
+$$
+\gamma_n = \frac{\gamma_0 K}{K + n^{a}}
+$$
+
+Where $a \in (0.5,1]$ and $K>0$. $\gamma_0$ is the initial learning rate. If $H$ is strongly convex and the gradient bounded, this decay schedule will ensure convergence. We try different decay schedules, where we vary $a$ and $K$. 
+
+```{r, warning = FALSE, message = FALSE}
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+
+decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 1)
+decay2 <- decay_scheduler(gamma0 = 1, a = 0.5, K = 10)
+decay3 <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.0002)
+
+
+sgd_decay1 <- SGD(par0 = param$par, grad = grad, gamma = decay1, x = x, y = y,
+                           true_par = param$par)
+
+SGD_tracer$clear()
+sgd_decay2 <- SGD(par0 = param$par, grad = grad, gamma = decay2, x = x, y = y,
+                           true_par = param$par)
+
+
+SGD_tracer$clear()
+sgd_decay3 <- SGD(par0 = param$par, grad = grad, gamma = decay3, x = x, y = y,
+                           true_par = param$par)
+
+grid.arrange(plot(sgd_decay1, 1) + ggtitle("a = 1, K = 1"),
+             plot(sgd_decay2, 1)+ ggtitle(" a = 0.5, K = 10"), 
+             plot(sgd_decay3, 1) + ggtitle("g1 = 0.0001, n1 = 100"),
+             nrow = 1)
+```
+---
+### Exploiting Grid Structure 
+
+xxxx
+
+```{r, warning = FALSE, message = FALSE}
+
 ```

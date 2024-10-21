@@ -88,11 +88,9 @@ set.seed(34)
 rand <- round(rnorm(4, 0, 5))
 col_name <- sprintf("SV (%s)", paste(rand, collapse = ", "))
 
-SGD_tracer$clear()
 sgd_true_sv <- SGD(par0 = param$par, grad = grad, gamma = 0.001, x = x, y = y,
                            true_par = param$par)
 
-SGD_tracer$clear()
 sgd_rand_sv <- SGD(par0 = rand, grad = grad, gamma = 0.001, x = x, y = y,
                            true_par = param$par)
 

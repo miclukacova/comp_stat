@@ -49,7 +49,7 @@ SGD_tracer <- tracer(c("par", "k"), Delta = 0)
 SGD <- function(par0, grad, gamma, maxiter = 150, epoch = vanilla,
                 sampler = sample, cb = SGD_tracer, m = 1, 
                 true_par = NULL, ...) {
-  structure(
+  output = structure(
     list(
       est = sgd(par = par0, 
                 grad = grad, 
@@ -66,6 +66,8 @@ SGD <- function(par0, grad, gamma, maxiter = 150, epoch = vanilla,
       additional_args = list(...)),
     class = "My_SGD"
   )
+  cb$clear()
+  return(output)
 }
 
 # Summary method
