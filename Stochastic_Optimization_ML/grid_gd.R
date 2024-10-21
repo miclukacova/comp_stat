@@ -20,7 +20,7 @@ grad_desc_grid <- function(
     
     # Computing 
     fs <- f(par, x_vals)[matches]
-    nabla_fs <- sapply(seq_along(x), function(i) nabla_f(par, x_vals[i]))
+    nabla_fs <- sapply(seq_along(x_vals), function(i) nabla_f(par, x_vals[i]))
     
     # Calculations of objective and gradient
     value <- sum((y - fs)^2) 

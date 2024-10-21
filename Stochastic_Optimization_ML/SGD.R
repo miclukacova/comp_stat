@@ -47,7 +47,7 @@ SGD_tracer <- tracer(c("par", "k"), Delta = 0)
 ###### SGD class ###########################################
 
 SGD <- function(par0, grad, gamma, maxiter = 150, epoch = vanilla,
-                sampler = sample, cb = SGD_tracer$tracer, m = 1, 
+                sampler = sample, cb = SGD_tracer, m = 1, 
                 true_par = NULL, ...) {
   structure(
     list(
@@ -56,11 +56,11 @@ SGD <- function(par0, grad, gamma, maxiter = 150, epoch = vanilla,
                 gamma = gamma, 
                 maxiter = maxiter, 
                 sampler = sample, 
-                cb = cb,
+                cb = cb$tracer,
                 epoch = epoch,
                 m = m,
                 ...),
-      trace = summary(SGD_tracer),
+      trace = summary(cb),
       start_par = par0,
       true_par = true_par,
       additional_args = list(...)),
@@ -164,7 +164,7 @@ batch <- function(par, samp, gamma, grad, n, x, y, m, ...){
   M <- floor(n / m)
   for (j in 0:(M - 1)) {
     i <- samp[(j * m + 1):(j * m + m)]
-    par <- par - 1/ m * gamma * grad(par, x[i], y[i])
+    par <- par - 1 / m * gamma * grad(par, x[i], y[i])
   }
   return(par)
 }
