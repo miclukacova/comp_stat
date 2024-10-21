@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>Log-logistic Dose-response Curves</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Christian Rubjerg Hejstvig-Larsen (brf337)" />
+    <meta name="author" content="Dina Gyberg Jensen (vbz248)" />
+    <meta name="date" content="2024-10-21" />
+    <script src="4---Presentation_files/header-attrs-2.28/header-attrs.js"></script>
+    <link href="4---Presentation_files/htmltools-fill-0.5.8.1/fill.css" rel="stylesheet" />
+    <script src="4---Presentation_files/htmlwidgets-1.6.4/htmlwidgets.js"></script>
+    <script src="4---Presentation_files/jquery-1.12.4/jquery.min.js"></script>
+    <script src="4---Presentation_files/d3-3.5.6/d3.min.js"></script>
+    <link href="4---Presentation_files/profvis-0.3.6.9000/profvis.css" rel="stylesheet" />
+    <script src="4---Presentation_files/profvis-0.3.6.9000/profvis.js"></script>
+    <script src="4---Presentation_files/profvis-0.3.6.9000/scroll.js"></script>
+    <link href="4---Presentation_files/highlight-6.2.0/textmate.css" rel="stylesheet" />
+    <script src="4---Presentation_files/highlight-6.2.0/highlight.js"></script>
+    <script src="4---Presentation_files/profvis-binding-0.3.8/profvis.js"></script>
+    <link rel="stylesheet" href="xaringan-themer.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+.title[
+# Log-logistic Dose-response Curves
+]
+.author[
+### Christian Rubjerg Hejstvig-Larsen (brf337)
+]
+.author[
+### Dina Gyberg Jensen (vbz248)
+]
+.institute[
+### University of Copenhagen
+]
+.date[
+### 2024-10-21
+]
+
+---
+
+&lt;style type="text/css"&gt;
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content &gt; h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+&lt;/style&gt;
+
+
+
+
+
+###Introduction
+Objective is to use stochastic optimization to estimate the parameters of a log-logistic dose-response model using non-linear least squares estimation. That is obtaining the parameters `\(\alpha, \beta, \gamma, \rho\)` that minimize the loss function:
+`$$L(X,(\alpha,\beta,\gamma,\rho))=\frac{1}{N}\sum_{i=1}^N\left( y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)^2$$`
+&lt;br&gt;
+Where the response is given by:
+`$$Y_i = f(x_i| \alpha, \beta,\gamma,\rho) + \varepsilon_i \hskip5mm \text{with}\hskip2mm \varepsilon_i \stackrel{iid}{\sim} N(0,\omega^2)$$`
+And the log-logistic dose-response model is given by:
+`$$f(x_i| \alpha, \beta,\gamma,\rho) = \gamma + \frac{\rho - \gamma}{1 + \exp(\beta \log(x_i) - \alpha)}$$`
+
+---
+###Stochastic Gradient Descent
+Start out implementing a standard version of the stochastic gradient descent algorithm (SGD). The gradient in a single point is given by
+$$-2\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)  $$
+
+&lt;br&gt;
+Where `\(\nabla f(x_i| \alpha, \beta,\gamma,\rho)\)` is given by
+`$$\nabla f(x_i| \alpha, \beta,\gamma,\rho) = \begin{pmatrix}
+  \frac{\rho-\gamma}{(1+\exp(\beta\log(x_i)-\alpha))^2}\cdot\exp(\beta\log(x_i)-\alpha)\\
+  \frac{\rho-\gamma}{(1+\exp(\beta\log(x_i)-\alpha))^2}\cdot\exp(\beta\log(x_i)-\alpha)\cdot\log(x_i)\\
+  1-\frac{1}{1+\exp(\beta\log(x_i)-\alpha)} \\
+  \frac{1}{1+\exp(\beta\log(x_i)-\alpha)}
+\end{pmatrix}$$`
+So the update scheme becomes:
+`$$\theta_{t+1} = \theta_t +2 \gamma_t\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)$$`
+Where `\(\theta_t = (\alpha_t, \beta_t, \gamma_t, \rho_t)\)` and `\(\gamma_t\)` is the learning rate at time `\(t\)`.
+---
+###Implementation
+The gradient function and `\(f\)` are implemented seperately
+
+``` r
+sgd &lt;- function(
+    par0,
+    N, # Sample size
+    gamma, # Decay schedule or a fixed learning rate
+    epoch = NULL,
+    maxiter = 100, # Max epoch iterations
+    sampler = sample, # How data is resampled. Default is a random permutation
+    cb = NULL,
+    ...) {
+  
+  if (is.function(gamma)) gamma &lt;- gamma(1:maxiter)
+  gamma &lt;- rep_len(gamma, maxiter)
+  
+  par &lt;- par0
+  
+  for (n in 1:maxiter) {
+    if (!is.null(cb)) cb$tracer()
+    
+    samp &lt;- sampler(N)
+    
+    if (is.null(epoch)){
+       for (j in 1:N) {
+         i &lt;- samp[j]
+         par &lt;- par - gamma[n] * gradient(par, i, ...)
+       }
+    } else {
+      par &lt;- epoch(par, samp, gamma[n], ...)
+    }
+  }
+  par
+}
+```
+
+---
+###Testing
+We implement two types of samplers to test our data on. One that samples the `\(x_i\)`'s from the grid `\(e, e^2, ..., e^{15}\)` and one that samples `\(\log(x)\)` from `\(\mathcal{N}(0, \omega^2)\)`. We then test the algorithm on both samplers for 3 different values of parameters and 2 different starting values. Maybe??? Maybe not???
+
+``` r
+source("SO_source.R")
+#Remember to source the SO_source file
+set.seed(17102024)
+param1 &lt;- parameters(5,2,1,2)
+param2 &lt;- parameters(4,3,6,1)
+param3 &lt;- parameters(1,1,1,1)
+#Simulations of data
+sim_1 &lt;- sim(param1, 1000)
+sim_2 &lt;- sim(param2, 1000)
+sim_3 &lt;- sim(param3, 1000)
+sim_grid_1 &lt;- sim(param1, 1000, grid = TRUE)
+sim_grid_2 &lt;- sim(param2, 1000, grid = TRUE)
+sim_grid_3 &lt;- sim(param3, 1000, grid = TRUE)
+
+#Running the SGD algorithm
+```
+
+---
+###Profiling the algorithm
+<div class="profvis html-widget html-fill-item" id="htmlwidget-838547a92b7123554308" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-838547a92b7123554308">{"x":{"message":{"prof":{"time":[1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,5,5,5,6,6,6,7,7,7,8,8,8,8,9,9,9,10,10,10,11,11,11,12,12,12,13,13,13,13,14,14,14,15,15,15,16,16,16,17,17,17,18,18,18,19,19,19,20,20,20,21,21,21,22,23,23,24,24,24,25,25,25,26,26,26,27,28,28,28,29,30,30,30,30,31,31,31,32,32,32,33,33,33,34,34,34,35,36,36,37,37,37,38,38,38,39,39,39,40,40,40,41,41,41,42,42,42,43,43,43,43,44,44,44,45,45,45,46,46,46,47,47,47,48,48,48,49,49,49,50,50,50,51,51,51,51,52,53,53,54,54,54,55,55,55,56,56,56,57,57,57,58,58,58,59,59,59,60,60,60,61,61,62,62,62,63,63,63,64,64,64,65,65,65,66,66,66,67,67,67,68,68,68,69,69,69,70,70,70,71,71,71,71,72,72,72,73,73,73,74,75,75,75,76,76,76,76,77,77,77,78,78,78,78,79,79,79,80,80,80,81,81,81,82,82,82,82,83,83,83,84,84,84,85,85,85,86,86,86,87,87,87,88,88,88,89,90,90,90,90,91,91,91,92,92,92,93,93,93,94,94,94,95,96,96,96,97,98,98,98,99,99,99,99,100,101,101,101,102,102,102,103,103,103,104,104,104,105,106,107,107,107,108,108,108,109,109,109,110,110,110,111,112,112,112,113,113,113,113,114,114,114,115,115,115,116,116,116,117,117,117,118,118,118,119,119,119,120,120,120,121,121,121,122,123,123,123,124,124,124,125,125,125,126,126,126,127,127,127,128,128,128,128,129,129,129,130,130,130,131,131,131,131,132,132,132,133,133,134,135,136,136,136,137,137,137,138,138,138,139,139,139,140,140,140,141,141,141,142,142,142,143,143,143,144,144,144,145,145,145,146,147,147,147,148,148,148,148,149],"depth":[2,1,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,12,11,10,9,8,7,6,5,4,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,1,2,1,3,2,1,3,2,1,3,2,1,1,3,2,1,1,4,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,1,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,1,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,3,2,1,3,2,1,1,3,2,1,4,3,2,1,3,2,1,4,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,1,4,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,1,3,2,1,1,3,2,1,4,3,2,1,1,3,2,1,3,2,1,3,2,1,3,2,1,1,1,3,2,1,3,2,1,3,2,1,3,2,1,1,3,2,1,4,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,3,2,1,3,2,1,4,3,2,1,3,2,1,2,1,1,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,1,3,2,1,4,3,2,1,1],"label":["sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim_1$x, y = sim_1$y)","compiler:::tryCmpfun","exists","findCenvVar","getInlineInfo","tryInline","cmpCall","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","findCenvVar","getInlineInfo","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","<GC>","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","x_i <- x[i]","grad","sgd","mean","grad","sgd","isTRUE","mean.default","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","mean","grad","sgd","identical_part <- - 2 * (y_i - f(x_i, par))","grad","sgd","<GC>","par <- par - gamma[n] * grad(par, i, ...)","sgd","is.numeric","par <- par - gamma[n] * grad(par, i, ...)","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","sgd","mean","grad","sgd","length","grad_rho <- mean(identical_part / (1 + expbetalogxalpha))","mean","grad","sgd","grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))","grad","sgd","grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","length","par <- par - gamma[n] * grad(par, i, ...)","sgd","mean","grad","sgd","mean.default","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)","mean","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)","mean","grad","sgd","is.na","grad","sgd","grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))","grad","sgd","mean","grad","sgd","par <- par - gamma[n] * grad(par, i, ...)","sgd","mean","grad","sgd","x_i <- x[i]","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","identical_part <- - 2 * (y_i - f(x_i, par))","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","is.numeric","mean","grad","sgd","grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)","mean","grad","sgd","mean","grad","sgd","isTRUE","mean.default","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","mean","grad","sgd","beta <- par[2]","f","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","identical_part <- - 2 * (y_i - f(x_i, par))","grad","sgd","mean","grad","sgd","mean","grad","sgd","is.numeric","isTRUE","mean.default","grad","sgd","mean","grad","sgd","identical_part <- - 2 * (y_i - f(x_i, par))","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","is.numeric","mean","grad","sgd","length","mean.default","grad","sgd","<GC>","mean","grad","sgd","sgd","mean.default","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","is.na","c","mean","grad","sgd","mean","grad","sgd","x_i <- x[i]","grad","sgd","mean","grad","sgd","c","mean","grad","sgd","isTRUE","mean.default","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","y_i <- y[i]","grad","sgd","length","grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","<GC>","grad_rho <- mean(identical_part / (1 + expbetalogxalpha))","grad","sgd","mean","grad","sgd","par <- par - gamma[n] * grad(par, i, ...)","sgd","length","length","mean","grad","sgd","identical_part <- - 2 * (y_i - f(x_i, par))","grad","sgd","grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean","grad","sgd","mean.default","grad","sgd","mean","grad","sgd","is.na","mean","grad","sgd","isTRUE","mean.default","grad","sgd","c"],"filenum":[1,1,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,null,null,null,null,null,null,null,null,null,1,1,1,1,1,1,1,1,1,1,null,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,null,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,null,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,null,1,1,1,1,1,null,1,1,null,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,null,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,null,null,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,null,null,1,1,1,1,1,1,1,1,1,1,1,null,1,1,null,1,1,1,null,null,1,1,null,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,null,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,null,null,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,null,1,1,1,null,null,1,1,1],"linenum":[67,67,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,58,null,null,null,null,null,null,null,null,null,null,null,58,27,58,67,27,58,67,27,58,67,null,58,67,null,26,58,67,28,58,67,27,58,67,19,58,67,26,58,67,null,null,58,67,26,58,67,27,58,67,26,58,67,null,58,67,28,58,67,27,58,67,24,58,67,null,58,67,null,58,67,29,58,67,27,58,67,27,58,67,67,28,58,67,null,29,29,58,67,28,58,67,27,58,67,null,58,67,28,58,67,null,58,67,26,58,67,null,58,67,null,58,67,26,58,67,29,58,67,null,58,67,27,27,58,67,27,58,67,null,58,67,null,58,67,29,58,67,29,58,67,26,58,67,26,58,67,27,27,58,67,null,58,67,26,58,67,29,58,67,26,58,67,29,58,67,29,58,67,28,58,67,27,58,67,58,67,29,58,67,19,58,67,26,58,67,28,58,67,28,58,67,24,58,67,26,58,67,28,58,67,26,58,67,26,26,58,67,28,58,67,26,58,67,null,29,58,67,27,27,58,67,27,58,67,null,null,58,67,null,58,67,29,58,67,26,58,67,4,24,58,67,27,58,67,null,58,67,28,58,67,24,58,67,27,58,67,28,58,67,null,null,null,58,67,29,58,67,24,58,67,27,58,67,null,58,67,null,27,58,67,null,null,58,67,null,29,58,67,67,null,58,67,26,58,67,26,58,67,28,58,67,null,31,29,58,67,27,58,67,19,58,67,27,58,67,31,27,58,67,null,null,58,67,29,58,67,null,58,67,29,58,67,28,58,67,26,58,67,null,58,67,29,58,67,20,58,67,null,27,58,67,27,58,67,26,58,67,28,58,67,26,58,67,28,28,58,67,26,58,67,29,58,67,null,29,58,67,28,58,67,58,67,null,null,29,58,67,24,58,67,28,58,67,26,58,67,null,58,67,29,58,67,26,58,67,26,58,67,null,58,67,26,58,67,null,26,58,67,null,null,58,67,31],"memalloc":[30.14971923828125,30.14971923828125,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.56086730957031,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,30.91563415527344,31.20217895507812,31.20217895507812,31.20217895507812,31.47940826416016,31.47940826416016,31.47940826416016,31.742431640625,31.742431640625,31.742431640625,31.98386383056641,31.98386383056641,31.98386383056641,32.29841613769531,32.29841613769531,32.29841613769531,32.29841613769531,30.42301940917969,30.42301940917969,30.42301940917969,30.76906585693359,30.76906585693359,30.76906585693359,31.06931304931641,31.06931304931641,31.06931304931641,31.41254425048828,31.41254425048828,31.41254425048828,31.71858978271484,31.71858978271484,31.71858978271484,31.71858978271484,32.03437805175781,32.03437805175781,32.03437805175781,30.25653839111328,30.25653839111328,30.25653839111328,30.55940246582031,30.55940246582031,30.55940246582031,30.92562103271484,30.92562103271484,30.92562103271484,31.23770141601562,31.23770141601562,31.23770141601562,31.55966186523438,31.55966186523438,31.55966186523438,31.87591552734375,31.87591552734375,31.87591552734375,32.20010375976562,32.20010375976562,32.20010375976562,30.45540618896484,30.80615234375,30.80615234375,31.10777282714844,31.10777282714844,31.10777282714844,31.42644500732422,31.42644500732422,31.42644500732422,31.80741119384766,31.80741119384766,31.80741119384766,32.11961364746094,30.24904632568359,30.24904632568359,30.24904632568359,30.57113647460938,30.93024444580078,30.93024444580078,30.93024444580078,30.93024444580078,31.2166748046875,31.2166748046875,31.2166748046875,31.49964904785156,31.49964904785156,31.49964904785156,31.80873107910156,31.80873107910156,31.80873107910156,32.12438201904297,32.12438201904297,32.12438201904297,30.33686065673828,30.65361022949219,30.65361022949219,30.97344207763672,30.97344207763672,30.97344207763672,31.29891967773438,31.29891967773438,31.29891967773438,31.65269470214844,31.65269470214844,31.65269470214844,31.95412445068359,31.95412445068359,31.95412445068359,30.20376586914062,30.20376586914062,30.20376586914062,30.50184631347656,30.50184631347656,30.50184631347656,30.80661773681641,30.80661773681641,30.80661773681641,30.80661773681641,31.16244506835938,31.16244506835938,31.16244506835938,31.46435546875,31.46435546875,31.46435546875,31.77656555175781,31.77656555175781,31.77656555175781,32.09017181396484,32.09017181396484,32.09017181396484,30.37165069580078,30.37165069580078,30.37165069580078,30.67849731445312,30.67849731445312,30.67849731445312,30.99964141845703,30.99964141845703,30.99964141845703,31.31068420410156,31.31068420410156,31.31068420410156,31.31068420410156,31.60767364501953,31.96022796630859,31.96022796630859,30.17458343505859,30.17458343505859,30.17458343505859,30.50349426269531,30.50349426269531,30.50349426269531,30.84056854248047,30.84056854248047,30.84056854248047,31.20149230957031,31.20149230957031,31.20149230957031,31.50180053710938,31.50180053710938,31.50180053710938,31.85154724121094,31.85154724121094,31.85154724121094,32.16407775878906,32.16407775878906,32.16407775878906,30.36625671386719,30.36625671386719,30.73133850097656,30.73133850097656,30.73133850097656,31.05078125,31.05078125,31.05078125,31.38401794433594,31.38401794433594,31.38401794433594,31.71015167236328,31.71015167236328,31.71015167236328,32.0277099609375,32.0277099609375,32.0277099609375,30.21831512451172,30.21831512451172,30.21831512451172,30.57418060302734,30.57418060302734,30.57418060302734,30.89266967773438,30.89266967773438,30.89266967773438,31.23076629638672,31.23076629638672,31.23076629638672,31.52552795410156,31.52552795410156,31.52552795410156,31.52552795410156,31.89450073242188,31.89450073242188,31.89450073242188,32.20732879638672,32.20732879638672,32.20732879638672,30.46509552001953,30.81640625,30.81640625,30.81640625,31.13147735595703,31.13147735595703,31.13147735595703,31.13147735595703,31.43038940429688,31.43038940429688,31.43038940429688,31.79425048828125,31.79425048828125,31.79425048828125,31.79425048828125,32.10809326171875,32.10809326171875,32.10809326171875,30.37055206298828,30.37055206298828,30.37055206298828,30.66336822509766,30.66336822509766,30.66336822509766,31.03797149658203,31.03797149658203,31.03797149658203,31.03797149658203,31.36007690429688,31.36007690429688,31.36007690429688,31.70277404785156,31.70277404785156,31.70277404785156,32.00894165039062,32.00894165039062,32.00894165039062,30.20685577392578,30.20685577392578,30.20685577392578,30.55590057373047,30.55590057373047,30.55590057373047,30.86447143554688,30.86447143554688,30.86447143554688,31.21146392822266,31.52056884765625,31.52056884765625,31.52056884765625,31.52056884765625,31.81327056884766,31.81327056884766,31.81327056884766,32.13401031494141,32.13401031494141,32.13401031494141,30.39115905761719,30.39115905761719,30.39115905761719,30.70923614501953,30.70923614501953,30.70923614501953,31.02069854736328,31.34639739990234,31.34639739990234,31.34639739990234,31.63213348388672,31.99558258056641,31.99558258056641,31.99558258056641,32.24254608154297,32.24254608154297,32.24254608154297,32.24254608154297,30.52814483642578,30.84284973144531,30.84284973144531,30.84284973144531,31.18801116943359,31.18801116943359,31.18801116943359,31.48597717285156,31.48597717285156,31.48597717285156,31.83515930175781,31.83515930175781,31.83515930175781,32.14464569091797,30.36895751953125,30.74083709716797,30.74083709716797,30.74083709716797,31.04286956787109,31.04286956787109,31.04286956787109,31.39533233642578,31.39533233642578,31.39533233642578,31.72003173828125,31.72003173828125,31.72003173828125,32.03953552246094,30.26788330078125,30.26788330078125,30.26788330078125,30.56047821044922,30.56047821044922,30.56047821044922,30.56047821044922,30.85386657714844,30.85386657714844,30.85386657714844,31.19871520996094,31.19871520996094,31.19871520996094,31.54399871826172,31.54399871826172,31.54399871826172,31.85152435302734,31.85152435302734,31.85152435302734,32.16433715820312,32.16433715820312,32.16433715820312,30.38459014892578,30.38459014892578,30.38459014892578,30.72737884521484,30.72737884521484,30.72737884521484,31.0323486328125,31.0323486328125,31.0323486328125,31.33151245117188,31.69342041015625,31.69342041015625,31.69342041015625,32.01143646240234,32.01143646240234,32.01143646240234,30.30217742919922,30.30217742919922,30.30217742919922,30.6075439453125,30.6075439453125,30.6075439453125,30.9586181640625,30.9586181640625,30.9586181640625,31.27490997314453,31.27490997314453,31.27490997314453,31.27490997314453,31.62497711181641,31.62497711181641,31.62497711181641,31.94268798828125,31.94268798828125,31.94268798828125,32.26197052001953,32.26197052001953,32.26197052001953,32.26197052001953,30.51226043701172,30.51226043701172,30.51226043701172,30.83174133300781,30.83174133300781,31.19619750976562,31.48619842529297,31.79032135009766,31.79032135009766,31.79032135009766,32.14167022705078,32.14167022705078,32.14167022705078,30.41677856445312,30.41677856445312,30.41677856445312,30.73661041259766,30.73661041259766,30.73661041259766,31.04555511474609,31.04555511474609,31.04555511474609,31.43077850341797,31.43077850341797,31.43077850341797,31.72597503662109,31.72597503662109,31.72597503662109,32.08249664306641,32.08249664306641,32.08249664306641,30.29005432128906,30.29005432128906,30.29005432128906,30.58884429931641,30.58884429931641,30.58884429931641,30.92543792724609,31.26800537109375,31.26800537109375,31.26800537109375,31.57668304443359,31.57668304443359,31.57668304443359,31.57668304443359,31.92108154296875],"meminc":[0,0,0.4111480712890625,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.354766845703125,0,0,0,0,0,0,0,0,0,0,0,0.2865447998046875,0,0,0.2772293090820312,0,0,0.2630233764648438,0,0,0.2414321899414062,0,0,0.3145523071289062,0,0,0,-1.875396728515625,0,0,0.3460464477539062,0,0,0.3002471923828125,0,0,0.343231201171875,0,0,0.3060455322265625,0,0,0,0.3157882690429688,0,0,-1.777839660644531,0,0,0.3028640747070312,0,0,0.3662185668945312,0,0,0.3120803833007812,0,0,0.32196044921875,0,0,0.316253662109375,0,0,0.324188232421875,0,0,-1.744697570800781,0.3507461547851562,0,0.3016204833984375,0,0,0.3186721801757812,0,0,0.3809661865234375,0,0,0.3122024536132812,-1.870567321777344,0,0,0.3220901489257812,0.3591079711914062,0,0,0,0.2864303588867188,0,0,0.2829742431640625,0,0,0.30908203125,0,0,0.3156509399414062,0,0,-1.787521362304688,0.3167495727539062,0,0.3198318481445312,0,0,0.3254776000976562,0,0,0.3537750244140625,0,0,0.3014297485351562,0,0,-1.750358581542969,0,0,0.2980804443359375,0,0,0.3047714233398438,0,0,0,0.3558273315429688,0,0,0.301910400390625,0,0,0.3122100830078125,0,0,0.3136062622070312,0,0,-1.718521118164062,0,0,0.3068466186523438,0,0,0.3211441040039062,0,0,0.3110427856445312,0,0,0,0.2969894409179688,0.3525543212890625,0,-1.78564453125,0,0,0.3289108276367188,0,0,0.3370742797851562,0,0,0.3609237670898438,0,0,0.3003082275390625,0,0,0.3497467041015625,0,0,0.312530517578125,0,0,-1.797821044921875,0,0.365081787109375,0,0,0.3194427490234375,0,0,0.3332366943359375,0,0,0.3261337280273438,0,0,0.3175582885742188,0,0,-1.809394836425781,0,0,0.355865478515625,0,0,0.3184890747070312,0,0,0.3380966186523438,0,0,0.2947616577148438,0,0,0,0.3689727783203125,0,0,0.3128280639648438,0,0,-1.742233276367188,0.3513107299804688,0,0,0.3150711059570312,0,0,0,0.2989120483398438,0,0,0.363861083984375,0,0,0,0.3138427734375,0,0,-1.737541198730469,0,0,0.292816162109375,0,0,0.374603271484375,0,0,0,0.3221054077148438,0,0,0.3426971435546875,0,0,0.3061676025390625,0,0,-1.802085876464844,0,0,0.3490447998046875,0,0,0.3085708618164062,0,0,0.3469924926757812,0.3091049194335938,0,0,0,0.2927017211914062,0,0,0.32073974609375,0,0,-1.742851257324219,0,0,0.3180770874023438,0,0,0.31146240234375,0.3256988525390625,0,0,0.285736083984375,0.3634490966796875,0,0,0.2469635009765625,0,0,0,-1.714401245117188,0.3147048950195312,0,0,0.3451614379882812,0,0,0.2979660034179688,0,0,0.34918212890625,0,0,0.3094863891601562,-1.775688171386719,0.3718795776367188,0,0,0.302032470703125,0,0,0.3524627685546875,0,0,0.3246994018554688,0,0,0.3195037841796875,-1.771652221679688,0,0,0.2925949096679688,0,0,0,0.2933883666992188,0,0,0.3448486328125,0,0,0.3452835083007812,0,0,0.307525634765625,0,0,0.3128128051757812,0,0,-1.779747009277344,0,0,0.3427886962890625,0,0,0.3049697875976562,0,0,0.299163818359375,0.361907958984375,0,0,0.3180160522460938,0,0,-1.709259033203125,0,0,0.3053665161132812,0,0,0.35107421875,0,0,0.3162918090820312,0,0,0,0.350067138671875,0,0,0.3177108764648438,0,0,0.3192825317382812,0,0,0,-1.749710083007812,0,0,0.3194808959960938,0,0.3644561767578125,0.2900009155273438,0.3041229248046875,0,0,0.351348876953125,0,0,-1.724891662597656,0,0,0.3198318481445312,0,0,0.3089447021484375,0,0,0.385223388671875,0,0,0.295196533203125,0,0,0.3565216064453125,0,0,-1.792442321777344,0,0,0.2987899780273438,0,0,0.3365936279296875,0.3425674438476562,0,0,0.3086776733398438,0,0,0,0.3443984985351562],"filename":["<expr>","<expr>",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,null,null,null,null,null,null,null,null,null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,null,null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>",null,null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,null,"<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>",null,null,"<expr>","<expr>","<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"profvis({\nf <- function(x, par){\n  alpha <- par[1]\n  beta <- par[2]\n  gamma <- par[3]\n  rho <- par[4]\n  \n  return(gamma + (rho - gamma) / (1 + exp(beta * log(x) - alpha)))\n}\n\n\n\ngradient <- function(par, i, x, y,...){\n  alpha <- par[1]\n  beta <- par[2]\n  gamma <- par[3]\n  rho <- par[4]\n  \n  x_i <- x[i]\n  y_i <- y[i]\n  \n  expbetalogxalpha <- exp(beta * log(x_i) - alpha)\n  \n  identical_part <- - 2 * (y_i - f(x_i, par))\n  \n  grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)\n  grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)\n  grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))\n  grad_rho <- mean(identical_part / (1 + expbetalogxalpha))\n  \n  return(c(grad_alpha, grad_beta, grad_gamma, grad_rho))\n}\n\nsgd <- function(\n    par0,\n    grad,\n    N, # Sample size\n    gamma, # Decay schedule or a fixed learning rate\n    epoch = NULL,\n    maxiter = 100, # Max epoch iterations\n    sampler = sample, # How data is resampled. Default is a random permutation\n    cb = NULL,\n    ...) {\n  \n  if (is.function(gamma)) gamma <- gamma(1:maxiter)\n  gamma <- rep_len(gamma, maxiter)\n  \n  par <- par0\n  \n  for (n in 1:maxiter) {\n    if (!is.null(cb)) cb$tracer()\n    \n    samp <- sampler(N)\n    \n    if (is.null(epoch)){\n       for (j in 1:N) {\n         i <- samp[j]\n        par <- par - gamma[n] * grad(par, i, ...)\n       }\n    } else {\n      par <- epoch(par, samp, gamma[n], ...)\n    }\n  }\n  par\n}\n\nsgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim_1$x, y = sim_1$y)\n})","normpath":"<expr>"}],"prof_output":"C:\\Users\\birgi\\AppData\\Local\\Temp\\RtmpacW6QJ\\file3b6c651a7e7c.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+---
+###Implementing the gradient function in RCPP
+
+``` r
+library(Rcpp)
+
+cppFunction('
+NumericVector gradient_rcpp(NumericVector par, NumericVector indices, NumericVector x, NumericVector y) {
+  // Extract parameters
+  double alpha = par[0];
+  double beta = par[1];
+  double gamma = par[2];
+  double rho = par[3];
+
+  // Initialize gradients
+  double grad_alpha = 0.0;
+  double grad_beta = 0.0;
+  double grad_gamma = 0.0;
+  double grad_rho = 0.0;
+
+  int n = indices.size(); // Number of indices
+
+  // Loop over the indices
+  for (int idx = 0; idx &lt; n; ++idx) {
+    int i = indices[idx] - 1;  // Convert from r to c++ indexing
+
+    // Get individual data point
+    double x_i = x[i];
+    double y_i = y[i];
+
+    // Calculating f(x_i, par)
+    double f_x_i = gamma + (rho - gamma) / (1 + exp(beta * log(x_i) - alpha));
+
+    // Exponential term
+    double expbetalogxalpha = exp(beta * log(x_i) - alpha);
+
+    // Identical part used in gradients
+    double identical_part = -2 * (y_i - f_x_i);
+
+    // Accumulate gradients for all indices
+    grad_alpha += (identical_part * (rho - gamma) * expbetalogxalpha) 
+    / pow(1 + expbetalogxalpha, 2);
+    grad_beta += -(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha) 
+    / pow(1 + expbetalogxalpha, 2);
+    grad_gamma += identical_part * (1 - 1 / (1 + expbetalogxalpha));
+    grad_rho += identical_part / (1 + expbetalogxalpha);
+  }
+
+  // Return the mean of accumulated gradients
+  return NumericVector::create(grad_alpha / n, grad_beta / n, grad_gamma / n, grad_rho / n);
+}
+')
+```
+
+
+``` r
+gradient(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
+```
+
+```
+## [1]  0.0000000  0.0000000 -0.1090435  0.7587501
+```
+
+``` r
+gradient_rcpp(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
+```
+
+```
+## [1]  0.0000000  0.0000000 -0.1090435  0.7587501
+```
+
+
+---
+###Exploiting the grid structure?
+
+---
+###Benchmarking
+Benchmarking the RCPP implementation against the R implementation
+&lt;img src="4---Presentation_files/figure-html/unnamed-chunk-8-1.png" style="display: block; margin: auto;" /&gt;
+&lt;br&gt;
+
+|expression |     min|  median|   itr.sec| mem_alloc|   gc.sec| n_itr| n_gc| total_time|
+|:----------|-------:|-------:|---------:|---------:|--------:|-----:|----:|----------:|
+|R          | 224.5ms| 235.7ms|  4.216337|    89.1KB| 10.41435|   100|  247|     23.72s|
+|Rcpp       |  21.7ms|  23.8ms| 40.089006|    94.4KB| 10.82403|   100|   27|      2.49s|
+
+---
+&lt;img src="4---Presentation_files/figure-html/unnamed-chunk-10-1.png" style="display: block; margin: auto;" /&gt;
+
+|expression |     min| median|  itr.sec| mem_alloc|   gc.sec| n_itr| n_gc| total_time|
+|:----------|-------:|------:|--------:|---------:|--------:|-----:|----:|----------:|
+|R          |   2.29s|  2.33s| 0.426890|     792KB| 13.19090|    10|  309|     23.43s|
+|Rcpp       | 225.5ms|  228ms| 4.373891|     792KB| 14.87123|    10|   34|      2.29s|
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"slideNumberFormat": "%current%",
+"highlightStyle": "github",
+"highlightLines": true,
+"highlightSpans": true,
+"ratio": "16:9",
+"countIncrementalSlides": true,
+"navigation": {
+"scroll": false
+}
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+// add `data-at-shortcutkeys` attribute to <body> to resolve conflicts with JAWS
+// screen reader (see PR #262)
+(function(d) {
+  let res = {};
+  d.querySelectorAll('.remark-help-content table tr').forEach(tr => {
+    const t = tr.querySelector('td:nth-child(2)').innerText;
+    tr.querySelectorAll('td:first-child .key').forEach(key => {
+      const k = key.innerText;
+      if (/^[a-z]$/.test(k)) res[k] = t;  // must be a single letter (key)
+    });
+  });
+  d.body.setAttribute('data-at-shortcutkeys', JSON.stringify(res));
+})(document);
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
