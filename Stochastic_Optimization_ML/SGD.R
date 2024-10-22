@@ -141,11 +141,9 @@ plot_data.My_SGD <- function(object) {
                              gamma = object$trace$par.3,
                              rho = object$trace$par.4)
   
-  if ("true_par" %in% names(object$additional_args)) {
-    true_par <- object$additional_args$true_par
-    H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
-    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
-  }
+  true_par <- object$true_par
+  H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+  abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
   
   SGD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
   

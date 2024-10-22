@@ -117,23 +117,20 @@ We implement a flexible three-parameter power law family of decay schedules
 $$
 \gamma_n = \frac{\gamma_0 K}{K + n^{a}}
 $$
-Where $a \in (0.5,1]$ and $K>0$. $\gamma_0$ is the initial learning rate. If $H$ was strongly convex and the gradient bounded this decay schedule would ensure convergence. We try different decay schedules, where we vary $a$ and $K$. 
+Where $a \in (0.5,1]$ and $K>0$. $\gamma_0$ is the initial learning rate. If $H$ is strongly convex and the gradient bounded, this decay schedule will ensure convergence. We try two different decay schedules, where we vary $a$ and $K$. A variations of this decay schedule is to specify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We implement one decay schedule this way. 
 
 ```{r}
 decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 1)
 decay2 <- decay_scheduler(gamma0 = 1, a = 0.5, K = 10)
 decay3 <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.0002)
 
-SGD_tracer$clear()
 sgd_decay1 <- SGD(par0 = param$par, grad = grad, gamma = decay1, x = x, y = y,
                            true_par = param$par)
 
-SGD_tracer$clear()
 sgd_decay2 <- SGD(par0 = param$par, grad = grad, gamma = decay2, x = x, y = y,
                            true_par = param$par)
 
 
-SGD_tracer$clear()
 sgd_decay3 <- SGD(par0 = param$par, grad = grad, gamma = decay3, x = x, y = y,
                            true_par = param$par)
 
@@ -240,9 +237,7 @@ autoplot(sgd_bench2)
 
 ```{r}
 gd0 <- GD(par = c(1,1,1,1), H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
-GD_tracer$clear()
 gd_true_sv <- GD(par = param$par, H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
-GD_tracer$clear()
 gd_rand_sv <- GD(par = rand, H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
 
 res <- rbind(gd0$est,
@@ -299,8 +294,6 @@ grad_desc_grid(par = c(1,1,1,1), x = x2, y = y2)
 ## Profiling
 
 ```{r}
-
-
 profvis({
   grad_desc_grid(par = c(1,1,1,1), x = x2, y = y2)
 })

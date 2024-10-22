@@ -1,0 +1,232 @@
+---
+title: "Log-logistic Dose-response Curves"
+author: 
+- "Christian Rubjerg Hejstvig-Larsen (brf337)"
+- "Dina Gyberg Jensen (vbz248)"
+institute: "University of Copenhagen"
+date: '`r Sys.Date()`'
+output:
+  xaringan::moon_reader:
+    css: xaringan-themer.css
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      highlightSpans: true
+      ratio: 16:9
+      countIncrementalSlides: true
+      navigation:
+        scroll: false
+---
+<style type="text/css">
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content > h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+</style>
+```{r, include=FALSE, eval = FALSE}
+rmarkdown::render('presentation.rmd')
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE}
+library(xaringanthemer)
+library(CSwR)
+style_mono_accent(
+ base_color = "#4f7942")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(microbenchmark)
+library(bench)
+library(tidyverse)
+library(profvis)
+library(bench)
+theme_set(theme_bw() + theme(text = element_text(size = 13)))
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+### Source code
+
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+```
+
+###Introduction
+Objective is to use stochastic optimization to estimate the parameters of a log-logistic dose-response model using non-linear least squares estimation. That is obtaining the parameters $\alpha, \beta, \gamma, \rho$ that minimize the loss function:
+$$L(X,(\alpha,\beta,\gamma,\rho))=\frac{1}{N}\sum_{i=1}^N\left( y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)^2$$
+<br>
+Where the response is given by:
+$$Y_i = f(x_i| \alpha, \beta,\gamma,\rho) + \varepsilon_i \hskip5mm \text{with}\hskip2mm \varepsilon_i \stackrel{iid}{\sim} N(0,\omega^2)$$
+And the log-logistic dose-response model is given by:
+$$f(x_i| \alpha, \beta,\gamma,\rho) = \gamma + \frac{\rho - \gamma}{1 + \exp(\beta \log(x_i) - \alpha)}$$
+---
+### Test of Algorithm 
+
+We do a naive test of the algorithm. We simulate a data sets (of size $N=1000$) for the  parameter values: $(0.1,1,2.2,1)$. 
+
+```{r, echo=FALSE}
+# Data
+N <- 1000
+param <- parameters(0.1,1,2.2,1)
+data <- sim(param, N)
+x <- data$x
+y <- data$y
+```
+
+And run the algorithm with 3 different starting values. 
+
+```{r}
+# Algorithm  for true values as starting values
+sgd1 <- SGD(par0 = param$par, grad = grad, gamma = 0.001, x = x, y = y, true_par = param$par, maxit = 300)
+
+# Algorithm for 2 times true values as starting values
+sgd2 <- SGD(par0 = c(1,1,1,1), grad = grad, gamma = 0.001, x = x, y = y, true_par = param$par, maxit = 300)
+
+# Algorithm for half of true values asstarting values
+sgd3 <- SGD(par0 = param1$par * 2, grad = grad, gamma = 0.001, x = x1, y = y1, true_par = param1$par, maxit = 300)
+```
+
+```{r}
+plot(sgd1, 1) + 
+  geom_line(aes(x = plot_data(sgd2)$.time, 
+                y = plot_data(sgd2)$loss), col = "orange") + 
+  geom_line(aes(x = plot_data(sgd3)$.time, 
+                y = plot_data(sgd3)$loss), col = "red")+
+  ylim(c(264,280))
+
+```
+
+---
+### Decay Schedule
+
+We implement a flexible three-parameter power law family of decay schedules
+
+$$
+\gamma_n = \frac{\gamma_0 K}{K + n^{a}}
+$$
+
+We try two different decay schedules, where we vary $a$ and $K$. For the first one we let $a = 1$, $K= 0.4$. For the second one $a = 0.7$, $K = 1$. A variations of this decay schedule is to specify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We implement one decay schedule this way. 
+
+```{r, warning = FALSE, message = FALSE}
+decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 0.4)
+decay2 <- decay_scheduler(gamma0 = 1, a = 0.7, K = 1)
+decay3 <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.0002)
+
+
+sgd_decay1 <- SGD(par0 = c(2,2,2,2), grad = grad, gamma = decay1, x = x, y = y,
+                           true_par = param$par)
+
+sgd_decay2 <- SGD(par0 = c(2,2,2,2), grad = grad, gamma = decay2, x = x, y = y,
+                           true_par = param$par)
+
+
+sgd_decay3 <- SGD(par0 = c(2,2,2,2), grad = grad, gamma = decay3, x = x, y = y,
+                           true_par = param$par)
+
+```
+
+```{r, hide = TRUE, warning = FALSE, message = FALSE}
+ggplot() +
+  geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+                y = plot_data(sgd_decay1)$loss, color = "a = 1, K = 0.4"))+
+  geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+                y = plot_data(sgd_decay2)$loss, color = "a = 0.7, K = 1")) +
+  geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+                y = plot_data(sgd_decay3)$loss, color = "a = 0.5, n1 = 150, gamma1 = 0.0002")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("a = 1, K = 0.4" = "red", 
+                                "a = 0.7, K = 1" = "orange", 
+                                "a = 0.5, n1 = 150, gamma1 = 0.0002" = "black"))+
+  labs(color = "Parameter values")
+
+```
+
+---
+### Gradient Descent
+
+We have also implemented a gradient descent algorithm. We have created an equivalent class for this algorithm as well. We check that the algorithm works:
+
+```{r, warning = FALSE, message = FALSE}
+gd0 <- GD(par = c(0.1, 0.8, 2.7, 1.5), H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+gd1 <- GD(par = c(1,1,1,1), H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+gd0
+ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$loss, color = "(0.1,0.8,2.7,1.5)"))+
+  geom_line(aes(x = plot_data(gd1)$.time, 
+                y = plot_data(gd1)$loss, color = "(1,1,1,1)")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("(0.1,0.8,2.7,1.5)" = "red", "(1,1,1,1)" = "orange"))+
+  labs(color = "Starting values")
+```
+
+---
+### Comparison
+
+We compare the performance of the two algorithms. 
+
+```{r, warning = FALSE, message = FALSE}
+gd0 <- GD(par = param$par + rep(0.1,4), H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+sgd0 <- SGD(par0 = param$par + rep(0.1,4), grad = grad, gamma = 0.001, x = x, y = y, true_par = param$par, maxit = 100)
+```
+
+```{r}
+tibble(" " = c("alpha", "beta", "gamma", "rho"), "True" = param$par, "GD" = gd0$est, "SGD" = sgd0$est)
+```
+
+
+```{r}
+ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$loss, color = "GD"))+
+  geom_line(aes(x = plot_data(sgd0)$.time, 
+                y = plot_data(sgd0)$loss, color = "SGD")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("GD" = "red", "SGD" = "orange"))+
+  labs(color = "Method")
+```
+
+---
+### Comparison 2
+
+We benchmark the two algorithms. 
+
+```{r}
+bench1 <- bench::press(
+  k = seq(100,500, length.out = 5),
+  {
+    bench::mark(
+      "GD" = grad_desc(par = param$par + rep(0.1,4), grad = grad_gd, H = H, x = x2[1:k], y = y2[1:k]),
+      "SGD" = sgd(par = param$par + rep(0.1,4), gamma = 0.001, x = x[1:k], y = y[1:k],
+                           true_par = param$par, grad = grad),
+      check = FALSE)
+    }
+  )
+
+gd_bench1 %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+
+autoplot(gd_bench1)
+```
+
+---
+### Exploiting Grid Structure 
+
+If we sample from a grid we can exploit the fact that we only have $n$ distinct $x$-values....
+
+```{r, warning = FALSE, message = FALSE}
+
+```
