@@ -108,7 +108,7 @@ sim <- function(x) {
   UseMethod("sim")
 }
 
-sim <- function(object, N, omega = 1, grid = FALSE, scale) {
+sim <- function(object, N, omega = 1, grid = FALSE, scale = FALSE) {
   if(grid){
     data <- grid_sample(N, object$par)
   }
