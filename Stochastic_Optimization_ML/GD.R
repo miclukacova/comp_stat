@@ -5,9 +5,9 @@ grad_desc <- function(
     grad,
     H,
     t0 = 1e-2,
-    maxit = 1000,
+    maxit = 1200,
     cb = NULL,
-    epsilon = 1e-4,
+    epsilon = 1e-5,
     beta = 0.8,
     alpha = 0.1,
     x,
@@ -26,11 +26,12 @@ grad_desc <- function(
     # Callback
     if (!is.null(cb)) cb()
     
-    # Convergence criterion based on gradient norm
-    if (grad_norm <= epsilon) break
     t <- t0
     # Proposed descent step
     par_new <- par - t * gr
+    
+    # Convergence criterion 
+    if (all(abs(par_new - par) <= epsilon)) break
     
     # Backtracking line search
     while (H(par_new, x, y) > value - alpha * t * grad_norm) {
@@ -61,12 +62,12 @@ GD <- function(par,
                t0 = 1e-2,
                maxit = 1200,
                cb = GD_tracer$tracer,
-               epsilon = 1e-4,
+               epsilon = 1e-6,
                beta = 0.8,
                alpha = 0.1,
                true_par = NULL,
                ...) {
-  structure(
+  output = structure(
     list(
       est = grad_desc(par = par, 
                       grad = grad, 
@@ -84,6 +85,8 @@ GD <- function(par,
       additional_args = list(...)),
     class = "My_GD"
   )
+  GD_tracer$clear()
+  return(output)
 }
 
 # Summary method
@@ -96,6 +99,8 @@ summary.My_GD <- function(object) {
 print.My_GD <- function(object){
   cat("Optimal parameters:\n")
   print(object$est)
+  cat("True parameters:\n")
+  print(object$true_par)
   cat("Number of iterations:\n")
   print(tail(object$trace, 1)[,5])
   cat("Total time:\n")
@@ -156,11 +161,10 @@ plot_data.My_GD <- function(object) {
                              gamma = object$trace$par.3,
                              rho = object$trace$par.4)
   
-  if ("true_par" %in% names(object$additional_args)) {
-    true_par <- object$additional_args$true_par
-    H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
-    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
-  }
+
+  true_par <- object$true_par
+  H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+  abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
   
   GD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
   

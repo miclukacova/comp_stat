@@ -86,7 +86,7 @@ gauss_sample <- function(N, par, omega = 1) {
 grid_sample <- function(N, par) {
   grid <- exp(1:15)
   x <- sample(grid, N, replace = TRUE)
-  y <- f(par, x) + rnorm(N, 0, 1)
+  y <- f(par, x) + rnorm(N, 0, 0.5)
   return(data.frame(x = x, y = y))
 }
 
