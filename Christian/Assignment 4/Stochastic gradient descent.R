@@ -1,8 +1,8 @@
 f <- function(x, par){
-  alpha <- par[1]
-  beta <- par[2]
-  gamma <- par[3]
-  rho <- par[4]
+  alpha <- par[[1]]
+  beta <- par[[2]]
+  gamma <- par[[3]]
+  rho <- par[[4]]
   
   return(gamma + (rho - gamma) / (1 + exp(beta * log(x) - alpha)))
 }
@@ -10,10 +10,11 @@ f <- function(x, par){
 
 
 gradient <- function(par, i, x, y,...){
-  alpha <- par[1]
-  beta <- par[2]
-  gamma <- par[3]
-  rho <- par[4]
+  alpha <- par[[1]]
+  beta <- par[[2]]
+  gamma <- par[[3]]
+  rho <- par[[4]]
+  
   
   x_i <- x[i]
   y_i <- y[i]
@@ -23,7 +24,7 @@ gradient <- function(par, i, x, y,...){
   identical_part <- - 2 * (y_i - f(x_i, par))
   
   grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
-  grad_beta <- - mean(identical_part * (rho - gamma) * log(x[i]) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
+  grad_beta <- - mean(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
   grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))
   grad_rho <- mean(identical_part / (1 + expbetalogxalpha))
   
@@ -54,11 +55,7 @@ sgd <- function(
     samp <- sampler(N)
     
     if (is.null(epoch)){
-      par <- vanilla(par, i, samp, gamma, n, ...)
-      # for (j in 1:N) {
-      #   i <- samp[j]
-      #   par <- par - gamma[n] * grad(par, i, ...)
-      # }
+      par <- vanilla(par, i, samp, gamma[n], n, ...)
     } else {
       par <- epoch(par, samp, gamma[n], ...)
     }
@@ -66,5 +63,158 @@ sgd <- function(
   par
 }
 
+
+
+##### Objective function #####################################
+
+H <- function(x, y, par) {
+  mean((y - f(x = x, par = par))^2)
+}
+
+squared_error_mult <- function(x, y, param){
+  apply(param, 1, function(par) H(x = x, y = y, par))
+}
+
+###### S3 Classes ###########################################
+
+# Parameters class
+
+parameters <- function(alpha, beta, gamma, rho) {
+  structure(
+    list(
+      alpha = alpha,
+      beta = beta,
+      gamma = gamma, 
+      rho = rho,
+      par = c(alpha, beta, gamma, rho)),
+    class = "My_params"
+  )
+}
+
+sim <- function(x) {
+  UseMethod("sim")
+}
+
+sim <- function(object, N, omega = 1, grid = FALSE) {
+  if(grid){
+    grid_sample(object$par, N)
+  }
+  gauss_sample(N, object$par, omega)
+}
+
+#-------------------------------------------------------------------------------
+#                                   SGD class                                  #
+#-------------------------------------------------------------------------------
+
+# SGD class
+SGD <- function(par0, N, gamma, epoch = NULL, maxiter = 100,
+                sampler = sample, cb = NULL,...) {
+  output <- structure(
+    list(
+      est = sgd(par0 = par0, N = N, gamma = gamma, epoch = epoch, maxiter = maxiter, sampler = sampler, cb = cb,...),
+      trace = summary(cb),
+      start_par = par0,
+      additional_args = list(...)),
+    class = "My_SGD"
+  )
+  cb$clear()
+  return(output)
+}
+
+
+# Summary method
+summary.My_SGD <- function(object) {
+  return(object$trace)
+}
+
+
+# Print method
+print.My_SGD <- function(object){
+  cat("Optimal parameters:\n")
+  print(object$est)
+  cat("Number of iterations:\n")
+  print(tail(object$trace, 1)[,5])
+  cat("Total time:\n")
+  print(tail(object$trace, 1)[,6])
+}
+
+
+# Plot method
+plot.My_SGD <- function(object, plot_no = 1, ...) {
+  x <- object$additional_args$x
+  y <- object$additional_args$y
+  
+  loss <- squared_error_mult(x = x, y = y, param = object$trace[,1:4])
+  
+  if ("true_par" %in% names(object$additional_args)) {
+    true_par <- object$additional_args$true_par
+    H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
+  }
+  
+  SGD_plot_df <- data.frame(object$trace, loss, H_distance)
+  
+  if (plot_no == 1) {
+    ggplot(SGD_plot_df, aes(x = .time, y = loss)) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "Loss vs Time", x = "Time", y = "Loss")
+  } else if (plot_no == 2){
+    ggplot(SGD_plot_df, aes(x = .time, y = H_distance)) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "Distance to True Loss vs Time", x = "Time", y = "Distance") 
+  } else if (plot_no == 3){
+    ggplot(SGD_plot_df, aes(x = .time, y = abs_dist_from_par)) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "Sum of absolute distance to true parameters vs Time", x = "Time", y = "Distance") 
+  } else {
+    stop("Invalid plot number. Please choose 1 2 or 3.")
+  }
+}
+
+
+# Method to extract plot data
+plot_data <- function(x) {
+  UseMethod("plot_data")
+}
+
+
+plot_data.My_SGD <- function(object) {
+  x <- object$additional_args$x
+  y <- object$additional_args$y
+  
+  loss <- squared_error_mult(x = x, y = y, object$trace[,1:4])
+  
+  if ("true_par" %in% names(object$additional_args)) {
+    true_par <- object$additional_args$true_par
+    H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+    abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
+  }
+  
+  SGD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
+  
+  return(SGD_plot_df)
+}
+
+
+
+# squared_error_mult(SGD_object_adamm2_1$additional_args$x, 
+#                    SGD_object_adamm2_1$additional_args$y, 
+#                    SGD_object_adamm2_1$trace[,1:4])
+# 
+# H(SGD_object_adamm2_1$additional_args$x, 
+#   SGD_object_adamm2_1$additional_args$y, 
+#   SGD_object_adamm2_1$trace[1,1:4])
+# 
+# apply(SGD_object_adamm2_1$trace[,1:4], 1, FUN = function(par_est) H(SGD_object_adamm2_1$additional_args$x, 
+#                                                                   SGD_object_adamm2_1$additional_args$y, 
+#                                                                   par_est))
+# 
+# mean((y_i - f(x_i, SGD_object_adamm2_1$trace[200,1:4]))^2)
+# mean((y_i - f(x_i, true_par))^2)
+# 
+# H(x_i, y_i, SGD_object_adamm2_1$trace[200,1:4])
 
 

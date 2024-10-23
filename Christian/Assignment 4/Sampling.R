@@ -16,7 +16,7 @@ sgd(par0 = init_par,
 #Sampling
 set.seed(16102024)
 N <- 10000
-omega <- 0.5 # Chaning this significantly changes the output. High values make the algorithm worse
+omega <- 0.5 # Changing this significantly changes the output. High values makes the algorithm worse
 
 true_par <- c(2, 5, 1, 2)
 init_par <- c(1,1,1,1)
@@ -39,24 +39,25 @@ rate_adam <- decay_scheduler(gamma0 = 1e-1, a = 1, gamma1 = 1e-5, n = iterations
 #                   cb = SGD_tracer_vanilla, x = x_i, y = y_i,
 #                   true_par = true_par)
 
-SGD_tracer_batch <- tracer(c("par", "n"), Delta = 0)
+SGD_tracer <- tracer(c("par", "n"), Delta = 0)
+
 SGD_object_batch <- SGD(par0 = init_par, grad = gradient, gamma = rate_batch,
                        N = N, epoch = batch, m = batch_size, maxiter = iterations, sampler = sample,
                        cb = SGD_tracer_batch, x = x_i, y = y_i,
                        true_par = true_par)
 
 
-SGD_tracer_momentum <- tracer(c("par", "n"), Delta = 0)
+
 SGD_object_momentum <- SGD(par0 = init_par, grad = gradient, gamma = rate_momentum,
                         N = N, epoch = momentum(), m = batch_size, maxiter = iterations, sampler = sample,
-                        cb = SGD_tracer_momentum, x = x_i, y = y_i,
+                        cb = SGD_tracer, x = x_i, y = y_i,
                         true_par = true_par)
 
 
-SGD_tracer_adam <- tracer(c("par", "n"), Delta = 0)
+
 SGD_object_adam <- SGD(par0 = init_par, grad = gradient, gamma = rate_adam,
                        N = N, epoch = adam(), m = batch_size, maxiter = iterations, sampler = sample,
-                       cb = SGD_tracer_adam, x = x_i, y = y_i,
+                       cb = SGD_tracer, x = x_i, y = y_i,
                        true_par = true_par)
 
 plot(SGD_object_adam, 3) + 

@@ -17,7 +17,7 @@ vanilla <- function(
     ...){
   for (j in 1:N) {
     i <- samp[j]
-    par <- par - gamma[n] * grad(par, i, ...)
+    par <- par - gamma * grad(par, i, ...)
   }
   return(par)
 }
@@ -50,7 +50,7 @@ momentum <- function() {
     gamma,
     grad,
     m = 50,         # Mini-batch size
-    beta = 0.95,    # Momentum memory
+    beta = 0.9,    # Momentum memory
     ...
   ){
     M <- floor(length(samp) / m) 
