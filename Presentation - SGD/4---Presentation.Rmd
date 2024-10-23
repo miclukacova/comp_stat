@@ -148,6 +148,14 @@ y_i <- data$y
 ---
 ### Test of Algorithm 
 
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+### Source code
+
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+```
+
 We do a naive test of the algorithm, and run the algorithm with 3 different starting values: the true values $(2,5,1,2)$, $(1,1,1,1)$ and random values $(2.63, 1.64, 1.00, 0.49)$. 
 
 ```{r, echo = FALSE}
@@ -351,4 +359,70 @@ bench_results <- bench::mark(
 plot(bench_results)
 
 knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
+```
+
+---
+### Decay Schedule
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+### Source code
+
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+```
+
+We implement a flexible three-parameter power law family of decay schedules
+
+$$
+\gamma_n = \frac{\gamma_0 K}{K + n^{a}}
+$$
+
+We try a decay schedules with $a = 1$, $K= 0.4$ and $\gamma_0 = 1$. A different way to specify the decay schedule is to specify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We specify two decay schedules with $\gamma_0 = 1$, $n_1 = 100$, $a=2$. And $\gamma_1 = 0.1$ and $\gamma_1 = 0.01$. 
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 0.4)
+decay2 <- decay_scheduler(gamma0 = 1, a = 2, n1 = 150, gamma1 = 0.1)
+decay3 <- decay_scheduler(gamma0 = 1, a = 2, n1 = 150, gamma1 = 0.01)
+
+
+sgd_decay1 <- SGD(par0 = sv2, grad = grad, gamma = decay1, x = x, y = y, true_par = param$par)
+sgd_decay2 <- SGD(par0 = sv2, grad = grad, gamma = decay2, x = x, y = y, true_par = param$par)
+sgd_decay3 <- SGD(par0 = sv2, grad = grad, gamma = decay3, x = x, y = y, true_par = param$par)
+```
+
+```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+ggplot() +
+  geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+                y = plot_data(sgd_decay1)$loss, color = "a = 1, K = 0.4"))+
+  geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+                y = plot_data(sgd_decay2)$loss, color = "a = 2, gamma1 = 0.1")) +
+  geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+                y = plot_data(sgd_decay3)$loss, color = "a = 2, gamma1 = 0.01")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("a = 1, K = 0.4" = "red", 
+                                "a = 2, gamma1 = 0.1" = "orange", 
+                                "a = 2, gamma1 = 0.01" = "black"))+
+  labs(color = "Parameter values")
+
+ggplot() +
+  geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+                y = plot_data(sgd_decay1)$abs_dist_from_par, color = "a = 1, K = 0.4"))+
+  geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+                y = plot_data(sgd_decay2)$abs_dist_from_par, color = "a = 2, gamma1 = 0.1")) +
+  geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+                y = plot_data(sgd_decay3)$abs_dist_from_par, color = "a = 2, gamma1 = 0.01")) +
+  scale_y_log10() +
+  labs(title = "Abs. dist. to par vs Time", x = "Time", y = "Abs. dist. to par")+
+  scale_color_manual(values = c("a = 1, K = 0.4" = "red", 
+                                "a = 2, gamma1 = 0.1" = "orange", 
+                                "a = 2, gamma1 = 0.01" = "black"),
+                         labels = c(
+      expression(a == 1 ~ ", " ~ K == 0.4), 
+      expression(a == 2 ~ ", " ~ gamma[1] == 0.1), 
+      expression(a == 2 ~ ", " ~ gamma[1] == 0.01)
+    ))+
+  labs(color = "Parameter values")
+
 ```
