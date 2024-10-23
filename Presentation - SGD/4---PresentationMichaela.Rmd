@@ -71,41 +71,47 @@ $$f(x_i| \alpha, \beta,\gamma,\rho) = \gamma + \frac{\rho - \gamma}{1 + \exp(\be
 ---
 ### Test of Algorithm 
 
-We do a naive test of the algorithm. We simulate a data set (of size $N=1000$) for the parameter values: $(0.1,1,2.2,1)$. 
+We do a naive test of the algorithm.  
 
 ```{r, echo=FALSE}
+# We simulate a data set (of size $N=5000$) for the parameter values: $(2,5,1,2)$.
 set.seed(4027)
 # Data
-N <- 1000
-param <- parameters(0.1,1,2.2,1)
+N <- 5000
+param <- parameters(2,5,1,2)
 data <- sim(param, N)
 x <- data$x
 y <- data$y
+
+sv1 <- param$par
+sv2 <- c(1,1,1,1)
+sv3 <- abs(rnorm(4, 2, 1.5))
 ```
 
-And run the algorithm with 3 different starting values. 
+And run the algorithm with 3 different starting values: the true values, $(1,1,1,1)$ and random values $(2.63, 1.64, 1.00, 0.49)$. 
 
 ```{r, echo = FALSE}
 set.seed(4027)
 # Algorithm  for true values as starting values
-sgd1 <- SGD(par0 = param$par, grad = grad, gamma = 0.001, x = x, y = y, true_par = param$par, maxit = 300)
+sgd1 <- SGD(par0 = sv1, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
 
 # Algorithm for 2 times true values as starting values
-sgd2 <- SGD(par0 = c(1,1,1,1), grad = grad, gamma = 0.001, x = x, y = y, true_par = param$par, maxit = 300)
+sgd2 <- SGD(par0 = sv2, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
 
 # Algorithm for half of true values asstarting values
-sgd3 <- SGD(par0 = param$par * 2, grad = grad, gamma = 0.001, x = x, y = y, true_par = param$par, maxit = 300)
+sgd3 <- SGD(par0 = sv3, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
 ```
 
-```{r, echo = FALSE, warning = FALSE, message = FALSE}
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 grid.arrange(plot(sgd1, 1) + ggtitle("True vals"),
              plot(sgd2, 1)+ ggtitle("c(1,1,1,1)"), 
-             plot(sgd3, 1) + ggtitle("2 * True vals"),
+             plot(sgd3, 1) + ggtitle("Random vals"),
              nrow = 1)
 ```
-Very different convergence schemes, converging to different values
 
-```{r, echo = FALSE, warning = FALSE, message = FALSE}
+Very different convergence schemes. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 plot(sgd1, 3) + 
   geom_line(aes(x = plot_data(sgd2)$.time, 
                 y = plot_data(sgd2)$abs_dist_from_par), col = "orange") + 
@@ -116,7 +122,7 @@ diff_start_vals_sgd <- tibble(
   "Par" = c("alpha (0.1)", "beta (1.0)", "gamma (2.2)", "rho (1.0)"),
   "True vals" = sgd1$est,
   "(1, 1, 1, 1)" = sgd2$est,
-   "(0.2, 2, 4.4, 2)" = sgd3$est)
+   "Random vals" = sgd3$est)
 
 diff_start_vals_sgd %>% kable(caption = "Different starting values")
 ```
@@ -131,27 +137,23 @@ $$
 \gamma_n = \frac{\gamma_0 K}{K + n^{a}}
 $$
 
-We try two different decay schedules, where we vary $a$ and $K$. For the first one we let $a = 1$, $K= 0.4$. For the second one $a = 0.7$, $K = 1$. A variations of this decay schedule is to specify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We implement one decay schedule this way. 
+We try a decay schedules with $a = 1$, $K= 0.4$ and $\gamma_0 = 1$. A different way to specify the decay schedule is to specify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We specify two decay schedules with $\gamma_0 = 1$, $n_1 = 100$, $a=2$. And $\gamma_1 = 0.1$ and $\gamma_1 = 0.01$. 
 
 ```{r, warning = FALSE, message = FALSE, echo = FALSE}
 decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 0.4)
-decay2 <- decay_scheduler(gamma0 = 1, a = 0.7, K = 1)
-decay3 <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.005)
+decay2 <- decay_scheduler(gamma0 = 1, a = 2, n1 = 150, gamma1 = 0.1)
+decay3 <- decay_scheduler(gamma0 = 1, a = 2, n1 = 150, gamma1 = 0.01)
 
 
-sgd_decay1 <- SGD(par0 = c(2,2,2,2), grad = grad, gamma = decay1, x = x, y = y,
-                           true_par = param$par, maxit = 150)
+sgd_decay1 <- SGD(par0 = sv2, grad = grad, gamma = decay1, x = x, y = y, true_par = param$par)
 
-sgd_decay2 <- SGD(par0 = c(2,2,2,2), grad = grad, gamma = decay2, x = x, y = y,
-                           true_par = param$par, maxit = 150)
+sgd_decay2 <- SGD(par0 = sv2, grad = grad, gamma = decay2, x = x, y = y, true_par = param$par)
 
-
-sgd_decay3 <- SGD(par0 = c(2,2,2,2), grad = grad, gamma = decay3, x = x, y = y,
-                           true_par = param$par, maxit = 150)
+sgd_decay3 <- SGD(par0 = sv2, grad = grad, gamma = decay3, x = x, y = y, true_par = param$par)
 
 ```
 
-```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE}
+```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 ggplot() +
   geom_line(aes(x = plot_data(sgd_decay1)$.time, 
                 y = plot_data(sgd_decay1)$loss, color = "a = 1, K = 0.4"))+
@@ -185,12 +187,12 @@ ggplot() +
 ---
 ### Gradient Descent
 
-We have also implemented a gradient descent algorithm. We have created an equivalent class for this algorithm as well. As stopping criterion we use $|\theta_n - \theta_{n-1}| \leq \epsilon = 10^{-4}$. We use backtracking line search in the algorithm in order to find step length. We check that the algorithm works:
+We have also implemented a gradient descent algorithm. We have created an equivalent class for this algorithm as well. As stopping criterion we use $|\theta_n - \theta_{n-1}| \leq \epsilon = 10^{-4}$. We use backtracking line search in the algorithm in order to find step length. We check that the algorithm works: warning = FALSE, message = FALSE,
 
-```{r, warning = FALSE, message = FALSE, echo = FALSE}
-gd0 <- GD(par = c(0.1, 0.8, 2.7, 1.5), H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
-gd1 <- GD(par = c(1,1,1,1), H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
-gd2 <- GD(par = param$par, H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+```{r,  echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+gd0 <- GD(par = sv1, H = H, x = x, y = y, true_par = param$par)
+gd1 <- GD(par = sv2, H = H, x = x, y = y, true_par = param$par)
+gd2 <- GD(par = sv3, H = H, x = x, y = y, true_par = param$par)
 
 ggplot() +
   geom_line(aes(x = plot_data(gd0)$.time, 
@@ -218,10 +220,10 @@ diff_start_vals_gd %>% kable(caption = "Different starting values")
 ---
 ### Comparison
 
-We compare the performance of the two algorithms. 
+We compare the performance of the two algorithms. warning = FALSE, message = FALSE
 
-```{r, warning = FALSE, message = FALSE, echo = FALSE}
-gd0 <- GD(par = c(1,1,1,1), H = H, x = x, t0 = 0.05, y = y, true_par = param$par, epsilon = 10^(-6))
+```{r, echo = FALSE}
+gd0 <- GD(par = c(1,1,1,1), H = H, x = x, t0 = 0.05, y = y, true_par = param$par, epsilon = 10^(-3))
 sgd0 <- SGD(par0 = c(1,1,1,1), grad = grad, gamma = 0.001, x = x, y = y, true_par = param$par, maxit = 300)
 ```
 
@@ -233,7 +235,7 @@ tibble(" " = c("alpha", "beta", "gamma", "rho"),
 ```
 
 
-```{r, warning = FALSE, message = FALSE, echo = FALSE}
+```{r, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 ggplot() +
   geom_line(aes(x = plot_data(gd0)$.time, 
                 y = plot_data(gd0)$loss, color = "GD"))+
@@ -253,31 +255,6 @@ ggplot() +
   labs(title = "Abs. dist to par", x = "Time", y = "Abs. dist to par")+
   scale_color_manual(values = c("GD" = "red", "SGD" = "orange"))+
   labs(color = "Method")
-```
-
----
-### Comparison 2
-
-We benchmark the two algorithms. 
-
-```{r, warning = FALSE, message = FALSE, echo = FALSE}
-bench1 <- bench::press(
-  k = seq(100,500, length.out = 5),
-  {
-    bench::mark(
-      "GD" = grad_desc(par = param$par + rep(0.1,4), grad = grad_gd, H = H, x = x[1:k], y = y[1:k]),
-      "SGD" = sgd(par = param$par + rep(0.1,4), gamma = 0.001, x = x[1:k], y = y[1:k],
-                           true_par = param$par, grad = grad),
-      check = FALSE)
-    }
-  )
-
-bench1 %>% 
-  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
-  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
-  geom_line() + labs(y = "time (ms)")
-
-autoplot(bench1)
 ```
 
 ---
@@ -362,13 +339,13 @@ all(grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2, y = y2) -
 
 Comparing grid version with regular GD. 
 
-```{r, warning = FALSE, message = FALSE, echo = FALSE}
+```{r, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 gd_bench1 <- bench::press(
   k = seq(100,500, length.out = 5),
   {
     bench::mark(
-      "Regular" = grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2[1:k], y = y2[1:k], maxit = 500),
-      "Gird version" = gd_grid(par = c(1,1,1,1), x = x2[1:k], y = y2[1:k], maxit = 500),
+      "Regular" = grad_desc(par = sv1, grad = grad_gd, H = H, x = x2[1:k], y = y2[1:k], maxit = 500),
+      "Gird version" = gd_grid(par = sv1, x = x2[1:k], y = y2[1:k], maxit = 500),
       check = FALSE)
     }
   )

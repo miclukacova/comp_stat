@@ -81,35 +81,38 @@ The gradient function and $f$ are implemented seperately
 ```{r}
 
 sgd <- function(
-    par0,
-    N, # Sample size
+    par,
+    grad, # Function of parameter and observation index
     gamma, # Decay schedule or a fixed learning rate
-    epoch = NULL,
-    maxiter = 100, # Max epoch iterations
+    maxiter = 150, # Max epoch iterations
     sampler = sample, # How data is resampled. Default is a random permutation
     cb = NULL,
+    epoch = vanilla,
+    m = 1, # Batch size
+    x,
+    y,
     ...) {
   
-  if (is.function(gamma)) gamma <- gamma(1:maxiter)
-  gamma <- rep_len(gamma, maxiter)
+  n <- length(x)
+  gamma <- if (is.function(gamma)) gamma(1:maxiter) else rep(gamma, maxiter)
   
-  par <- par0
-  
-  for (n in 1:maxiter) {
-    if (!is.null(cb)) cb$tracer()
+  for (k in 1:maxiter) {
     
-    samp <- sampler(N)
+    if (!is.null(cb)) cb()
+    samp <- sampler(n)
+    par <- epoch(par = par, samp = samp, gamma = gamma[k], 
+                 grad = grad, n = n, x = x, y = y, m = m)
     
-    if (is.null(epoch)){
-       for (j in 1:N) {
-         i <- samp[j]
-         par <- par - gamma[n] * gradient(par, i, ...)
-       }
-    } else {
-      par <- epoch(par, samp, gamma[n], ...)
-    }
   }
   par
+}
+
+vanilla <- function(par, samp, gamma, grad, n, x, y, ...){
+  for (j in 1:n) {
+    i <- samp[j]
+    par <- par - gamma * grad(par, x[i], y[i])
+  }
+  return(par)
 }
 ```
 
@@ -142,6 +145,47 @@ x_i <- data$x
 y_i <- data$y
 ```
 
+---
+### Test of Algorithm 
+
+We do a naive test of the algorithm, and run the algorithm with 3 different starting values: the true values $(2,5,1,2)$, $(1,1,1,1)$ and random values $(2.63, 1.64, 1.00, 0.49)$. 
+
+```{r, echo = FALSE}
+set.seed(4027)
+# Algorithm  for true values as starting values
+sgd1 <- SGD(par0 = sv1, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
+
+# Algorithm for 2 times true values as starting values
+sgd2 <- SGD(par0 = sv2, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
+
+# Algorithm for half of true values asstarting values
+sgd3 <- SGD(par0 = sv3, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+grid.arrange(plot(sgd1, 1) + ggtitle("True vals"),
+             plot(sgd2, 1)+ ggtitle("c(1,1,1,1)"), 
+             plot(sgd3, 1) + ggtitle("Random vals"),
+             nrow = 1)
+```
+
+We obtain quite different convergence schemes. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+plot(sgd1, 3) + 
+  geom_line(aes(x = plot_data(sgd2)$.time, 
+                y = plot_data(sgd2)$abs_dist_from_par), col = "orange") + 
+  geom_line(aes(x = plot_data(sgd3)$.time, 
+                y = plot_data(sgd3)$abs_dist_from_par), col = "red")
+
+diff_start_vals_sgd <- tibble(
+  "Par" = c("alpha (0.1)", "beta (1.0)", "gamma (2.2)", "rho (1.0)"),
+  "True vals" = sgd1$est,
+  "(1, 1, 1, 1)" = sgd2$est,
+   "Random vals" = sgd3$est)
+
+diff_start_vals_sgd %>% kable(caption = "Different starting values")
+```
 
 ---
 ###Profiling the algorithm
