@@ -76,7 +76,7 @@ So the update scheme becomes:
 $$\theta_{t+1} = \theta_t +2 \gamma_t\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)$$
 Where $\theta_t = (\alpha_t, \beta_t, \gamma_t, \rho_t)$ and $\gamma_t$ is the learning rate at time $t$.
 ---
-###Implementation
+###Implementation - Michs sæt rigti algoritme ind <3
 The gradient function and $f$ are implemented seperately
 ```{r}
 
@@ -271,10 +271,6 @@ NumericVector x, NumericVector y) {
 gradient(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
 gradient_rcpp(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
 ```
-
-
----
-###Exploiting the grid structure?
 
 ---
 ###Benchmarking
