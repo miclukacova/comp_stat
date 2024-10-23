@@ -137,6 +137,9 @@ param <- parameters(2,5,1,2)
 data <- sim(param, N)
 x <- data$x
 y <- data$y
+
+x_i <- data$x
+y_i <- data$y
 ```
 
 
