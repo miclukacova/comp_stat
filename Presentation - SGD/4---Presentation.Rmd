@@ -495,7 +495,7 @@ source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
 source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
 ```
 
-We compare the performance of the two algorithms.
+We compare the performance of the two algorithms. We use the same data as before and start the algorithms off in the points $(2.2, 5.2, 1.2, 2.2)$. 
 
 ```{r, echo = FALSE}
 gd0 <- GD(par = param$par + rep(0.2,4), H = H, x = x, y = y, true_par = param$par)
@@ -616,7 +616,7 @@ y2 <- data2$y
 
 We check that the two algorithms return the same output:
 
-```{r}
+```{r, warning = FALSE, message = FALSE, }
 all(grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2, y = y2) -
   gd_grid(par = c(1,1,1,1), x = x2, y = y2)) < 10^(-8)
 ```
@@ -641,8 +641,8 @@ plot(bench_results)
 Comparing grid version with regular GD with 500 points. 
 
 ```{r, warning = FALSE, message = FALSE, echo = FALSE}
-x_bench <- x2[1:500]
-y_bench <- y2[1:500]
+x_bench <- x2[1:1000]
+y_bench <- y2[1:1000]
 
 bench_results <- bench::mark(
     "GD" = grad_desc(par = sv1, grad = grad_gd, H = H, x = x2, y = y2),
