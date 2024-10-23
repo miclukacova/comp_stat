@@ -108,9 +108,16 @@ sim <- function(x) {
   UseMethod("sim")
 }
 
-sim <- function(object, N, omega = 1, grid = FALSE) {
+sim <- function(object, N, omega = 1, grid = FALSE, scale) {
   if(grid){
-    return(grid_sample(N, object$par))
+    data <- grid_sample(N, object$par)
   }
-  gauss_sample(N, object$par, omega)
+  data <- gauss_sample(N, object$par, omega)
+  #For scaling
+  if(scale){
+    scaled_data <- scale(data) 
+    # Shift the data so that the minimum value is 1 (or any positive value)
+    data <- scaled_data + abs(min(scaled_data)) + 1
+  }
+  return(data)
 }

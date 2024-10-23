@@ -114,25 +114,31 @@ sgd <- function(
 ```
 
 ---
-###Testing
-We implement two types of samplers to test our data on. One that samples the $x_i$'s from the grid $e, e^2, ..., e^{15}$ and one that samples $\log(x)$ from $\mathcal{N}(0, \omega^2)$. We then test the algorithm on both samplers for 3 different values of parameters and 2 different starting values. Maybe??? Maybe not???
-```{r, warning = FALSE, message = FALSE}
-source("SO_source.R")
-#Remember to source the SO_source file
-set.seed(17102024)
-param1 <- parameters(5,2,1,2)
-param2 <- parameters(4,3,6,1)
-param3 <- parameters(1,1,1,1)
-#Simulations of data
-sim_1 <- sim(param1, 1000)
-sim_2 <- sim(param2, 1000)
-sim_3 <- sim(param3, 1000)
-sim_grid_1 <- sim(param1, 1000, grid = TRUE)
-sim_grid_2 <- sim(param2, 1000, grid = TRUE)
-sim_grid_3 <- sim(param3, 1000, grid = TRUE)
+###Sampling
+ 
+ - Implemented an S3 object `parameters` and a method `sim` to simulate data from the log-logistic dose-response model.
+ 
+ - 2 different types of sampling methods
+ 
+  - `grid_sample`: samples $X$ from a fixed grid of points $(e, e^2,..., e^{15})$.
+  
+  - `gauss_sample`: samples $\log(X)$ from $\mathcal{N}(0, \omega^2)$. Note $\omega$ may not be too large.
 
-#Running the SGD algorithm
+- The method also allows for scaling the data, which is useful for optimization.
+
+```{r, eval = FALSE, message=FALSE}
+sim(parameters(1, 1, 1, 1), N = 100, grid = TRUE, scale = TRUE)
 ```
+ - True parameters have been set to `c(2,5,1,2)` and the data is simulated with `N = 5000`.
+ 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+N <- 5000
+param <- parameters(2,5,1,2)
+data <- sim(param, N)
+x <- data$x
+y <- data$y
+```
+
 
 ---
 ###Profiling the algorithm
