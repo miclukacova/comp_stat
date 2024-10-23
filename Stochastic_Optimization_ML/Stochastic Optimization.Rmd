@@ -311,7 +311,7 @@ gd_bench1 <- bench::press(
   {
     bench::mark(
       "Regular" = grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2[1:k], y = y2[1:k]),
-      "Gird version" = grad_desc_grid(par = c(1,1,1,1), x = x2[1:k], y = y2[1:k]),
+      "Gird version" = gd_grid(par = c(1,1,1,1), x = x2[1:k], y = y2[1:k]),
       check = FALSE)
     }
   )

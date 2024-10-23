@@ -1,11 +1,11 @@
 ##################### SGD grid #####################
 
-grad_desc_grid <- function(
+gd_grid <- function(
     par,
     t0 = 1e-2,
-    maxit = 1000,
+    maxit = 1200,
     cb = NULL,
-    epsilon = 1e-4,
+    epsilon = 1e-5,
     beta = 0.8,
     alpha = 0.1,
     x,
@@ -24,19 +24,20 @@ grad_desc_grid <- function(
     
     # Calculations of objective and gradient
     value <- sum((y - fs)^2) 
-    gr <- - 2 / n * nabla_fs[,matches] %*% (y - fs[matches])
+    gr <- - 2 / n * nabla_fs[,matches] %*% (y - fs)
     
     grad_norm <- sum(gr^2)
     
     # Callback
     if (!is.null(cb)) cb()
     
-    # Convergence criterion based on gradient norm
-    if (grad_norm <= epsilon) break
     t <- t0
     # Proposed descent step
     par_new <- par - t * gr
     new_fs <- f(par_new, x_vals)[matches]
+    
+    # Convergence criterion based on gradient norm
+    if (all(abs(par_new - par) <= epsilon)) break
     
     # Backtracking line search
     while (sum((y - new_fs)^2) > value - alpha * t * grad_norm) {
@@ -51,9 +52,6 @@ grad_desc_grid <- function(
   
   par
 }
-
-
-
 
 
 sgd_grid <- function(

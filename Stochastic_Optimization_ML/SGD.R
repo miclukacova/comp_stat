@@ -183,31 +183,31 @@ decay_scheduler <- function(gamma0 = 1, # Initial learning rate
 }
 
 
-#adam <- function() {
-#  rho <- v <- 0
-#  function(
-    #    par,
-#    samp,
-#    gamma,
-#    grad,
-#    m = 50,         # Mini-batch size
-#    beta1 = 0.9,    # Momentum memory
-#    beta2 = 0.9,    # Momentum memory
-#    ...
-#    
-#  ){
-#    M <- floor(length(samp) / m) 
-#    for (j in 0:(M - 1)) {
-#      i <- samp[(j * m + 1):(j * m + m)]
-#      gr <- grad(par, i, ...)
-#      rho <<- beta1 * rho + (1 - beta1) * gr
-#      v <<- beta2 * v + (1 - beta2) * gr^2
-#      par <- par - gamma * (rho / (sqrt(v) + 1e-8))
-#    }
-#    par
-#  } 
-#}
-#
+adam <- function() {
+  rho <- v <- 0
+  function(
+   #    par,
+    samp,
+    gamma,
+    grad,
+    m = 50,         # Mini-batch size
+    beta1 = 0.9,    # Momentum memory
+    beta2 = 0.9,    # Momentum memory
+    ...
+    
+  ){
+    M <- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      gr <- grad(par, i, ...)
+      rho <<- beta1 * rho + (1 - beta1) * gr
+      v <<- beta2 * v + (1 - beta2) * gr^2
+      par <- par - gamma * (rho / (sqrt(v) + 1e-8))
+    }
+    par
+  } 
+}
+
 
 momentum <- function() {
   rho <- 0
@@ -236,3 +236,53 @@ rate_momentum <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = 1e-1)
 rate_adam <- decay_scheduler(gamma0 = 1e-1, a = 1, gamma1 = 1e-5)
 
 
+########### Rcpp ############################
+
+library(Rcpp)
+
+cppFunction('
+NumericVector gradient_rcpp(NumericVector par, NumericVector indices, NumericVector x, NumericVector y) {
+  // Extract parameters
+  double alpha = par[0];
+  double beta = par[1];
+  double gamma = par[2];
+  double rho = par[3];
+
+  // Initialize gradients
+  double grad_alpha = 0.0;
+  double grad_beta = 0.0;
+  double grad_gamma = 0.0;
+  double grad_rho = 0.0;
+
+  int n = indices.size(); // Number of indices
+
+  // Loop over the indices
+  for (int idx = 0; idx < n; ++idx) {
+    int i = indices[idx] - 1;  // Convert from r to c++ indexing
+
+    // Get individual data point
+    double x_i = x[i];
+    double y_i = y[i];
+
+    // Calculating f(x_i, par)
+    double f_x_i = gamma + (rho - gamma) / (1 + exp(beta * log(x_i) - alpha));
+
+    // Exponential term
+    double expbetalogxalpha = exp(beta * log(x_i) - alpha);
+
+    // Identical part used in gradients
+    double identical_part = -2 * (y_i - f_x_i);
+
+    // Accumulate gradients for all indices
+    grad_alpha += (identical_part * (rho - gamma) * expbetalogxalpha) 
+    / pow(1 + expbetalogxalpha, 2);
+    grad_beta += -(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha) 
+    / pow(1 + expbetalogxalpha, 2);
+    grad_gamma += identical_part * (1 - 1 / (1 + expbetalogxalpha));
+    grad_rho += identical_part / (1 + expbetalogxalpha);
+  }
+
+  // Return the mean of accumulated gradients
+  return NumericVector::create(grad_alpha / n, grad_beta / n, grad_gamma / n, grad_rho / n);
+}
+')

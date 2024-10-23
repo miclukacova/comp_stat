@@ -31,7 +31,7 @@ grad_desc <- function(
     par_new <- par - t * gr
     
     # Convergence criterion 
-    if (all(par_new - par <= epsilon)) break
+    if (all(abs(par_new - par) <= epsilon)) break
     
     # Backtracking line search
     while (H(par_new, x, y) > value - alpha * t * grad_norm) {
@@ -62,7 +62,7 @@ GD <- function(par,
                t0 = 1e-2,
                maxit = 1200,
                cb = GD_tracer$tracer,
-               epsilon = 1e-5,
+               epsilon = 1e-6,
                beta = 0.8,
                alpha = 0.1,
                true_par = NULL,
