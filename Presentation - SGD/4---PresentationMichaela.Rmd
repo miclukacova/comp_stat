@@ -289,9 +289,9 @@ If we sample our $x$'s from a grid of $m$ points we can exploit the fact that we
 gd_grid <- function(
     par,
     t0 = 1e-2,
-    maxit = 1000,
+    maxit = 1200,
     cb = NULL,
-    epsilon = 1e-6,
+    epsilon = 1e-5,
     beta = 0.8,
     alpha = 0.1,
     x,
@@ -338,6 +338,7 @@ gd_grid <- function(
   
   par
 }
+
 ```
 
 
