@@ -48,6 +48,7 @@ library(bench)
 library(tidyverse)
 library(profvis)
 library(bench)
+library(knitr)
 theme_set(theme_bw() + theme(text = element_text(size = 13)))
 ```
 ###Introduction
@@ -76,7 +77,7 @@ So the update scheme becomes:
 $$\theta_{t+1} = \theta_t +2 \gamma_t\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)$$
 Where $\theta_t = (\alpha_t, \beta_t, \gamma_t, \rho_t)$ and $\gamma_t$ is the learning rate at time $t$.
 ---
-###Implementation - Michs sæt rigti algoritme ind <3
+###Implementation 
 The gradient function and $f$ are implemented seperately
 ```{r}
 
@@ -118,6 +119,14 @@ vanilla <- function(par, samp, gamma, grad, n, x, y, ...){
 
 ---
 ###Sampling
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+### Source code
+
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+```
  
  - Implemented an S3 object `parameters` and a method `sim` to simulate data from the log-logistic dose-response model.
  
@@ -135,6 +144,7 @@ sim(parameters(1, 1, 1, 1), N = 100, grid = TRUE, scale = TRUE)
  - True parameters have been set to `c(2,5,1,2)` and the data is simulated with `N = 5000`.
  
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(4027)
 N <- 5000
 param <- parameters(2,5,1,2)
 data <- sim(param, N)
@@ -148,25 +158,16 @@ y_i <- data$y
 ---
 ### Test of Algorithm 
 
-```{r, echo=FALSE, warning=FALSE, message=FALSE}
-### Source code
-
-source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
-source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
-source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
-```
-
-We do a naive test of the algorithm, and run the algorithm with 3 different starting values: the true values $(2,5,1,2)$, $(1,1,1,1)$ and random values $(2.63, 1.64, 1.00, 0.49)$. 
+We do a naive test of the algorithm, and run the algorithm with 3 different starting values: the true values $(2,5,1,2)$, $(1,1,1,1)$ and random values $(1.88, 0.31, 3.64, 2.29)$. Step size is $0.005$, maximal number of itereations $300$.  
 
 ```{r, echo = FALSE}
 set.seed(4027)
-# Algorithm  for true values as starting values
+sv1 <- param$par
+sv2 <- c(1,1,1,1)
+sv3 <- abs(rnorm(4, 2, 1.5))
+
 sgd1 <- SGD(par0 = sv1, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
-
-# Algorithm for 2 times true values as starting values
 sgd2 <- SGD(par0 = sv2, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
-
-# Algorithm for half of true values asstarting values
 sgd3 <- SGD(par0 = sv3, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 300)
 ```
 
@@ -176,6 +177,9 @@ grid.arrange(plot(sgd1, 1) + ggtitle("True vals"),
              plot(sgd3, 1) + ggtitle("Random vals"),
              nrow = 1)
 ```
+
+---
+### Test of Algorithm 
 
 We obtain quite different convergence schemes. 
 
@@ -187,7 +191,7 @@ plot(sgd1, 3) +
                 y = plot_data(sgd3)$abs_dist_from_par), col = "red")
 
 diff_start_vals_sgd <- tibble(
-  "Par" = c("alpha (0.1)", "beta (1.0)", "gamma (2.2)", "rho (1.0)"),
+  "Par" = c("\u03B1 (2)", "\u03B2 (5)", "\u03B3 (1)", "\u03C1 (2)"),
   "True vals" = sgd1$est,
   "(1, 1, 1, 1)" = sgd2$est,
    "Random vals" = sgd3$est)
@@ -264,7 +268,7 @@ sgd <- function(
   par
 }
 
-sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim_1$x, y = sim_1$y)
+sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = x, y = y)
 })
 ```
 ---
@@ -323,19 +327,19 @@ NumericVector x, NumericVector y) {
 ```
 
 ```{r}
-gradient(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
-gradient_rcpp(c(3,3,3,3), c(1,2), sim_1$x, sim_1$y)
+gradient(c(3,3,3,3), c(1,2), x, y)
+gradient_rcpp(c(3,3,3,3), c(1,2), x, y)
 ```
 
 ---
 ###Benchmarking
 Benchmarking the RCPP implementation against the R implementation
 ```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
-sim1 <- sim(param1, 100)
+sim1 <- data[1:100,]
 
 bench_results <- bench::mark(
-    R = sgd(c(3,3,3,3), grad = gradient, N = 100, gamma = 0.01, x = sim1$x, y = sim_1$y),
-    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 100, gamma = 0.01, x = sim1$x, y = sim_1$y),
+    R = sgd(c(3,3,3,3), grad = gradient, N = 100, gamma = 0.01, x = sim1$x, y = sim1$y),
+    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 100, gamma = 0.01, x = sim1$x, y = sim1$y),
     iterations = 100,
     check = F
 )
@@ -348,11 +352,11 @@ knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
 
 ---
 ```{r,echo=T, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
-sim1 <- sim(param1, 1000)
+sim1 <- data[1:1000,]
 
 bench_results <- bench::mark(
-    R = sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim1$x, y = sim_1$y),
-    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 1000, gamma = 0.01, x = sim1$x, y = sim_1$y),
+    R = sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim1$x, y = sim1$y),
+    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 1000, gamma = 0.01, x = sim1$x, y = sim1$y),
     iterations = 10,
     check = F
 )
@@ -363,10 +367,10 @@ knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
 
 ---
 ### Decay Schedule
+*Der går noget galt her, bliver fikset i morgen:)*
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 ### Source code
-
 source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
 source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
 source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
@@ -378,17 +382,18 @@ $$
 \gamma_n = \frac{\gamma_0 K}{K + n^{a}}
 $$
 
-We try a decay schedules with $a = 1$, $K= 0.4$ and $\gamma_0 = 1$. A different way to specify the decay schedule is to specify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We specify two decay schedules with $\gamma_0 = 1$, $n_1 = 100$, $a=2$. And $\gamma_1 = 0.1$ and $\gamma_1 = 0.01$. 
+We try a decay schedules with $a = 1$, $K= 0.4$ and $\gamma_0 = 1$. A different way to specify the decay schedule is to specify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We specify two decay schedules both with $\gamma_0 = 1$, $n_1 = 100$ and $\gamma_1 = 0.01$. But one with $a = 1$ and one with $a = 2$. 
 
 ```{r, warning = FALSE, message = FALSE, echo = FALSE}
+set.seed(4027)
 decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 0.4)
-decay2 <- decay_scheduler(gamma0 = 1, a = 2, n1 = 150, gamma1 = 0.1)
+decay2 <- decay_scheduler(gamma0 = 1, a = 1, n1 = 150, gamma1 = 0.01)
 decay3 <- decay_scheduler(gamma0 = 1, a = 2, n1 = 150, gamma1 = 0.01)
 
 
-sgd_decay1 <- SGD(par0 = sv2, grad = grad, gamma = decay1, x = x, y = y, true_par = param$par)
-sgd_decay2 <- SGD(par0 = sv2, grad = grad, gamma = decay2, x = x, y = y, true_par = param$par)
-sgd_decay3 <- SGD(par0 = sv2, grad = grad, gamma = decay3, x = x, y = y, true_par = param$par)
+sgd_decay1 <- SGD(par0 = sv1 + rep(0.1,4), grad = grad, gamma = decay1, x = x, y = y, true_par = param$par)
+sgd_decay2 <- SGD(par0 = sv1+ rep(0.1,4), grad = grad, gamma = decay2, x = x, y = y, true_par = param$par)
+sgd_decay3 <- SGD(par0 = sv1+ rep(0.1,4), grad = grad, gamma = decay3, x = x, y = y, true_par = param$par)
 ```
 
 ```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
@@ -396,16 +401,25 @@ ggplot() +
   geom_line(aes(x = plot_data(sgd_decay1)$.time, 
                 y = plot_data(sgd_decay1)$loss, color = "a = 1, K = 0.4"))+
   geom_line(aes(x = plot_data(sgd_decay2)$.time, 
-                y = plot_data(sgd_decay2)$loss, color = "a = 2, gamma1 = 0.1")) +
+                y = plot_data(sgd_decay2)$loss, color = "a = 1, gamma1 = 0.01")) +
   geom_line(aes(x = plot_data(sgd_decay3)$.time, 
                 y = plot_data(sgd_decay3)$loss, color = "a = 2, gamma1 = 0.01")) +
   scale_y_log10() +
   labs(title = "Loss vs Time", x = "Time", y = "Loss")+
   scale_color_manual(values = c("a = 1, K = 0.4" = "red", 
-                                "a = 2, gamma1 = 0.1" = "orange", 
-                                "a = 2, gamma1 = 0.01" = "black"))+
+                                "a = 1, gamma1 = 0.01" = "orange", 
+                                "a = 2, gamma1 = 0.01" = "black"),
+                         labels = c(
+      expression(a == 1 ~ ", " ~ K == 0.4), 
+      expression(a == 1 ~ ", " ~ gamma[1] == 0.01), 
+      expression(a == 2 ~ ", " ~ gamma[1] == 0.01)))+
   labs(color = "Parameter values")
+```
 
+---
+### Decay Schedule
+
+```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 ggplot() +
   geom_line(aes(x = plot_data(sgd_decay1)$.time, 
                 y = plot_data(sgd_decay1)$abs_dist_from_par, color = "a = 1, K = 0.4"))+
@@ -425,4 +439,216 @@ ggplot() +
     ))+
   labs(color = "Parameter values")
 
+```
+
+
+---
+### Gradient Descent
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+### Source code
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+```
+
+We have also implemented a gradient descent algorithm. We have created an equivalent class for this algorithm as well. As stopping criterion we use $|\theta_n - \theta_{n-1}| \leq \epsilon = 10^{-3}$. We use backtracking line search in the algorithm in order to find step length. We check that the algorithm works: 
+
+```{r,  echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+gd0 <- GD(par = sv1 + rep(0.1,4), H = H, x = x, y = y, true_par = param$par)
+gd1 <- GD(par = sv2, H = H, x = x, y = y, true_par = param$par)
+gd2 <- GD(par = sv3, H = H, x = x, y = y, true_par = param$par)
+
+ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$loss, color = "a"))+
+  geom_line(aes(x = plot_data(gd1)$.time, 
+                y = plot_data(gd1)$loss, color = "b")) +
+  geom_line(aes(x = plot_data(gd2)$.time, 
+                y = plot_data(gd2)$loss, color = "c")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("a" = "red", 
+                                "b" = "orange", 
+                                "c" = "black"),
+                         labels = c("True vals", "c(1,1,1,1)", "Random vals"))+
+  labs(color = "Starting values")
+
+
+diff_start_vals_gd <- tibble(
+  "Par" = c("\u03B1 (2)", "\u03B2 (5)", "\u03B3 (1)", "\u03C1 (2)"),
+  "(2.1, 5.1, 1.1, 2.1)" = gd0$est,
+  "(1, 1, 1, 1)" = gd1$est,
+  "Random vals" = gd2$est)
+
+diff_start_vals_gd %>% kable()
+```
+
+
+---
+### Comparison
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+### Source code
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+```
+
+We compare the performance of the two algorithms.
+
+```{r, echo = FALSE}
+gd0 <- GD(par = param$par + rep(0.2,4), H = H, x = x, y = y, true_par = param$par)
+sgd0 <- SGD(par0 = param$par + rep(0.2,4), grad = grad, x = x, y = y, true_par = param$par, 
+            gamma = 0.01)
+```
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+tibble(" " = c("\u03B1", "\u03B2", "\u03B3", "\u03C1"), 
+       "True" = param$par, 
+       "GD" = gd0$est, 
+       "SGD" = sgd0$est) %>% kable() 
+```
+
+---
+### Comparison
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$loss, color = "GD"))+
+  geom_line(aes(x = plot_data(sgd0)$.time, 
+                y = plot_data(sgd0)$loss, color = "SGD")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("GD" = "red", "SGD" = "orange"))+
+  labs(color = "Method")
+ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$abs_dist_from_par, color = "GD"))+
+  geom_line(aes(x = plot_data(sgd0)$.time, 
+                y = plot_data(sgd0)$abs_dist_from_par, color = "SGD")) +
+  scale_y_log10() +
+  labs(title = "Abs. dist to par", x = "Time", y = "Abs. dist to par")+
+  scale_color_manual(values = c("GD" = "red", "SGD" = "orange"))+
+  labs(color = "Method")
+```
+
+
+---
+### Exploiting Grid Structure 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+### Source code
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+```
+
+If we sample our $x$'s from a grid of $m$ points we can exploit the fact that we only have $m$ distinct $x$-values. We do not need to compute $f(x_i| \alpha, \beta,\gamma,\rho)$ for each $i$. We can compute the values for each distinct $x$-value and then use these values to compute the loss function. In the same way we can save computations when computing the derivative of $f$. We have implemented a `gd_grid` function that exploits this structure. 
+
+```{r, warning = FALSE, message = FALSE}
+gd_grid <- function(
+    par,
+    t0 = 1e-2,
+    maxit = 1200,
+    cb = NULL,
+    epsilon = 1e-3,
+    beta = 0.8,
+    alpha = 0.1,
+    x,
+    y,
+    ...) {
+  
+  x_vals <- unique(x)
+  matches <- match(x, x_vals)
+  n <- length(x)
+
+  for (i in 1:maxit) {
+    
+    # Computing 
+    fs <- f(par, x_vals)[matches]
+    nabla_fs <- sapply(seq_along(x_vals), function(i) nabla_f(par, x_vals[i]))
+    
+    # Calculations of objective and gradient
+    value <- sum((y - fs)^2) 
+    gr <- - 2 / n * nabla_fs[,matches] %*% (y - fs)
+    
+    grad_norm <- sum(gr^2)
+    
+    # Callback
+    if (!is.null(cb)) cb()
+    
+    t <- t0
+    # Proposed descent step
+    par_new <- par - t * gr
+    new_fs <- f(par_new, x_vals)[matches]
+    
+    # Convergence criterion based on gradient norm
+    if (all(abs(par_new - par) <= epsilon)) break
+    
+    # Backtracking line search
+    while (sum((y - new_fs)^2) > value - alpha * t * grad_norm) {
+      t <- beta * t
+      par_new <- par - t * gr
+      new_fs <- f(par_new, x_vals)[matches]
+    }
+    par <- par_new
+  }
+  
+  if (i == maxit)  warning("Maximal number, ", maxit, ", of iterations reached")
+  
+  par
+}
+
+```
+
+---
+## Benchmarking the two GD versions
+
+We sample data from a grid, we use the same true parametes $(2,5,1,2)$, and sample the $x$'s from a grid consisting of $e^1, ..., e^15$. 
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+data2 <- sim(param, N, grid = TRUE)
+x2 <- data2$x
+y2 <- data2$y
+```
+
+We check that the two algorithms return the same output:
+
+```{r}
+all(grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2, y = y2) -
+  gd_grid(par = c(1,1,1,1), x = x2, y = y2)) < 10^(-8)
+```
+
+Comparing grid version with regular GD by benchmarking with 100 point
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+x_bench <- x2[1:100]
+y_bench <- y2[1:100]
+
+bench_results <- bench::mark(
+    "GD" = grad_desc(par = sv1, grad = grad_gd, H = H, x = x2, y = y2),
+    "Grid GD"= gd_grid(par = sv1, x = x2, y = y2),
+    iterations = 100,
+    check = F
+)
+plot(bench_results)
+```
+
+---
+
+Comparing grid version with regular GD with 500 points. 
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+x_bench <- x2[1:500]
+y_bench <- y2[1:500]
+
+bench_results <- bench::mark(
+    "GD" = grad_desc(par = sv1, grad = grad_gd, H = H, x = x2, y = y2),
+    "Grid GD"= gd_grid(par = sv1, x = x2, y = y2),
+    iterations = 100,
+    check = F
+)
+plot(bench_results)
 ```

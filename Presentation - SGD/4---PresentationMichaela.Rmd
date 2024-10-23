@@ -71,8 +71,6 @@ $$f(x_i| \alpha, \beta,\gamma,\rho) = \gamma + \frac{\rho - \gamma}{1 + \exp(\be
 ---
 ### Test of Algorithm 
 
-We do a naive test of the algorithm.  
-
 ```{r, echo=FALSE}
 # We simulate a data set (of size $N=5000$) for the parameter values: $(2,5,1,2)$.
 set.seed(4027)
@@ -88,7 +86,7 @@ sv2 <- c(1,1,1,1)
 sv3 <- abs(rnorm(4, 2, 1.5))
 ```
 
-And run the algorithm with 3 different starting values: the true values, $(1,1,1,1)$ and random values $(2.63, 1.64, 1.00, 0.49)$. 
+We do a naive test of the algorithm, and run the algorithm with 3 different starting values: the true values $(2,5,1,2)$, $(1,1,1,1)$ and random values $(2.63, 1.64, 1.00, 0.49)$. 
 
 ```{r, echo = FALSE}
 set.seed(4027)
@@ -108,8 +106,10 @@ grid.arrange(plot(sgd1, 1) + ggtitle("True vals"),
              plot(sgd3, 1) + ggtitle("Random vals"),
              nrow = 1)
 ```
+---
+### Test of Algorithm 
 
-Very different convergence schemes. 
+Very different convergence schemes, but they all converge to the same value.  
 
 ```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 plot(sgd1, 3) + 
@@ -119,7 +119,7 @@ plot(sgd1, 3) +
                 y = plot_data(sgd3)$abs_dist_from_par), col = "red")
 
 diff_start_vals_sgd <- tibble(
-  "Par" = c("alpha (0.1)", "beta (1.0)", "gamma (2.2)", "rho (1.0)"),
+  "Par" = c("expression(alpha) (2)", "beta (5)", "gamma (1)", "rho (2)"),
   "True vals" = sgd1$est,
   "(1, 1, 1, 1)" = sgd2$est,
    "Random vals" = sgd3$est)
