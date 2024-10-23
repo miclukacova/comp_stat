@@ -42,7 +42,7 @@ nabla_f <- function(par, x){
     return(c(d_alpha, d_beta, d_gamma, d_rho))
 }
 
-grad <- function(par, x, y) {
+grad <- function(par, x, y,...) {
   
   alpha <- par[1]
   beta <- par[2]
@@ -59,7 +59,7 @@ grad <- function(par, x, y) {
   return(- 2 * c(d_alpha, d_beta, d_gamma, d_rho) * (y - f(par, x)))
 }
 
-grad_mult <- function(par, x, y) {
+grad_mult <- function(par, x, y,...) {
   rowSums(sapply(seq_along(x), function(i) grad(par, x[i], y[i])))
 }
 

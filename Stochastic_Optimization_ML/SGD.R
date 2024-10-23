@@ -208,6 +208,31 @@ adam <- function() {
   } 
 }
 
+adam_2 <- function() {
+  rho <- v <- 0
+  function(
+        par,
+    samp,
+    gamma,
+    grad,
+    m = 50,         # Mini-batch size
+    beta1 = 0.9,    # Momentum memory
+    beta2 = 0.9,    # Momentum memory
+    ...
+    
+  ){
+    M <- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      gr <- grad(par, ...)
+      rho <<- beta1 * rho + (1 - beta1) * gr
+      v <<- beta2 * v + (1 - beta2) * gr^2
+      par <- par - gamma * (rho / (sqrt(v) + 1e-8))
+    }
+    par
+  } 
+}
+
 
 momentum <- function() {
   rho <- 0
@@ -226,6 +251,29 @@ momentum <- function() {
       # Using '<<-' assigns the value to rho in the enclosing
       environment
       rho <<- beta * rho + (1 - beta) * grad(par, i, ...)
+      par <- par - gamma * rho
+    }
+    par
+  } 
+}
+
+momentum_2 <- function() {
+  rho <- 0
+  function(
+    par,
+    samp,
+    gamma,
+    grad,
+    m = 50,         # Mini-batch size
+    beta = 0.95,    # Momentum memory
+    ...
+  ){
+    M <- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      # Using '<<-' assigns the value to rho in the enclosing
+      environment
+      rho <<- beta * rho + (1 - beta) * grad(par,...)
       par <- par - gamma * rho
     }
     par
