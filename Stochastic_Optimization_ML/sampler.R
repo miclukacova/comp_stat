@@ -66,7 +66,7 @@ grad_mult <- function(par, x, y) {
 ##### Objective function #####################################
 
 H <- function(par, x, y) {
-  sum((y - f(par, x))^2)
+  mean((y - f(par, x))^2)
 } 
 
 H_mult <- function(alpha, beta, gamma, rho, x, y){
