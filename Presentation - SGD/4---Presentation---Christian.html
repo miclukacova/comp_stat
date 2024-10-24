@@ -5,7 +5,7 @@
     <meta charset="utf-8" />
     <meta name="author" content="Christian Rubjerg Hejstvig-Larsen (brf337)" />
     <meta name="author" content="Dina Gyberg Jensen (vbz248)" />
-    <meta name="date" content="2024-10-23" />
+    <meta name="date" content="2024-10-24" />
     <script src="4---Presentation---Christian_files/header-attrs-2.28/header-attrs.js"></script>
     <link rel="stylesheet" href="xaringan-themer.css" type="text/css" />
   </head>
@@ -26,7 +26,7 @@ class: center, middle, inverse, title-slide
 ### University of Copenhagen
 ]
 .date[
-### 2024-10-23
+### 2024-10-24
 ]
 
 ---
@@ -50,14 +50,33 @@ class: center, middle, inverse, title-slide
 
 
 
-###Mini-batch gradient descent
+###Mini-batch stochastic gradient descent
 The idea is to calculate the gradient in a _batch_ of data points and update the parameters:
 
 + Sample `\(m\)` indices, `\(I_n = \{i_1, ...,i_m \}\)` from `\(\{1, ..., N\}\)`.
-+ Compute `\(\rho_n = \frac{1}{m} \sum_{i \in I_n} \nabla L_\theta(x_i, \theta)\)`
++ Compute `\(\rho_n = \frac{1}{m} \sum_{i \in I_n} \nabla L_\theta(x_i, y_i, \theta_n)\)`
 + Update `\(\theta_{n+1} = \theta_n - \gamma_n \rho_n\)`
 
-In our case we sample a partition of `\(I_1 \cup I_2 \cup ... \cup I_{M} \subseteq \{1, ..., N\}\)` for `\(M = \lfloor N/m \rfloor\)`.
+We sample a partition of `\(I_1 \cup I_2 \cup ... \cup I_{M} \subseteq \{1, ..., N\}\)` for `\(M = \lfloor N/m \rfloor\)`.
+
+
+``` r
+batch &lt;- function(
+    par,           # Parameter estimates
+    samp,          # Sample of N indices
+    gamma,         # Learning rate
+    grad,          # Gradient function
+    m = 50,        # Mini-batch size
+    ...
+){
+  M &lt;- floor(length(samp) / m) 
+  for (j in 0:(M - 1)) {
+    i &lt;- samp[(j * m + 1):(j * m + m)]        # Sample m indices
+    par &lt;- par - gamma * grad(par, i, ...)    # Update parameter estimates
+  }
+  return(par)
+}
+```
 
 
 
@@ -65,31 +84,61 @@ In our case we sample a partition of `\(I_1 \cup I_2 \cup ... \cup I_{M} \subset
 
 
 
-&lt;img src="4---Presentation---Christian_files/figure-html/unnamed-chunk-5-1.png" style="display: block; margin: auto;" /&gt;
+
+
+
+
 
 ---
+
 ###Momentum
-Version of batch gradient descent where we weight the current gradient with the previous gradient. Given `\(\theta_n\)` and a batch `\(I_n\)` with `\(|I_n| = m\)` we
+Version of batch gradient descent where we add _momemtum_ to the gradient through a convex combination of the current gradient and the previous gradient. Given `\(\theta_n\)` and a batch `\(I_n\)` with `\(|I_n| = m\)` we
 
 + Compute `\(g_n = \frac{1}{m} \sum_{i \in I_n} \nabla_\theta L(y_i, x_i, \theta_n)\)`
 + Compute `\(\rho_n = \beta \rho_{n-1} + (1 - \beta) g_n\)`
 + Update `\(\theta_{n+1} = \theta_n - \gamma_n \rho_n\)`
 
-Default of `\(\beta = 0.9\)`.
-
-We plot the performance of the algorithm for different values of `\(m\)` and random starting values. The same decay scheduler is used:
+The value of `\(\beta\)` determines the gradient memory and is a parameter that can be tuned. Default is set to `\(0.9\)`. Note that `\(\beta = 0\)` corresponds to batch stochastic gradient descent.
 
 
+``` r
+momentum &lt;- function() {
+  rho &lt;- 0        # Initialize rho outside the inner function to keep track of the previous gradient
+  function(
+    par,          # Parameter values
+    samp,         # Sample of N indices
+    gamma,        # Learning rate
+    grad,         # Gradient function
+    m = 50,       # Mini-batch size
+    beta = 0.9,   # Momentum memory
+    ...
+  ){
+    M &lt;- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i &lt;- samp[(j * m + 1):(j * m + m)]
+      rho &lt;&lt;- beta * rho + (1 - beta) * grad(par, i, ...)   # Using '&lt;&lt;-' assigns the value to rho in the enclosing environment
+      par &lt;- par - gamma * rho
+    }
+    par
+  } 
+}
+```
 
 
-&lt;img src="4---Presentation---Christian_files/figure-html/unnamed-chunk-7-1.png" style="display: block; margin: auto;" /&gt;
+
+
+
+
+
+
+
 
 ---
-###Adaptive learning rates
-To mitigate tuning issues, we introduce the adam algorithm, an adaptive learning rate algorithm. The idea is to standardize each coordinate direction of the descent direction by dividing with an estimate of the standard deviation of each descent direction. We denothe the estimated standard deviation of the `\(i\)`-th coordinate direction by `\(\sqrt{v_i}\)`. We can estimate `\(v_i\)` by the expected Hadamard product of the gradient with itself:
-`$$v \approx \frac{1}{n} \sum_{i=1}^n g_i \odot g_i$$`
 
-We combine this insight with the momentum algorithm to get the adam algorithm. The algorithm is as follows:
+###Adaptive learning rates
+To mitigate tuning issues, we introduce the adam algorithm, an adaptive learning rate algorithm. The idea is to combine momemtum with a standardiziation of each coordinate direction of the descent direction. This is in practice done by dividing the learning rate by a running average of magnitude of previous gradients:
+`$$v_n = \beta_2 v_{n-1} + (1 - \beta_2) g_n \odot g_n$$`
+where we denote `\(\beta_2\)` the forgetting factor. The complete algorithm is as follows:
 
 + Initialize `\(\theta_0\)`, `\(\rho_0 = 0\)`, `\(v_0 = 0\)`
 + Compute `\(g_n = \frac{1}{m} \sum_{i \in I_n} \nabla_\theta L(y_i, x_i, \theta_n)\)`
@@ -97,18 +146,58 @@ We combine this insight with the momentum algorithm to get the adam algorithm. T
 + Compute `\(v_n = \beta_2 v_{n-1} + (1 - \beta_2) g_n \odot g_n\)`
 + Update `\(\theta_{n+1} = \theta_n - \gamma_n \frac{\rho_n}{\sqrt{v_n} + \epsilon}\)`
 
-where we add `\(\epsilon\)` to avoid division by zero. Default values are `\(\beta_1 = 0.9\)`, `\(\beta_2 = 0.9\)` and they determine the memory of first and second moment respectively. We set `\(\epsilon = 10^{-8}\)` but this could be any value close to zero.
+where we add `\(\epsilon\)` to avoid division by zero (default is `\(\epsilon = 10^{-8}\)`). The interpretation of `\(\beta_1\)` is the same as in the momentum algorithm.
+
+---
+
+
+``` r
+adam &lt;- function() {
+  rho &lt;- v &lt;- 0     # Initialize rho and v outside the inner function to keep track of the previous gradients
+  function(
+    par,            # Initial parameter values
+    samp,           # Sample of N indices
+    gamma,          # Learning rate
+    grad,           # Gradient function
+    m = 50,         # Mini-batch size
+    beta1 = 0.9,    # First-moment memory
+    beta2 = 0.9,    # Second-moment memory
+    ...
+
+  ){
+    M &lt;- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i &lt;- samp[(j * m + 1):(j * m + m)]
+      gr &lt;- grad(par, i, ...)
+      rho &lt;&lt;- beta1 * rho + (1 - beta1) * gr
+      v &lt;&lt;- beta2 * v + (1 - beta2) * gr^2
+      par &lt;- par - gamma * (rho / (sqrt(v) + 1e-8))
+    }
+    par
+  } 
+}
+```
 
 
 
 
-&lt;img src="4---Presentation---Christian_files/figure-html/unnamed-chunk-9-1.png" style="display: block; margin: auto;" /&gt;
 
 
 
 
 
 
+
+
+---
+
+###Comparing convergence of the algorithms
+
+&lt;img src="4---Presentation---Christian_files/figure-html/unnamed-chunk-16-1.png" style="display: block; margin: auto;" /&gt;
+
+---
+
+&lt;img src="4---Presentation---Christian_files/figure-html/unnamed-chunk-17-1.png" style="display: block; margin: auto;" /&gt;
 
 
     </textarea>

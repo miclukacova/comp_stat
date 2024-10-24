@@ -23,7 +23,6 @@ vanilla <- function(
 }
 
 
-
 batch <- function(
     par,
     samp,
@@ -56,8 +55,6 @@ momentum <- function() {
     M <- floor(length(samp) / m) 
     for (j in 0:(M - 1)) {
       i <- samp[(j * m + 1):(j * m + m)]
-      # Using '<<-' assigns the value to rho in the enclosing
-      environment
       rho <<- beta * rho + (1 - beta) * grad(par, i, ...)
       par <- par - gamma * rho
     }

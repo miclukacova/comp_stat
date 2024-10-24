@@ -1,77 +1,47 @@
-SGD_tracer <- tracer(c("par", "k"), Delta = 0) 
+## Sampler  ##############################################
 
-sgd(par0 = init_par, 
-    grad = gradient, 
-    gamma = rate,
-    N = N,
-    epoch = batch,
-    m = 500,
-    maxiter = 100,
-    sampler = sample,
-    cb = SGD_tracer$tracer,
-    x = x_i,
-    y = y_i)
+gauss_sample <- function(N, par, omega = 1) {
+  log_x <- rnorm(N, 0, omega^2)
+  x <- exp(log_x)
+  y <- f(par = par, x = x) + rnorm(N, 0, 0.5)
+  return(data.frame(x = x, y = y))
+}
 
+grid_sample <- function(N, par) {
+  grid <- exp(1:15)
+  x <- sample(grid, N, replace = TRUE)
+  y <- f(par = par, x = x) + rnorm(N, 0, 0.5)
+  return(data.frame(x = x, y = y))
+}
 
-#Sampling
-set.seed(16102024)
-N <- 10000
-omega <- 0.5 # Changing this significantly changes the output. High values makes the algorithm worse
+###### Parameters class ###########################################
 
-true_par <- c(2, 5, 1, 2)
-init_par <- c(1,1,1,1)
-x_i <- exp(rnorm(N, mean = 0, sd = omega^2))
-y_i <- f(x_i, true_par) + rnorm(N, mean = 0, sd = 0.001)
+parameters <- function(alpha, beta, gamma, rho) {
+  structure(
+    list(
+      alpha = alpha,
+      beta = beta,
+      gamma = gamma, 
+      rho = rho,
+      par = c(alpha, beta, gamma, rho)),
+    class = "My_params"
+  )
+}
 
-iterations <- 1000
-batch_size <- 20
+sim <- function(x) {
+  UseMethod("sim")
+}
 
-# Decay schedule
-rate_batch <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = 1e-1, n = iterations)
-rate_momentum <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = 1e-1, n = iterations)
-rate_adam <- decay_scheduler(gamma0 = 1e-1, a = 1, gamma1 = 1e-5, n = iterations)
-
-#Test objects
-
-# SGD_tracer_vanilla <- tracer(c("par", "n"), Delta = 0)
-# SGD_object_vanilla <- SGD(par0 = init_par, grad = gradient, gamma = rate,
-#                   N = N, epoch = NULL, maxiter = iterations, sampler = sample,
-#                   cb = SGD_tracer_vanilla, x = x_i, y = y_i,
-#                   true_par = true_par)
-
-SGD_tracer <- tracer(c("par", "n"), Delta = 0)
-
-SGD_object_batch <- SGD(par0 = init_par, grad = gradient, gamma = rate_batch,
-                       N = N, epoch = batch, m = batch_size, maxiter = iterations, sampler = sample,
-                       cb = SGD_tracer_batch, x = x_i, y = y_i,
-                       true_par = true_par)
-
-
-
-SGD_object_momentum <- SGD(par0 = init_par, grad = gradient, gamma = rate_momentum,
-                        N = N, epoch = momentum(), m = batch_size, maxiter = iterations, sampler = sample,
-                        cb = SGD_tracer, x = x_i, y = y_i,
-                        true_par = true_par)
-
-
-
-SGD_object_adam <- SGD(par0 = init_par, grad = gradient, gamma = rate_adam,
-                       N = N, epoch = adam(), m = batch_size, maxiter = iterations, sampler = sample,
-                       cb = SGD_tracer, x = x_i, y = y_i,
-                       true_par = true_par)
-
-plot(SGD_object_adam, 3) + 
-  geom_line(aes(x = plot_data(SGD_object_batch)$.time, 
-                y = plot_data(SGD_object_batch)$abs_dist_from_par), col = "orange") + 
-  # geom_line(aes(x = plot_data(SGD_object_vanilla)$.time, 
-  #               y = plot_data(SGD_object_vanilla)$loss), col = "blue") + 
-  geom_line(aes(x = plot_data(SGD_object_momentum)$.time, 
-                y = plot_data(SGD_object_momentum)$abs_dist_from_par), col = "red") +
-  xlim(0,5)
-
-
-
-
-
-
-
+sim <- function(object, N, omega = 1, grid = FALSE, scale = FALSE) {
+  if(grid){
+    data <- grid_sample(N = N, par = object$par)
+  }
+  data <- gauss_sample(N = N, par = object$par, omega)
+  #For scaling
+  if(scale){
+    scaled_data <- scale(data) 
+    # Shift the data so that the minimum value is 1 (or any positive value)
+    data <- scaled_data + abs(min(scaled_data)) + 1
+  }
+  return(data)
+}
