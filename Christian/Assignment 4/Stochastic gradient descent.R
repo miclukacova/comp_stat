@@ -21,7 +21,7 @@ gradient <- function(par, i, x, y,...){
   
   expbetalogxalpha <- exp(beta * log(x_i) - alpha)
   
-  identical_part <- - 2 * (y_i - f(x_i, par))
+  identical_part <- - 2 * (y_i - f(x = x_i, par = par))
   
   grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
   grad_beta <- - mean(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
@@ -55,7 +55,7 @@ sgd <- function(
     samp <- sampler(N)
     
     if (is.null(epoch)){
-      par <- vanilla(par, i, samp, gamma[n], n, ...)
+      par <- vanilla(par, i, samp, gamma[n], n = n, ...)
     } else {
       par <- epoch(par, samp, gamma[n], ...)
     }
@@ -76,31 +76,6 @@ squared_error_mult <- function(x, y, param){
 }
 
 ###### S3 Classes ###########################################
-
-# Parameters class
-
-parameters <- function(alpha, beta, gamma, rho) {
-  structure(
-    list(
-      alpha = alpha,
-      beta = beta,
-      gamma = gamma, 
-      rho = rho,
-      par = c(alpha, beta, gamma, rho)),
-    class = "My_params"
-  )
-}
-
-sim <- function(x) {
-  UseMethod("sim")
-}
-
-sim <- function(object, N, omega = 1, grid = FALSE) {
-  if(grid){
-    grid_sample(object$par, N)
-  }
-  gauss_sample(N, object$par, omega)
-}
 
 #-------------------------------------------------------------------------------
 #                                   SGD class                                  #
@@ -198,23 +173,5 @@ plot_data.My_SGD <- function(object) {
   return(SGD_plot_df)
 }
 
-
-
-# squared_error_mult(SGD_object_adamm2_1$additional_args$x, 
-#                    SGD_object_adamm2_1$additional_args$y, 
-#                    SGD_object_adamm2_1$trace[,1:4])
-# 
-# H(SGD_object_adamm2_1$additional_args$x, 
-#   SGD_object_adamm2_1$additional_args$y, 
-#   SGD_object_adamm2_1$trace[1,1:4])
-# 
-# apply(SGD_object_adamm2_1$trace[,1:4], 1, FUN = function(par_est) H(SGD_object_adamm2_1$additional_args$x, 
-#                                                                   SGD_object_adamm2_1$additional_args$y, 
-#                                                                   par_est))
-# 
-# mean((y_i - f(x_i, SGD_object_adamm2_1$trace[200,1:4]))^2)
-# mean((y_i - f(x_i, true_par))^2)
-# 
-# H(x_i, y_i, SGD_object_adamm2_1$trace[200,1:4])
 
 
