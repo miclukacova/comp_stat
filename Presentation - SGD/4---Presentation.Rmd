@@ -574,7 +574,6 @@ batch <- function(
 
 
 ```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
-set.seed(4027)
 N <- 5000
 omega <- 1 # Changing this significantly changes the output. High or small values makes the algorithm worse
 
@@ -602,7 +601,7 @@ rate3 <- decay_scheduler(gamma0 = 1, a = 2, gamma1 = gamma3, n1 = iterations)
 rate_values <- list(rate1, rate2, rate3)
 
 true_par <- c(2, 5, 1, 2)
-init_par <- abs(rnorm(4, mean = 2, sd = 1.5))
+init_par <- sv3
 
 # Function to create the plots dynamically
 create_SGD_plot <- function(SGD_obj, plot_num) {
@@ -1163,11 +1162,6 @@ grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.25, "
 
 
 
-
-
-
-
-
 ---
 ### Exploiting Grid Structure 
 
@@ -1186,7 +1180,7 @@ gd_grid <- function(
     t0 = 1e-2,
     maxit = 1200,
     cb = NULL,
-    epsilon = 1e-3,
+    epsilon = 1e-2,
     beta = 0.8,
     alpha = 0.1,
     x,
@@ -1239,7 +1233,7 @@ gd_grid <- function(
 ---
 ## Benchmarking the two GD versions
 
-We sample data from a grid, we use the same true parametes $(2,5,1,2)$, and sample the $x$'s from a grid consisting of $e^1, ..., e^15$. 
+We sample data from a grid, we use the same true parametes $(2,5,1,2)$, and sample the $x$'s from the grid. 
 
 ```{r, warning = FALSE, message = FALSE, echo = FALSE}
 data2 <- sim(param, N, grid = TRUE)
