@@ -361,7 +361,7 @@ gradient_rcpp(c(3,3,3,3), c(1,2), x, y)
 ---
 ###Benchmarking
 Benchmarking the RCPP implementation against the R implementation
-```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=12, fig.height=4, fig.align='center'}
 sim1 <- data[1:100,]
 
 bench_results1 <- bench::mark(
@@ -386,7 +386,7 @@ grid.arrange(p1, p2, nrow = 1)
 ```  
 <br>
 ```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
-knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
+knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results1[,2:9]))
 ```
 
 
@@ -595,8 +595,7 @@ batch <- function(
   for (j in 0:(M - 1)) {
     i <- samp[(j * m + 1):(j * m + m)]        # Sample m indices
     par <- par - gamma * grad(par, i, ...)    # Update parameter estimates
-  }
-  return(par)
+  } return(par)
 }
 ```
 
@@ -1010,7 +1009,7 @@ grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "
 
 ---
 
-```{r echo=F, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center'}
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=16, fig.height=6.5, fig.align='center'}
 
 p1 <- adam_SGD_plots[[1]] +
     geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
@@ -1097,7 +1096,7 @@ grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.25, "
 
 ---
 
-```{r echo=F, warning  = FALSE, message = FALSE, fig.width=11, fig.height=9, fig.align='center'}
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=16, fig.height=6.5, fig.align='center'}
 
 p1 <- adam_SGD_plots3[[1]] +
     geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
