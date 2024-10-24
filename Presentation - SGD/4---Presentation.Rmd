@@ -122,7 +122,6 @@ vanilla <- function(par, samp, gamma, grad, n, x, y, ...){
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 ### Source code
-
 source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
 source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
 source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
@@ -150,9 +149,6 @@ param <- parameters(2,5,1,2)
 data <- sim(param, N)
 x <- data$x
 y <- data$y
-
-x_i <- data$x
-y_i <- data$y
 ```
 
 ---
@@ -533,6 +529,642 @@ ggplot() +
   scale_color_manual(values = c("GD" = "red", "SGD" = "orange"))+
   labs(color = "Method")
 ```
+
+
+
+
+---
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(gridExtra)
+library(grid)
+library(patchwork)
+
+source("~/comp_stat/Christian/Assignment 4/Adaptive learning rate.R", local = knitr::knit_global())
+source("~/comp_stat/Christian/Assignment 4/Stochastic gradient descent.R", local = knitr::knit_global())
+source("~/comp_stat/Christian/Assignment 4/Sampling.R", local = knitr::knit_global())
+```
+
+###Mini-batch stochastic gradient descent
+The idea is to calculate the gradient in a _batch_ of data points and update the parameters:
+
++ Sample $m$ indices, $I_n = \{i_1, ...,i_m \}$ from $\{1, ..., N\}$.
++ Compute $\rho_n = \frac{1}{m} \sum_{i \in I_n} \nabla L_\theta(x_i, y_i, \theta_n)$
++ Update $\theta_{n+1} = \theta_n - \gamma_n \rho_n$
+
+We sample a partition of $I_1 \cup I_2 \cup ... \cup I_{M} \subseteq \{1, ..., N\}$ for $M = \lfloor N/m \rfloor$.
+
+```{r}
+batch <- function(
+    par,           # Parameter estimates
+    samp,          # Sample of N indices
+    gamma,         # Learning rate
+    grad,          # Gradient function
+    m = 50,        # Mini-batch size
+    ...
+){
+  M <- floor(length(samp) / m) 
+  for (j in 0:(M - 1)) {
+    i <- samp[(j * m + 1):(j * m + m)]        # Sample m indices
+    par <- par - gamma * grad(par, i, ...)    # Update parameter estimates
+  }
+  return(par)
+}
+```
+
+
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+set.seed(4027)
+N <- 5000
+omega <- 1 # Changing this significantly changes the output. High or small values makes the algorithm worse
+
+
+# param <- parameters(2,5,1,2)
+# data <- sim(param, N)
+# x <- data$x
+# y <- data$y
+
+iterations <- 100
+SGD_tracer <- tracer(c("par", "n"), Delta = 0)
+
+m1 <- 20
+m2 <- 50
+m3 <- 250
+m_values <- list(m1, m2, m3)
+
+gamma1 <- 1e-1
+gamma2 <- 1e-2
+gamma3 <- 1e-5
+
+rate1 <- decay_scheduler(gamma0 = 1, a = 2, gamma1 = gamma1, n1 = iterations)
+rate2 <- decay_scheduler(gamma0 = 1, a = 2, gamma1 = gamma2, n1 = iterations)
+rate3 <- decay_scheduler(gamma0 = 1, a = 2, gamma1 = gamma3, n1 = iterations)
+rate_values <- list(rate1, rate2, rate3)
+
+true_par <- c(2, 5, 1, 2)
+init_par <- abs(rnorm(4, mean = 2, sd = 1.5))
+
+# Function to create the plots dynamically
+create_SGD_plot <- function(SGD_obj, plot_num) {
+  plot(SGD_obj, plot_num) + 
+    theme(axis.title.x = element_blank(), 
+          axis.title.y = element_blank(), 
+          plot.title = element_blank(),
+          plot.margin = margin(10, 10, 20, 20))
+}
+
+```
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center'}
+SGD_object_batchm1_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = batch, m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_batchm2_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = batch, m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_batchm3_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = batch, m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+
+SGD_object_batchm1_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = batch, m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_batchm2_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = batch, m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_batchm3_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = batch, m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+
+SGD_object_batchm1_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = batch, m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_batchm2_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = batch, m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_batchm3_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = batch, m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+batch_SGD_objects <- list(SGD_object_batchm1_1, SGD_object_batchm2_1, SGD_object_batchm3_1,
+                          SGD_object_batchm1_2, SGD_object_batchm2_2, SGD_object_batchm3_2,
+                          SGD_object_batchm1_3, SGD_object_batchm2_3, SGD_object_batchm3_3)
+
+# Store all plots in a list
+batch_SGD_plots <- lapply(batch_SGD_objects, create_SGD_plot, plot_num = 1)
+
+# Arrange the plots in a grid
+batch_grid <- grid.arrange(
+  grobs = batch_SGD_plots,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Loss vs Time for batch algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+# Store all plots in a list
+batch_SGD_plots <- lapply(batch_SGD_objects, create_SGD_plot, plot_num = 3)
+
+# Arrange the plots in a grid
+batch_grid <- grid.arrange(
+  grobs = batch_SGD_plots,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Distance to true parameters vs Time for batch algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+---
+
+###Momentum
+Version of batch gradient descent where we add _momemtum_ to the gradient through a convex combination of the current gradient and the previous gradient. Given $\theta_n$ and a batch $I_n$ with $|I_n| = m$ we
+
++ Compute $g_n = \frac{1}{m} \sum_{i \in I_n} \nabla_\theta L(y_i, x_i, \theta_n)$
++ Compute $\rho_n = \beta \rho_{n-1} + (1 - \beta) g_n$
++ Update $\theta_{n+1} = \theta_n - \gamma_n \rho_n$
+
+The value of $\beta$ determines the gradient memory and is a parameter that can be tuned. Default is set to $0.9$. Note that $\beta = 0$ corresponds to batch stochastic gradient descent.
+
+```{r}
+momentum <- function() {
+  rho <- 0        # Initialize rho outside the inner function to keep track of the previous gradient
+  function(
+    par,          # Parameter values
+    samp,         # Sample of N indices
+    gamma,        # Learning rate
+    grad,         # Gradient function
+    m = 50,       # Mini-batch size
+    beta = 0.9,   # Momentum memory
+    ...
+  ){
+    M <- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      rho <<- beta * rho + (1 - beta) * grad(par, i, ...)   # Using '<<-' assigns the value to rho in the enclosing environment
+      par <- par - gamma * rho
+    }
+    par
+  } 
+}
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center'}
+SGD_object_momentumm1_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = momentum(), m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_momentumm2_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = momentum(), m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_momentumm3_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = momentum(), m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+
+SGD_object_momentumm1_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = momentum(), m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_momentumm2_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = momentum(), m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_momentumm3_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = momentum(), m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+
+SGD_object_momentumm1_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = momentum(), m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_momentumm2_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = momentum(), m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_momentumm3_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = momentum(), m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+momentum_SGD_objects <- list(SGD_object_momentumm1_1, SGD_object_momentumm2_1, SGD_object_momentumm3_1,
+                             SGD_object_momentumm1_2, SGD_object_momentumm2_2, SGD_object_momentumm3_2,
+                             SGD_object_momentumm1_3, SGD_object_momentumm2_3, SGD_object_momentumm3_3)
+
+# Store all plots in a list
+momentum_SGD_plots <- lapply(momentum_SGD_objects, create_SGD_plot, plot_num = 1)
+
+# Arrange the plots in a grid
+momentum_grid <- grid.arrange(
+  grobs = momentum_SGD_plots,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Loss vs Time for momentum algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+# Store all plots in a list
+momentum_SGD_plots <- lapply(momentum_SGD_objects, create_SGD_plot, plot_num = 3)
+
+# Arrange the plots in a grid
+momentum_grid <- grid.arrange(
+  grobs = momentum_SGD_plots,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Distance to true parameters vs Time for momentum algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+
+---
+
+###Adaptive learning rates
+To mitigate tuning issues, we introduce the adam algorithm, an adaptive learning rate algorithm. The idea is to combine momemtum with a standardiziation of each coordinate direction of the descent direction. This is in practice done by dividing the learning rate by a running average of magnitude of previous gradients:
+$$v_n = \beta_2 v_{n-1} + (1 - \beta_2) g_n \odot g_n$$
+where we denote $\beta_2$ the forgetting factor. The complete algorithm is as follows:
+
++ Initialize $\theta_0$, $\rho_0 = 0$, $v_0 = 0$
++ Compute $g_n = \frac{1}{m} \sum_{i \in I_n} \nabla_\theta L(y_i, x_i, \theta_n)$
++ Compute $\rho_n = \beta_1 \rho_{n-1} + (1 - \beta_1) g_n$
++ Compute $v_n = \beta_2 v_{n-1} + (1 - \beta_2) g_n \odot g_n$
++ Update $\theta_{n+1} = \theta_n - \gamma_n \frac{\rho_n}{\sqrt{v_n} + \epsilon}$
+
+where we add $\epsilon$ to avoid division by zero (default is $\epsilon = 10^{-8}$). The interpretation of $\beta_1$ is the same as in the momentum algorithm.
+
+---
+
+```{r}
+adam <- function() {
+  rho <- v <- 0     # Initialize rho and v outside the inner function to keep track of the previous gradients
+  function(
+    par,            # Initial parameter values
+    samp,           # Sample of N indices
+    gamma,          # Learning rate
+    grad,           # Gradient function
+    m = 50,         # Mini-batch size
+    beta1 = 0.9,    # First-moment memory
+    beta2 = 0.9,    # Second-moment memory
+    ...
+
+  ){
+    M <- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      gr <- grad(par, i, ...)
+      rho <<- beta1 * rho + (1 - beta1) * gr
+      v <<- beta2 * v + (1 - beta2) * gr^2
+      par <- par - gamma * (rho / (sqrt(v) + 1e-8))
+    }
+    par
+  } 
+}
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=9, fig.height=8, fig.align='center'}
+SGD_object_adamm1_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = adam(), m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_adamm2_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = adam(), m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_adamm3_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
+                       N = N, epoch = adam(), m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+
+SGD_object_adamm1_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = adam(), m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_adamm2_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = adam(), m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_adamm3_2 <- SGD(par0 = init_par, grad = gradient, gamma = rate2,
+                       N = N, epoch = adam(), m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+
+SGD_object_adamm1_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = adam(), m = m1, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_adamm2_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = adam(), m = m2, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+SGD_object_adamm3_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
+                       N = N, epoch = adam(), m = m3, maxiter = iterations, sampler = sample,
+                       cb = SGD_tracer, x = x, y = y,
+                       true_par = true_par)
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=9, fig.height=8, fig.align='center', include = FALSE}
+adam_SGD_objects <- list(SGD_object_adamm1_1, SGD_object_adamm2_1, SGD_object_adamm3_1,
+                         SGD_object_adamm1_2, SGD_object_adamm2_2, SGD_object_adamm3_2,
+                         SGD_object_adamm1_3, SGD_object_adamm2_3, SGD_object_adamm3_3)
+
+# Store all plots in a list
+adam_SGD_plots <- lapply(adam_SGD_objects, create_SGD_plot, plot_num = 1)
+
+# Arrange the plots in a grid
+adam_grid <- grid.arrange(
+  grobs = adam_SGD_plots,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Loss vs Time for Adam algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=9, fig.height=8, fig.align='center', include = F}
+adam_SGD_objects <- list(SGD_object_adamm1_1, SGD_object_adamm2_1, SGD_object_adamm3_1,
+                         SGD_object_adamm1_2, SGD_object_adamm2_2, SGD_object_adamm3_2,
+                         SGD_object_adamm1_3, SGD_object_adamm2_3, SGD_object_adamm3_3)
+
+# Store all plots in a list
+adam_SGD_plots3 <- lapply(adam_SGD_objects, create_SGD_plot, plot_num = 3)
+
+# Arrange the plots in a grid
+adam_grid <- grid.arrange(
+  grobs = adam_SGD_plots3,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Distance to true parameters vs Time for Adam algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+
+---
+
+###Comparing convergence of the algorithms
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=11, fig.height=9, fig.align='center'}
+
+p1 <- adam_SGD_plots[[1]] +
+    geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
+                y = plot_data(SGD_object_batchm1_1)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_1)$.time, 
+                y = plot_data(SGD_object_momentumm1_1)$loss), col = "red")
+
+p2 <- adam_SGD_plots[[2]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_1)$.time, 
+                y = plot_data(SGD_object_batchm2_1)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_1)$.time, 
+                y = plot_data(SGD_object_momentumm2_1)$loss), col = "red")
+
+p3 <- adam_SGD_plots[[3]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_1)$.time, 
+                y = plot_data(SGD_object_batchm3_1)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_1)$.time, 
+                y = plot_data(SGD_object_momentumm3_1)$loss), col = "red")
+
+p4 <- adam_SGD_plots[[4]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm1_2)$.time, 
+                y = plot_data(SGD_object_batchm1_2)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_2)$.time, 
+                y = plot_data(SGD_object_momentumm1_2)$loss), col = "red")
+
+p5 <- adam_SGD_plots[[5]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_2)$.time, 
+                y = plot_data(SGD_object_batchm2_2)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_2)$.time, 
+                y = plot_data(SGD_object_momentumm2_2)$loss), col = "red")
+
+p6 <- adam_SGD_plots[[6]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_2)$.time, 
+                y = plot_data(SGD_object_batchm3_2)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_2)$.time, 
+                y = plot_data(SGD_object_momentumm3_2)$loss), col = "red")
+
+p7 <- adam_SGD_plots[[7]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm1_3)$.time, 
+                y = plot_data(SGD_object_batchm1_3)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_3)$.time, 
+                y = plot_data(SGD_object_momentumm1_3)$loss), col = "red")
+
+p8 <- adam_SGD_plots[[8]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_3)$.time, 
+                y = plot_data(SGD_object_batchm2_3)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_3)$.time, 
+                y = plot_data(SGD_object_momentumm2_3)$loss), col = "red")
+
+p9 <- adam_SGD_plots[[9]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_3)$.time, 
+                y = plot_data(SGD_object_batchm3_3)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_3)$.time, 
+                y = plot_data(SGD_object_momentumm3_3)$loss), col = "red")
+
+
+legend_grob <- grobTree(
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "black")),
+  textGrob("Adam", x = unit(0.1, "npc"), y = 0.55, just = "left"),
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "blue"), y = 0.4),
+  textGrob("Mini-batch", x = unit(0.1, "npc"), y = 0.45, just = "left"),
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "red"), y = 0.3),
+  textGrob("Momentum", x = unit(0.1, "npc"), y = 0.35, just = "left")
+)
+
+
+
+momentum_grid <- grid.arrange(arrangeGrob(p1, p2, p3, p4, p5, p6, p7, p8, p9, ncol = 3),
+                              legend_grob,
+                              widths = c(9, 0.5, 0.5),
+                              heights = c(9, 0.5, 0.5),
+                              top = textGrob("Loss vs Time", gp = gpar(fontsize = 20, fontface = "bold")))
+
+
+grid.text(paste0("m = ", m1), x = unit(0.15, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.45, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.8, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.55, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.25, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+---
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=11, fig.height=9, fig.align='center'}
+
+p1 <- adam_SGD_plots3[[1]] +
+    geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
+                y = plot_data(SGD_object_batchm1_1)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_1)$.time, 
+                y = plot_data(SGD_object_momentumm1_1)$abs_dist_from_par), col = "red")
+
+p2 <- adam_SGD_plots3[[2]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_1)$.time, 
+                y = plot_data(SGD_object_batchm2_1)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_1)$.time, 
+                y = plot_data(SGD_object_momentumm2_1)$abs_dist_from_par), col = "red")
+
+p3 <- adam_SGD_plots3[[3]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_1)$.time, 
+                y = plot_data(SGD_object_batchm3_1)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_1)$.time, 
+                y = plot_data(SGD_object_momentumm3_1)$abs_dist_from_par), col = "red")
+
+p4 <- adam_SGD_plots3[[4]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm1_2)$.time, 
+                y = plot_data(SGD_object_batchm1_2)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_2)$.time, 
+                y = plot_data(SGD_object_momentumm1_2)$abs_dist_from_par), col = "red")
+
+p5 <- adam_SGD_plots3[[5]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_2)$.time, 
+                y = plot_data(SGD_object_batchm2_2)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_2)$.time, 
+                y = plot_data(SGD_object_momentumm2_2)$abs_dist_from_par), col = "red")
+
+p6 <- adam_SGD_plots3[[6]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_2)$.time, 
+                y = plot_data(SGD_object_batchm3_2)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_2)$.time, 
+                y = plot_data(SGD_object_momentumm3_2)$abs_dist_from_par), col = "red")
+
+p7 <- adam_SGD_plots3[[7]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm1_3)$.time, 
+                y = plot_data(SGD_object_batchm1_3)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_3)$.time, 
+                y = plot_data(SGD_object_momentumm1_3)$abs_dist_from_par), col = "red")
+
+p8 <- adam_SGD_plots3[[8]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_3)$.time, 
+                y = plot_data(SGD_object_batchm2_3)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_3)$.time, 
+                y = plot_data(SGD_object_momentumm2_3)$abs_dist_from_par), col = "red")
+
+p9 <- adam_SGD_plots3[[9]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_3)$.time, 
+                y = plot_data(SGD_object_batchm3_3)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_3)$.time, 
+                y = plot_data(SGD_object_momentumm3_3)$abs_dist_from_par), col = "red")
+
+
+
+
+
+legend_grob <- grobTree(
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "black")),
+  textGrob("Adam", x = unit(0.1, "npc"), y = 0.55, just = "left"),
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "blue"), y = 0.4),
+  textGrob("Mini-batch", x = unit(0.1, "npc"), y = 0.45, just = "left"),
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "red"), y = 0.3),
+  textGrob("Momentum", x = unit(0.1, "npc"), y = 0.35, just = "left")
+)
+
+
+
+momentum_grid <- grid.arrange(arrangeGrob(p1, p2, p3, p4, p5, p6, p7, p8, p9, ncol = 3),
+                              legend_grob,
+                              widths = c(9, 0.5, 0.5),
+                              heights = c(9, 0.5, 0.5),
+                              top = textGrob("Distance to true parameters vs Time", gp = gpar(fontsize = 20, fontface = "bold")))
+
+
+grid.text(paste0("m = ", m1), x = unit(0.15, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.45, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.8, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.55, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.25, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+
+
+
+
+
+
+
 
 
 ---
