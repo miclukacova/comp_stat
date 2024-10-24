@@ -117,6 +117,35 @@ vanilla <- function(par, samp, gamma, grad, n, x, y, ...){
   return(par)
 }
 ```
+---
+###Implementation
+
+ - Implemented a tracer using `CSwR`:
+```{r}
+SGD_tracer <- tracer(c("par", "k"), Delta = 0) 
+```
+ 
+ - S3 object `SGD`
+ 
+  - Contains optimal parameters and trace
+  
+  - Plot, print and summary methods are implemented to ease comparisons and analysis.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Sim 1 - Done Michaelas way as of right now
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R", local = FALSE)
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R", local = FALSE)
+N <- 5000
+param <- parameters(2,5,1,2)
+data <- sim(param, N)
+x <- data$x
+y <- data$y
+```
+
+
+```{r}
+SGD(par0 = param$par, grad = grad, gamma = 0.01, x = x, y = y, true_par = param$par)
+```
 
 ---
 ###Sampling
@@ -1277,4 +1306,308 @@ grid.arrange(
   plot(bench_results2) + ggtitle("n = 1000"),
   nrow = 1
 )
+```
+
+---
+###Comparison for N large
+
+Convergence of the loss function against time
+```{r, echo=FALSE, warning=FALSE}
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R", local = FALSE)
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R", local = FALSE)
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R", local = FALSE)
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R", local = FALSE)
+```
+
+```{r, warning=FALSE, echo = FALSE}
+#Simulating data
+param <- parameters(2,5,1,2)
+sim1 <- sim(param, 100)
+sim2 <- sim(param, 1000)
+sim3 <- sim(param, 10000)
+start_p <- c(1,1,1,1)
+#Adjusting decayschedulers
+decaySGD <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.01)
+decayMB <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.001)
+decayMOM <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.001)
+
+##### Running the algorithms ########
+#Gradient descent
+gd1 <-  GD(par = start_p, H = H, x = sim1$x, t0 = 0.05, maxit = 150, y = sim1$y, true_par = param$par)
+gd2 <- GD(par = start_p, H = H, x = sim2$x, t0 = 0.05, maxit = 150, y = sim2$y, true_par = param$par)
+gd3 <- GD(par = start_p, H = H, x = sim3$x, t0 = 0.05, maxit = 150, y = sim3$y, true_par = param$par)
+d_gd1 <- plot_data(gd1)
+d_gd2 <- plot_data(gd2)
+d_gd3 <- plot_data(gd3)
+#Vanilla SGD
+sgd1 <- SGD(par0 = start_p, grad = grad, gamma = decaySGD, x = sim1$x, y = sim1$y, true_par = param$par)
+sgd2 <- SGD(par0 = start_p, grad = grad, gamma = decaySGD, x = sim2$x, y = sim2$y, true_par = param$par)
+sgd3 <- SGD(par0 = start_p, grad = grad, gamma = decaySGD, x = sim3$x, y = sim3$y, true_par = param$par)
+d_sgd1 <- plot_data(sgd1)
+d_sgd2 <- plot_data(sgd2)
+d_sgd3 <- plot_data(sgd3)
+#Minibatch
+mb1 <- SGD(par0 = start_p, grad = grad_mult, gamma = decayMB, epoch = batch, m = 25, x = sim1$x, y = sim1$y, true_par = param$par)
+mb2 <- SGD(par0 = start_p, grad = grad_mult, gamma = decayMB, epoch = batch, m = 25, x = sim2$x, y = sim2$y, true_par = param$par)
+mb3 <- SGD(par0 = start_p, grad = grad_mult, gamma = decayMB, epoch = batch, m = 25, x = sim3$x, y = sim3$y, true_par = param$par)
+d_mb1 <- plot_data(mb1)
+d_mb2 <- plot_data(mb2)
+d_mb3 <- plot_data(mb3)
+```
+
+
+```{r, warning=FALSE, echo = F}
+#Getting Christians code
+source("~/comp_stat/Christian/Assignment 4/Adaptive learning rate.R", local = FALSE)
+source("~/comp_stat/Christian/Assignment 4/Stochastic gradient descent.R", local = FALSE)
+```
+
+
+```{r, warning=FALSE, echo = FALSE}
+SGD_tracer <- tracer(c("par", "n"), Delta = 0)
+#Momentum
+mom1 <- SGD(par0 = start_p, grad = gradient, gamma = decaySGD,
+                       N = 100, epoch = momentum(), m = 25, maxiter = 150, sampler = sample,
+                       cb = SGD_tracer, x = sim1$x, y = sim1$y,
+                       true_par =  param$par)
+mom2 <- SGD(par0 = start_p, grad = gradient, gamma = decaySGD,
+                       N = 1000, epoch = momentum(), m = 25, maxiter = 150, sampler = sample,
+                       cb = SGD_tracer, x = sim2$x, y = sim2$y,
+                       true_par =  param$par)
+mom3 <- SGD(par0 = start_p, grad = gradient, gamma = decaySGD,
+                       N = 10000, epoch = momentum(), m = 25, maxiter = 150, sampler = sample,
+                       cb = SGD_tracer, x = sim3$x, y = sim3$y,
+                       true_par = param$par)
+d_mom1 <- plot_data(mom1)
+d_mom2 <- plot_data(mom2)
+d_mom3 <- plot_data(mom3)
+#Adam
+ad1 <- SGD(par0 = start_p, grad = gradient, gamma = decaySGD,
+                       N = 100, epoch = adam(), m = 25, maxiter = 150, sampler = sample,
+                       cb = SGD_tracer, x = sim1$x, y = sim1$y,
+                       true_par =  param$par)
+ad2 <- SGD(par0 = start_p, grad = gradient, gamma = decaySGD,
+                       N = 1000, epoch = adam(), m = 25, maxiter = 150, sampler = sample,
+                       cb = SGD_tracer, x = sim2$x, y = sim2$y,
+                       true_par =  param$par)
+ad3 <- SGD(par0 = start_p, grad = gradient, gamma = decaySGD,
+                       N = 10000, epoch = adam(), m = 25, maxiter = 150, sampler = sample,
+                       cb = SGD_tracer, x = sim3$x, y = sim3$y,
+                       true_par =  param$par)
+d_ad1 <- plot_data(ad1)
+d_ad2 <- plot_data(ad2)
+d_ad3 <- plot_data(ad3)
+```
+
+
+```{r, echo =F, warning=FALSE}
+#Plot theming
+my_color_scale <- scale_color_manual(
+   name = "Optimization Methods",
+  values = c("GD" = "hotpink4", "SGD" = "tan4", "MB" = "steelblue4", 
+             "Momentum" = "#4f7942", "Adam" = "coral4")
+)
+
+my_theme <-   theme(
+    text = element_text(size = 16),  # Change the base text size
+    plot.title = element_text(size = 18),  # Title size
+    axis.title = element_text(size = 16),  # Axis titles size
+    axis.text = element_text(size = 14),  # Axis text size
+    legend.title = element_text(size = 18),  # Legend title size
+    legend.text = element_text(size = 16),  # Legend text size
+    legend.position = "none",  # Keep the legend hidden
+     line = element_line(linewidth = 2.5)
+  )
+```
+
+
+```{r, echo = FALSE, fig.retina = 2, fig.width = 16, fig.height = 7, class = "center", warning = FALSE}
+l_time_1 <- ggplot(d_gd1, aes(x = .time, y = loss, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 100", x = "Time", y = "Loss") + 
+  geom_line(aes (y = d_sgd1$loss, color = "SGD")) +
+  geom_line(aes (y = d_mb1$loss, color = "MB")) +
+  geom_line(aes (y = d_mom1$loss, color = "Momentum")) +
+  geom_line(aes (y = d_ad1$loss, color = "Adam")) +
+  my_color_scale +
+  my_theme
+               
+l_time_2 <- ggplot(d_gd2, aes(x = .time, y = loss, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 1000", x = "Time", y = "Loss") + 
+  geom_line(aes (y = d_sgd2$loss, color = "SGD")) +
+  geom_line(aes (y = d_mb2$loss, color = "MB")) +
+  geom_line(aes (y = d_mom2$loss, color = "Momentum")) +
+  geom_line(aes (y = d_ad2$loss, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+l_time_3 <- ggplot(d_gd3, aes(x = .time, y = loss, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 10.000", x = "Time", y = "Loss") + 
+  geom_line(aes (y = d_sgd3$loss, color = "SGD")) +
+  geom_line(aes (y = d_mb3$loss, color = "MB")) +
+  geom_line(aes (y = d_mom3$loss, color = "Momentum")) +
+  geom_line(aes (y = d_ad3$loss, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+legend_plot <- ggplot(d_gd3, aes(x = .time, y = loss, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 10.000", x = "Time", y = "Loss") + 
+  geom_line(aes (y = d_sgd3$loss, color = "SGD")) +
+  geom_line(aes (y = d_mb3$loss, color = "MB")) +
+  geom_line(aes (y = d_mom3$loss, color = "Momentum")) +
+  geom_line(aes (y = d_ad3$loss, color = "Adam")) +
+  my_color_scale +
+  theme(
+    text = element_text(size = 16),  # Change the base text size
+    plot.title = element_text(size = 18, face = "bold"),  # Title size
+    axis.title = element_text(size = 14),  # Axis titles size
+    axis.text = element_text(size = 12),  # Axis text size
+    legend.title = element_text(size = 14),  # Legend title size
+    legend.text = element_text(size = 12))
+
+legend_l <- cowplot::get_legend(legend_plot)
+
+grid.arrange(l_time_1, l_time_2, l_time_3, legend_l, nrow = 1)
+```
+
+---
+###Comparison for N large
+
+Convergence of $|H(\theta') - H(\theta)|$ against time
+```{r, echo = FALSE, fig.retina = 2, fig.width = 16, fig.height = 7, class = "center", warning = FALSE}
+H_time_1 <- ggplot(d_gd1, aes(x = .time, y = H_distance, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 100", x = "Time", y = expression("|H("*theta^"'"*") - H("*theta*")|")) + 
+  geom_line(aes (y = d_sgd1$H_distance, color = "SGD")) +
+  geom_line(aes (y = d_mb1$H_distance, color = "MB")) +
+  geom_line(aes (y = d_mom1$H_distance, color = "Momentum")) +
+  geom_line(aes (y = d_ad1$H_distance, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+H_time_2 <- ggplot(d_gd2, aes(x = .time, y = H_distance, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 1000", x = "Time", y = expression("|H("*theta^"'"*") - H("*theta*")|")) + 
+  geom_line(aes (y = d_sgd2$H_distance, color = "SGD")) +
+  geom_line(aes (y = d_mb2$H_distance, color = "MB")) +
+  geom_line(aes (y = d_mom2$H_distance, color = "Momentum")) +
+  geom_line(aes (y = d_ad2$H_distance, color = "Adam")) +
+  my_color_scale +
+  xlim(0, 0.25)+
+  my_theme
+
+H_time_3 <- ggplot(d_gd3, aes(x = .time, y = H_distance, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 10.000", x = "Time", y = expression("|H("*theta^"'"*") - H("*theta*")|")) + 
+  geom_line(aes (y = d_sgd3$H_distance, color = "SGD")) +
+  geom_line(aes (y = d_mb3$H_distance, color = "MB")) +
+  geom_line(aes (y = d_mom3$H_distance, color = "Momentum")) +
+  geom_line(aes (y = d_ad3$H_distance, color = "Adam")) +
+  my_color_scale +
+  xlim(0, 2)+
+  my_theme
+
+grid.arrange(H_time_1, H_time_2, H_time_3, legend_l, nrow = 1)
+```
+
+---
+###Comparison for N large
+
+Convergence of the loss function against epochs
+```{r, echo = FALSE, fig.retina = 2, fig.width = 16, fig.height = 7, class = "center", warning = FALSE}
+d_gd1$iterations <- 1:nrow(d_gd1)
+d_gd2$iterations <- 1:nrow(d_sgd2)
+d_gd3$iterations <- 1:nrow(d_sgd3)
+
+l_it_1 <- ggplot(d_gd1, aes(x = iterations, y = loss, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 100", x = "epoch", y = "Loss") + 
+  geom_line(aes (y = d_sgd1$loss, color = "SGD")) +
+  geom_line(aes (y = d_mb1$loss, color = "MB")) +
+  geom_line(aes (y = d_mom1$loss, color = "Momentum")) +
+  geom_line(aes (y = d_ad1$loss, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+               
+l_it_2 <- ggplot(d_gd2, aes(x = iterations, y = loss, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 1000", x = "epoch", y = "Loss") + 
+  geom_line(aes (y = d_sgd2$loss, color = "SGD")) +
+  geom_line(aes (y = d_mb2$loss, color = "MB")) +
+  geom_line(aes (y = d_mom2$loss, color = "Momentum")) +
+  geom_line(aes (y = d_ad2$loss, color = "Adam")) +
+  my_color_scale +
+  xlim(0, 10)+
+  my_theme
+
+l_it_3 <- ggplot(d_gd3, aes(x = iterations, y = loss, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 10.000", x = "epoch", y = "Loss") + 
+  geom_line(aes (y = d_sgd3$loss, color = "SGD")) +
+  geom_line(aes (y = d_mb3$loss, color = "MB")) +
+  geom_line(aes (y = d_mom3$loss, color = "Momentum")) +
+  geom_line(aes (y = d_ad3$loss, color = "Adam")) +
+  my_color_scale +
+  xlim(0,10)+
+  my_theme
+
+grid.arrange(l_it_1, l_it_2, l_it_3, legend_l, nrow = 1)
+```
+
+---
+###Comparison for N large
+
+Convergence of $|H(\theta') - H(\theta)|$ against epochs
+```{r, echo = FALSE, fig.retina = 2, fig.width = 16, fig.height = 7, class = "center", warning = FALSE}
+H_it_1 <- ggplot(d_gd1, aes(x = iterations, y = H_distance, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 100", x = "epoch", y = "H_distance") + 
+  geom_line(aes (y = d_sgd1$H_distance, color = "SGD")) +
+  geom_line(aes (y = d_mb1$H_distance, color = "MB")) +
+  geom_line(aes (y = d_mom1$H_distance, color = "Momentum")) +
+  geom_line(aes (y = d_ad1$H_distance, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+               
+H_it_2 <- ggplot(d_gd2, aes(x = iterations, y = H_distance, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 1000", x = "epoch", y = "H_distance") + 
+  geom_line(aes (y = d_sgd2$H_distance, color = "SGD")) +
+  geom_line(aes (y = d_mb2$H_distance, color = "MB")) +
+  geom_line(aes (y = d_mom2$H_distance, color = "Momentum")) +
+  geom_line(aes (y = d_ad2$H_distance, color = "Adam")) +
+  my_color_scale +
+  xlim(0, 10)+
+  my_theme
+
+H_it_3 <- ggplot(d_gd3, aes(x = iterations, y = H_distance, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 10.000", x = "epoch", y = "H_distance") + 
+  geom_line(aes (y = d_sgd3$H_distance, color = "SGD")) +
+  geom_line(aes (y = d_mb3$H_distance, color = "MB")) +
+  geom_line(aes (y = d_mom3$H_distance, color = "Momentum")) +
+  geom_line(aes (y = d_ad3$H_distance, color = "Adam")) +
+  my_color_scale +
+  xlim(0,10)+
+  my_theme
+
+grid.arrange(H_it_1, H_it_2, H_it_3, legend_l, nrow = 1)
 ```
