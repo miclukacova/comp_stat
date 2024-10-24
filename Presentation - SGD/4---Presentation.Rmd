@@ -50,6 +50,7 @@ library(tidyverse)
 library(profvis)
 library(bench)
 library(knitr)
+knitr::opts_chunk$set(fig.retina = 2)
 theme_set(theme_bw() + theme(text = element_text(size = 13)))
 ```
 ###Introduction
@@ -363,33 +364,31 @@ Benchmarking the RCPP implementation against the R implementation
 ```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 sim1 <- data[1:100,]
 
-bench_results <- bench::mark(
+bench_results1 <- bench::mark(
     R = sgd(c(3,3,3,3), grad = gradient, N = 100, gamma = 0.01, x = sim1$x, y = sim1$y),
     Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 100, gamma = 0.01, x = sim1$x, y = sim1$y),
     iterations = 100,
     check = F
 )
-plot(bench_results)
+p1 <- plot(bench_results1) + ggtitle("n = 100")
+
+sim2 <- data[1:1000,]
+
+bench_results2 <- bench::mark(
+    R = sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim2$x, y = sim2$y),
+    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 1000, gamma = 0.01, x = sim2$x, y = sim2$y),
+    iterations = 10,
+    check = F
+)
+p2 <- plot(bench_results2) + ggtitle("n = 100")
+
+grid.arrange(p1, p2, nrow = 1)
 ```  
 <br>
 ```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
 knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
 ```
 
----
-```{r,echo=T, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
-sim1 <- data[1:1000,]
-
-bench_results <- bench::mark(
-    R = sgd(c(3,3,3,3), grad = gradient, N = 1000, gamma = 0.01, x = sim1$x, y = sim1$y),
-    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, N = 1000, gamma = 0.01, x = sim1$x, y = sim1$y),
-    iterations = 10,
-    check = F
-)
-plot(bench_results)
-
-knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results[,2:9]))
-```
 
 ---
 ### Decay Schedule
@@ -772,7 +771,7 @@ momentum <- function() {
 ```
 
 
-```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center'}
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center'}
 SGD_object_momentumm1_1 <- SGD(par0 = init_par, grad = gradient, gamma = rate1,
                        N = N, epoch = momentum(), m = m1, maxiter = iterations, sampler = sample,
                        cb = SGD_tracer, x = x, y = y,
@@ -814,7 +813,7 @@ SGD_object_momentumm3_3 <- SGD(par0 = init_par, grad = gradient, gamma = rate3,
 ```
 
 
-```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center', include = F}
 momentum_SGD_objects <- list(SGD_object_momentumm1_1, SGD_object_momentumm2_1, SGD_object_momentumm3_1,
                              SGD_object_momentumm1_2, SGD_object_momentumm2_2, SGD_object_momentumm3_2,
                              SGD_object_momentumm1_3, SGD_object_momentumm2_3, SGD_object_momentumm3_3)
@@ -841,7 +840,7 @@ grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "n
 grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
 ```
 
-```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center', include = F}
 # Store all plots in a list
 momentum_SGD_plots <- lapply(momentum_SGD_objects, create_SGD_plot, plot_num = 3)
 
@@ -1011,9 +1010,7 @@ grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "
 
 ---
 
-###Comparing convergence of the algorithms
-
-```{r echo=F, warning  = FALSE, message = FALSE, fig.width=11, fig.height=9, fig.align='center'}
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center'}
 
 p1 <- adam_SGD_plots[[1]] +
     geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
@@ -1085,7 +1082,7 @@ momentum_grid <- grid.arrange(arrangeGrob(p1, p2, p3, p4, p5, p6, p7, p8, p9, nc
                               legend_grob,
                               widths = c(9, 0.5, 0.5),
                               heights = c(9, 0.5, 0.5),
-                              top = textGrob("Loss vs Time", gp = gpar(fontsize = 20, fontface = "bold")))
+                              top = textGrob("Comparing Convergence of the Algorithms - Loss vs Time", gp = gpar(fontsize = 20, fontface = "bold")))
 
 
 grid.text(paste0("m = ", m1), x = unit(0.15, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
@@ -1207,7 +1204,7 @@ gd_grid <- function(
     t0 = 5e-2,
     maxit = 1200,
     cb = NULL,
-    epsilon = 1e-2,
+    epsilon = 1e-3,
     beta = 0.8,
     alpha = 0.1,
     x,
