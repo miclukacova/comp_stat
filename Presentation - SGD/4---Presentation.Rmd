@@ -3,6 +3,7 @@ title: "Log-logistic Dose-response Curves"
 author: 
 - "Christian Rubjerg Hejstvig-Larsen (brf337)"
 - "Dina Gyberg Jensen (vbz248)"
+- "Michaela Lukacova (dns525)"
 institute: "University of Copenhagen"
 date: '`r Sys.Date()`'
 output:
