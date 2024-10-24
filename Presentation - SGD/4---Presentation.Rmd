@@ -8,7 +8,7 @@ institute: "University of Copenhagen"
 date: '`r Sys.Date()`'
 output:
   xaringan::moon_reader:
-    css: xaringan-themer.css
+    css: themer-new.css
     nature:
       slideNumberFormat: "%current%"
       highlightStyle: github
@@ -51,7 +51,14 @@ library(profvis)
 library(bench)
 library(knitr)
 knitr::opts_chunk$set(fig.retina = 2)
-theme_set(theme_bw() + theme(text = element_text(size = 13)))
+theme_set(
+  theme_bw(base_size = 18, base_family = 'Noto Sans') +  # Set base font size and family
+    theme(
+      text = element_text(size = 15),           # Adjust text size
+      axis.line = element_line(size = 4),       # Set axis line thickness (use `size` not `linewidth`)
+      panel.grid = element_line(size = 0.5)     # Set grid line thickness
+    )
+)
 ```
 ###Introduction
 Objective is to use stochastic optimization to estimate the parameters of a log-logistic dose-response model using non-linear least squares estimation. That is obtaining the parameters $\alpha, \beta, \gamma, \rho$ that minimize the loss function:
@@ -595,7 +602,8 @@ batch <- function(
   for (j in 0:(M - 1)) {
     i <- samp[(j * m + 1):(j * m + m)]        # Sample m indices
     par <- par - gamma * grad(par, i, ...)    # Update parameter estimates
-  } return(par)
+  } 
+  return(par)
 }
 ```
 
@@ -1009,7 +1017,7 @@ grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "
 
 ---
 
-```{r echo=F, warning  = FALSE, message = FALSE, fig.width=16, fig.height=6.5, fig.align='center'}
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=16, fig.height=9, fig.align='center'}
 
 p1 <- adam_SGD_plots[[1]] +
     geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
@@ -1096,7 +1104,7 @@ grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.25, "
 
 ---
 
-```{r echo=F, warning  = FALSE, message = FALSE, fig.width=16, fig.height=6.5, fig.align='center'}
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=16, fig.height=9, fig.align='center'}
 
 p1 <- adam_SGD_plots3[[1]] +
     geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
@@ -1410,7 +1418,8 @@ my_theme <-   theme(
     legend.title = element_text(size = 18),  # Legend title size
     legend.text = element_text(size = 16),  # Legend text size
     legend.position = "none",  # Keep the legend hidden
-     line = element_line(linewidth = 2.5)
+     line = element_line(linewidth = 4) +
+      theme_bw()
   )
 ```
 
