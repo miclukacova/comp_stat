@@ -1180,7 +1180,7 @@ gd_grid <- function(
     t0 = 1e-2,
     maxit = 1200,
     cb = NULL,
-    epsilon = 1e-2,
+    epsilon = 5e-2,
     beta = 0.8,
     alpha = 0.1,
     x,
@@ -1231,7 +1231,7 @@ gd_grid <- function(
 ```
 
 ---
-## Benchmarking the two GD versions
+### Benchmarking the two GD versions
 
 We sample data from a grid, we use the same true parametes $(2,5,1,2)$, and sample the $x$'s from the grid. 
 
@@ -1250,32 +1250,31 @@ all(grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2, y = y2) -
 
 Comparing grid version with regular GD by benchmarking with 100 point
 
-```{r, warning = FALSE, message = FALSE, echo = FALSE}
+```{r, warning = FALSE, message = FALSE, echo = FALSE, fig.width=16, fig.height=4, fig.align='center'}
 x_bench <- x2[1:100]
 y_bench <- y2[1:100]
 
-bench_results <- bench::mark(
+bench_results1 <- bench::mark(
     "GD" = grad_desc(par = sv1, grad = grad_gd, H = H, x = x2, y = y2),
     "Grid GD"= gd_grid(par = sv1, x = x2, y = y2),
     iterations = 100,
     check = F
 )
-plot(bench_results)
-```
 
----
 
-Comparing grid version with regular GD with 500 points. 
-
-```{r, warning = FALSE, message = FALSE, echo = FALSE}
 x_bench <- x2[1:1000]
 y_bench <- y2[1:1000]
 
-bench_results <- bench::mark(
+bench_results2 <- bench::mark(
     "GD" = grad_desc(par = sv1, grad = grad_gd, H = H, x = x2, y = y2),
     "Grid GD"= gd_grid(par = sv1, x = x2, y = y2),
     iterations = 100,
     check = F
 )
-plot(bench_results)
+
+grid.arrange(
+  plot(bench_results1) + ggtitle("n = 100"),
+  plot(bench_results2) + ggtitle("n = 1000"),
+  nrow = 1
+)
 ```
