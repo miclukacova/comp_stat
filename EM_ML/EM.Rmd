@@ -15,7 +15,20 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r source, include=FALSE}
-source("~/Desktop/Uni/5aar/CompStat/Assignments/EM/EM_source.R")
+##################################################
+################### Packages #####################
+##################################################
+
+library(bench)
+library(ggplot2)
+library(tidyverse)
+library(testthat)
+library(profvis)
+library(gridExtra)
+theme_set(theme_bw())
+source("~/comp_stat/EM_ML/source_code/MLE.R")
+source("~/comp_stat/EM_ML/source_code/EM.R")
+source("~/comp_stat/EM_ML/source_code/parameters.R")
 ```
 
 # The marginal distribution of $X$ is the $t$-distribution
