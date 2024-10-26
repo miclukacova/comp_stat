@@ -25,15 +25,6 @@ source("~/Desktop/Uni/5aar/CompStat/Assignments/Smoothing_source.R")
 
 # Kernel density estimators
 
-The kernel density estimators approximate the unknown density of data points with the function
-
-$$ \hat{f}(x) = \frac{1}{hN} \sum_{j=1}^N K\left(\frac{x-x_j}{h}\right)$$
-For a given kernel $K: \mathbb{R} \rightarrow \mathbb{R}$ and bandwidth parameter $h$. 
-
-In our implementations we will use the Epanechnikov kernel. 
-
-$$K(x)=\frac{3}{4}\left(1-x^2\right) 1_{[-1,1]}(x)$$
-
 One issue is how should we select the bandwidth?
 
 ## Bandwidth selection
