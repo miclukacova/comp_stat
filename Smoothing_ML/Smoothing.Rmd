@@ -14,9 +14,6 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r source, include=FALSE}
-source("~/Desktop/Uni/5aar/CompStat/Assignments/Smoothing_source.R")
-```
 
 *Implement a kernel density estimator using the Epanechnikov kernel, and implement one or more bandwidth selection algorithms using either AMISE plug-in methods or cross-validation methods. Test the implementation and compare the results with the results of using density() in R.*
 
@@ -242,8 +239,8 @@ dens_bench <- bench::press(
   k = 2^(5:10),
   {
     bench::mark(
-      "r density" = density(y[1:k], op_bw),
-      "Naive" = kern_dens_naive(y[1:k], op_bw),
+      "r density" = density(y[1:k], 0.5),
+      "Naive" = kern_dens1(y[1:k], 0.5),
       check = FALSE
     )
   }
@@ -251,6 +248,10 @@ dens_bench <- bench::press(
 
 dens_bench[c("expression", "k", "min", "median", "itr/sec", "n_gc")]
 autoplot(dens_bench)
+
+profvis::profvis({
+  kern_dens1(y, 0.5)
+})
 ```
 
 Our implementation is much slower. 
@@ -272,7 +273,7 @@ The binned density estimator is an alteration of the previous density estimator.
 $$
 \hat{f}(x) = \frac{1}{hN} \sum_{i=1}^B n_j K\left(\frac{x-c_j}{h}\right)
 $$
-The function bins the observations into $B$ equal length bins spanning the length of $x$ observations. The number of observations in each bin is $n_j$. $c_j$ is the center of each bin. The computational efficiency is achieved by, instead of computing $K$ in each data point, we only compute $K$ in each centerpoint, and then multiply by the number of observations in that bin. The concern could be that we lose accuracy, but as we'll see, this is not a problem. 
+The function bins the observations into $B$ equal length bins spanning the length of the $x$ observations. The number of observations in each bin is $n_j$. $c_j$ is the center of each bin. The computational efficiency is achieved by, instead of computing $K$ in each data point, we only compute $K$ in each centerpoint, and then multiply by the number of observations in that bin. The concern could be that we lose accuracy, but as we'll see, this is not a problem. 
 
 We check how the binned kernel density estimator approximates data with an arbitrary bandwidth parameter. 
 
