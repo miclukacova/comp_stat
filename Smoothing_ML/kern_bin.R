@@ -11,3 +11,5 @@ kern_bin <- function(x, l, u, B) {
   }
   w / sum(w)
 }
+
+

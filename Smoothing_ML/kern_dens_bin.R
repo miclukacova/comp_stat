@@ -2,11 +2,11 @@
 # Binned kernel estimator
 #-------------------------------------------------------------------------------
 
-kern_dens_bin <- function(x, h, m = 512, B = 100, norm = TRUE) {
+kern_dens_bin <- function(x, h, m = 512, B = 100, norm = TRUE, bin = kern_bin) {
   rg <- range(x)
   delta <- (rg[2] - rg[1]) / (B - 1)
   c <- seq(rg[1] + delta/2, rg[2] - delta/2, length.out = B)
-  n <- kern_bin(x, rg[1], rg[2], B)
+  n <- bin(x, rg[1], rg[2], B)
   
   xx <- seq(rg[1] - 3 * h, rg[2] + 3 * h, length.out = m)
   y <- numeric(m)

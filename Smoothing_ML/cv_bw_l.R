@@ -11,7 +11,7 @@ cv_bw_l <- function(x, k = 5, h = seq(0.01, 2, by = 0.01)) {
   bw_l <- numeric(length(h))
   
   # the kernel density estimates
-  f_hat_i <- numeric(length(x))
+  f_hat_i <- numeric(n)
   
   for(j in seq_along(h)){
     # Calculating CV density estimates
