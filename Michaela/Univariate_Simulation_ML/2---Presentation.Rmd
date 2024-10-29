@@ -47,18 +47,27 @@ library(bench)
 library(tidyverse)
 library(profvis)
 library(bench)
+library(Rcpp)
 library(knitr)
 library(testthat)
 knitr::opts_chunk$set(fig.retina = 2)
 theme_set(
-  theme_bw(base_size = 18, base_family = 'Noto Sans') +  # Set base font size and family
+  theme_bw(base_size = 18) +  # Set base font size and family
     theme(
       text = element_text(size = 15),           # Adjust text size
-      axis.line = element_line(size = 4),       # Set axis line thickness (use `size` not `linewidth`)
-      panel.grid = element_line(size = 0.5)     # Set grid line thickness
     )
 )
 ```
+
+```{r source, echo = FALSE, warning=FALSE, message=FALSE}
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/f_star.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/rejec_sampler.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Smoothing_ML/my_sample.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/rejec_samp_vec.R")
+Rcpp::sourceCpp("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/f_star_rcpp.cpp")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/piecewise_linear.R")
+```
+
 
 ### Introduction and outline
 
@@ -67,55 +76,522 @@ theme_set(
 - We wish to sample from the distribution on $[0, \infty)$ with density function 
 $$f(y) \propto \prod_{i=1}^{100} \exp \left( yx_i z_i - \exp(yx_i) \right) =  \exp \left( y\left(\sum_{i=1}^{100}x_i z_i\right) - \sum_{i=1}^{100}\exp(yx_i) \right) = f^*(y)$$
 - We wish to do this by
-  + Finding a Gaussian envelope of $f$  
-  + Implement rejection sampling from the distribution with density $f$ using this envelope
-  
-- We will further implement the adaptive rejection sampling algorithm that uses a piecewise log-affine envelope
+  + Implementing rejection sampling from the distribution with density $f$
+  + We will use first a Gaussian envelope
+  + Then we will implement an adaptive rejection sampling algorithm that uses a piecewise log-affine envelope
 
 - And we will compare of the two methods
 
 ---
 ### The Gaussian Envelope
 
-To do rejection sampling one needs an envelope. The envelope should satisfy
+To do rejection sampling one needs an envelope, we wish to use a Gaussian envelope
 
+$$g(y) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left( - \frac{(y- \mu)^2}{2\sigma^2}\right)$$
 
+We start out by plotting the function $f^*$ that we are given
 
-We wish to use a Gaussian envelope, which means that We start out by plotting the function $f^*$ that we are given.  
-
-```{r, echo = FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
 ggplot() +
   geom_function(fun = f_star_vec) +  
   labs(x = expression(y),
        y = expression({f^{"*"}}(y)))
 ```
 
+We can determine the proportionality constant $f^*(y) = c f(y)$ by integrating the function $f^*$. 
+
+```{r, echo = FALSE}
+c_true <- 1 / integrate(f_star_vec, lower = 0, upper = Inf, abs.tol = 10^(-60))$value
+c_true %>% kable(col.names = "c") %>% kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
+
 ---
-###
-
-
-$$g(y) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left( - \frac{(y- \mu)^2}{2\sigma^2}\right)$$
+### Optimal mean parameter
 - The Gaussian density has two parameters, the mean $\mu$ and the variance $\sigma^2$ 
-- The envelope should be as tight as possible
-  + Due to symmetry we will pick the me we use the max of the $f^*$ function as the mean parameter
 
-Bel
+- The envelope should be as tight as possible
+
+  + Due to symmetry we will pick the max of the $f^*$ function as the mean parameter
 
 ```{r, echo = FALSE}
 mu_opt <- optimize(function(y) -f_star(y), interval = c(0.2, 0.3))$minimum
-mu_opt
+mu_opt %>% kable(col.names = "mu") %>% kableExtra::kable_styling(full_width = FALSE, position = "center")
 ```
+
+- Still another parameter to determine $\sigma$
+
+  + Can be determined by considering the acceptance rates associated to the different variance parameters
+  
+  + And picking the variance that maximizes the acceptance rate. 
+  
+---
+### Optimal variance parameter
+
+The envelope should fulfill
+
+$$f^*(y) \alpha' \leq g(y)$$
+
+Rearranging the above equation 
+
+$$ \alpha' \leq \frac{g(y)}{f^*(y)}$$
+
+Thus we for a specific $g$ find $\alpha'$ by
+
+$$\alpha' = \min \lbrace \frac{g(y)}{f^*(y)} \rbrace$$
+
+We have the relationship 
+
+$$\alpha' = c \alpha$$
+
+where $c$ is the proportionality constant between $f$ and $f^*$. Finding the largest $\alpha$ is equivalent to finding the largest $\alpha'$! 
+
+We pick
+
+$$\sigma_{opt} = \arg \max_{\sigma} \min_{y \in \RR_+} \left\{ \frac{g(y)}{f^*(y)} \right\}$$
+
+---
+### Optimal variance parameter
+
+One can find the second derivative of the ratio $\frac{g(y)}{f^*(y)}$, and discover that this function is not convex. Below we plot the ratio for $\sigma = 0.05$. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+ggplot() +
+  geom_function(fun = plot_ratio) +
+  xlim(0.01,0.6)+  
+  labs(x = expression(y),
+       y = "ratio",
+       title =  expression("Ratio for " * sigma * " = 0.05"))
+```
+
+So when we look for the minimum of the ratio, we might end up in a local minimum. We will, since this is a relatively small problem, resort to a simple way of finding the infimum, namely taking the minimum over a grid of points. This minimum will be our $\alpha'$. 
+
+---
+### Optimal variance parameter
+
+We for a sequence of $\sigma$ values ranging from $0.01$ to $0.2$ determine the minimum of the ratio $\frac{g(y)}{f^*(y)}$ for a sequence of $y$ values ranging from $0.01$ to $0.2$.
+
+```{r, echo = FALSE}
+sigma_vals <- seq(0.01, 0.2, length.out = 10^3)
+y_vals <- seq(0.01, 0.5, length.out = 10^3)
+alpha_prime <- numeric(10^4)
+
+for(i in seq_along(sigma_vals)){
+  ratio_vals <- ratio_vec(y_vals, mu = mu_opt, sigma = sigma_vals[i])
+  alpha_prime[i] <- min(ratio_vals)
+}
+```
+
+We find the largest $\alpha'$
+
+```{r, echo = FALSE}
+max_i <- which(alpha_prime == max(alpha_prime))
+alpha_p <- alpha_prime[max_i]
+alpha_p %>% kable(col.names = "alpha prime ") %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
+And the corresponding $\sigma$ value.
+```{r, echo = FALSE}
+sigma_opt <- sigma_vals[max_i]
+sigma_opt %>% kable(col.names = "sigma") %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+
+# Envelope
+g <- function(y) dnorm(y, mean = mu_opt, sd = sigma_opt)
+```
+
+Now we have our Gaussian envelope!
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+f_star_alpha <- function(y) f_star_vec(y) * alpha_p
+
+ggplot() +
+  geom_function(fun = f_star_alpha, aes(color = "Prop. density")) + 
+  geom_function(fun = g, aes(color = "Envelope"), linetype = "dashed")+
+  labs(x = expression(y),
+       y = expression(density))+
+  scale_color_manual(values = c("Prop. density" = "purple3", "Envelope" = "hotpink"))
+```
+
+---
+
+We test that the envelope indeed covers $f^*$ for a grid of $y$ values between $0$ and $1$. By plotting the differences
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+ys <- seq(0.01, 0.7, by = 0.001)
+diffs <- g(ys) -  f_star_alpha(ys)
+
+ggplot(tibble(x = ys, y = diffs), aes(x = x, y = y)) +
+  geom_line(color = "purple3") +
+  labs(x = "y", y = "Difference")
+```
+
+And testing that the differences are non-negative using `test_that`
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+test_that("The envelope covers the proportional target density", {
+  expect_true(all(f_star_alpha(ys) <= g(ys)))
+})
+```
+---
+### Rejection sampling using Gaussian envelope
+
+We implement a naive rejection sampler `rs_gauss`.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+rs_gauss <- gauss_rej(mu_opt, sigma_opt, alpha_p, f_star)
+```
+
+And create an S3 class `sampling_object`. With a print method
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+samp0 <- my_sample(n = 10^5, sampler = rs_gauss)
+samp0
+```
+
+Note that we can estimate the target distribution by
+
+$$f(y) = cf^*(y)  = \frac{\alpha'}{\hat{\alpha}} f^*(y)$$
+
+Using the estimated acceptance rate $\hat{\alpha}$
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+c <- alpha_p /samp0$Accept
+f_est <- function(y) f_star_vec(y) * c
+f_true <- function(y) f_star_vec(y) * c_true
+```
+---
+### Rejection sampling using Gaussian envelope
+
+A historgram of the sample distribution is plotted together with the estimated density and the true density by the `plot` method
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+plot(samp0)+
+  geom_function(fun = f_est, aes(color = "Estimated f"))+
+  geom_function(fun = f_true, aes(color = "True f"))+
+  scale_color_manual(values = c("Estimated f" = "purple3", "True f" = "steelblue"))
+```
+The estimated density and the true density are very close to each other. So close that we cannot see the difference. 
+
+---
+### Optimizing
+
+```{r, echo = FALSE}
+profvis::profvis({
+  
+  gauss_rej <- function(mu, sigma, alpha, f) {
+  sampler <-function(n){
+      y <- numeric(n)
+      counter <- 0
+      for (i in 1:n) {
+        reject <- TRUE
+        while (reject) {
+          y0 <- rnorm(1, mu, sigma)
+          u <- runif(1)
+          reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha
+          counter <- counter + 1
+        }
+        y[i] <- y0
+      }
+      return(list("sample" = y, "accept" = n / counter))
+    }
+    return(sampler)
+  }
+
+  rs_gauss <- gauss_rej(mu_opt, sigma_opt, alpha_p, f_star)
+  
+  rs_gauss(10^5)
+})
+```
+
+---
+### Optimizing
+
+We improve by implementing a vectorized version. Instead of sampling one pair of variables at a time, the vectorized version samples $m$ pairs of variables at a time, until we reach the desired random sample size. The number $m$ is adapted for each iteration, such that the number of proposals is equal to the missing number of samples times the estimated acceptance rate. 
+
+```{r}
+vec_f_random <- function(m, mu, sigma, f, alpha_p) {
+  y <- rnorm(m, mu, sigma)
+  u <- runif(m)
+  accept <- u <= f(y) / dnorm(y, mean = mu, sd = sigma) * alpha_p
+  
+  return("Sample" = y[accept])
+}
+
+rng_wrapper <- function(rng, fact = 1.05, M_min = 100) {
+  function(N, ...) {
+    j <- 0     # The number of iterations
+    l <- 0     # The number of accepted samples
+    counter <- 0 # The number of proposals
+    
+    x <- list()
+    
+    while (l < N) {
+      j <- j + 1 
+      M <- floor(max(fact * (N - l), M_min))
+      x[[j]] <- rng(M, ...)
+      counter <- counter + M
+      l <- l + length(x[[j]])
+      # Update 'fact' by estimated acceptance probability l / n
+      if (j == 1) fact <- fact * N / l
+    }
+    return(list("sample" = unlist(x)[1:N], "accept" = length(unlist(x)) / counter))
+  }
+}
+```
+
+---
+### Check of the vectorized version
+
+```{r, echo = FALSE}
+inside_func <- function(n) vec_f_random(n, mu_opt, sigma_opt, f_star_vec, alpha_p)
+rs_gauss_vec <- rng_wrapper(inside_func)
+```
+
+We create a new `sampling_object`. 
+
+```{r, echo = FALSE}
+samp1 <- my_sample(n = 10^5, sampler = rs_gauss_vec)
+samp1
+```
+
+And create the same plot as before in order to check whether the drawn samples result in the desired density
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+c <- alpha_p /samp1$Accept
+f_est <- function(y) f_star_vec(y) * c
+```
+
+This estimate is plotted together with the sample distribution
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+plot(samp1)+
+  geom_function(fun = f_est, aes(color = "Estimated f"))+
+  geom_function(fun = f_true, aes(color = "True f"))+
+  scale_color_manual(values = c("Estimated f" = "purple3", "True f" = "steelblue"))
+```
+
+Again we cannot distinguish between the estimated density and the true density.
+
+---
+### Profiling
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+profvis::profvis({
+  vec_f_random <- function(m, mu, sigma, f, alpha_p) {
+    y <- rnorm(m, mu, sigma)
+    u <- runif(m)
+    accept <- u <= f(y) / dnorm(y, mean = mu, sd = sigma) * alpha_p
+    
+    return("Sample" = y[accept])
+  }
+  
+  rng_wrapper <- function(rng, fact = 1.05, M_min = 100) {
+    function(N, ...) {
+      j <- 0     # The number of iterations
+      l <- 0     # The number of accepted samples
+      counter <- 0 # The number of proposals
+      
+      x <- list()
+      
+      while (l < N) {
+        j <- j + 1 
+        M <- floor(max(fact * (N - l), M_min))
+        x[[j]] <- rng(M, ...)
+        counter <- counter + M
+        l <- l + length(x[[j]])
+        # Update 'fact' by estimated acceptance probability l / n
+        if (j == 1) fact <- fact * N / l
+      }
+      return(list("sample" = unlist(x)[1:N], "accept" = length(unlist(x)) / counter))
+    }
+  }
+
+  rs_gauss_vec(10^5)
+
+})
+```
+
+---
+### Benchmarking
+
+As a last attempt at optimizing we implement the rejection sampling procedure with the Gaussian envelope in Rcpp. We again check that the random sampler produces reasonable outputs. 
+
+```{r}
+samp_rcpp <- gauss_rej_cpp(10^5, mu_opt, sigma_opt, alpha_p, x, sum1)
+
+samp_rcpp$accept %>% kable(col.names = "accept") %>% kableExtra::kable_styling(full_width = FALSE, position = "center")
+
+ggplot(data = tibble(y = samp_rcpp$sample)) + 
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = y, y = ..density..)) +
+  geom_function(fun = f_true, aes(color = "True f"))+
+  scale_color_manual(values = c("True f" = "purple3"))
+  labs(title = "Histogram of sample", x = "y", y = "Density")
+```
+
+Then we benchmark the three implementations
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+rng_bench <- bench::press(
+  k = 10^(2:4),
+  {
+    bench::mark(
+      "Naive" =  rs_gauss(k),
+      "Vectorized" = rs_gauss_vec(k),
+      "Rcpp" = gauss_rej_cpp(k, mu_opt, sigma_opt, alpha_p, x, sum1),
+      check = FALSE
+    )
+  }
+)
+
+rng_bench %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+```
+
+---
+### Piecewise log-affine envelope
+
+Since
+
+$$\frac{d^2}{dy^2} \log f^*(y) = \frac{d^2}{dy^2} \left( y\left(\sum_{i=1}^{100}x_i z_i\right) - \sum_{i=1}^{100}\exp(yx_i) \right) = - \sum_{i=1}^{100}x_i^2 \exp(yx_i) < 0$$
+
+Our target density is proportional to a log concave function. We can use the procedure described in chapter 6.2 of CSWR to construct a piecewise log-affine envelope. This procedure is implemented in the function `piece_lin_rejec_samp`. xxx beskriv proceduren her....
 
 
 ---
-### Gaussian envelope
+### Piecewise log-affine envelope
 
-Note that
+We once again create a `sampling_object`. This time with piecewise log affine envelope. 
 
-$$ 1 = \int f(x) dx = c \int f^*(x) dx \Leftrightarrow \frac{1}{\int f(x) dx} = c$$
-We can thus find the proportionality constant by integrating the function $f^*$.
 ```{r, echo = FALSE}
-c <- 1 / integrate(f_star_vec, lower = 0, upper = Inf, abs.tol = 10^(-60))$value
-c %>% kable()
+ys <- seq(0.05,0.5, length.out = 10)
+pa_sample <- rng_wrapper(piece_lin_rejec_samp)
+pa_sample2 <- function(n) pa_sample(n, ys)
+
+samp2 <- my_sample(n = 10^5, sampler = pa_sample2)
+samp2
 ```
+We get a higher acceptance rate than before. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+plot(samp2)+
+  geom_function(fun = f_true, aes(x = y, color = "True f"))+
+  scale_color_manual(values = c("True f" = "purple3"))
+```
+
+---
+### Profiling
+
+```{r, echo = FALSE}
+profvis::profvis({
+  # Slopes
+  a_i <- function(x_i) df1(x_i) / f_star(x_i) 
+  
+  # Intercepts
+  b_i <- function(x_i, a_i) log(f_star(x_i)) - a_i * x_i
+  
+  # Interval points
+  z_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)
+  
+  # R_i's
+  r_i <- function(as, bs, zs, n) {
+      1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
+  }
+
+  piece_lin_rejec_samp <- function(N, ys) {
+  
+    # Calculating a's, b's, z's
+    as <- sapply(ys, a_i, simplify = TRUE)
+    bs <- mapply(FUN = b_i, ys, as)
+    n <- length(bs)
+    zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)
+    
+    # Bookkeeping
+    # I_i integrals
+    R <- r_i(as, bs, zs, n)
+    
+    # Distribution function (ish)
+    Q <- c(0, cumsum(R))
+    
+    # Drawing from piecewise linear density and uniform
+    u0 <- Q[n + 1] * runif(N)
+    u <- runif(N)
+    
+    # Determine the interval that each point belongs to
+    geq_z <-outer(u0, Q[1:n], FUN = function(y1, y2) y1 > y2)
+    leq_z <-outer(u0, Q[2:(n+1)], FUN = function(y1, y2) y1 <= y2)
+    I <- geq_z & leq_z
+    
+    
+    x <- numeric(N)
+    accept <- logical(N)
+    for(i in 1:N){
+      # Finding the interval x_i belongs to
+      int <- which(I[i,] == 1)
+      
+      # Taking the inverse cdf
+      x[i] <- log((u0[i] - Q[int]) * as[int] * exp(- bs[int]) + exp(as[int] * zs[int])) / as[int]
+      
+      # Acceptance step
+      accept[i] <- u[i] <=  f_star(x[i]) / exp(as[int] * x[i] + bs[int])
+    }
+
+    return(x[accept])
+  }
+
+  pa_sample(10^4, ys)
+
+})
+```
+
+We see that most of the time is spent in the acceptance step, computing the $f^*$ function. As this function is implemented in a vectorized manner, it will not increase the speed by much if we implement the function in Rcpp. Parallelizing this function might be a better idea...
+
+---
+### Benchmarking the number of y's
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+bench_results1 <- bench::mark(
+    "length(y) = 5" = pa_sample(10^4, seq(0.05,0.5, length.out = 5)),
+    "length(y) = 10" = pa_sample(10^4, seq(0.05,0.5, length.out = 10)),
+    "length(y) = 20" = pa_sample(10^4, seq(0.05,0.5, length.out = 20)),
+    iterations = 50,
+    check = F
+)
+
+plot(bench_results1) + ggtitle("Different lengths of y")
+```
+
+There does not seem to be correspondence between the number of $y$'s and the time it takes to sample. There is probably a tradeoff between more computations and higher probability of acceptance. 
+
+---
+### Comparison
+
+We check that the two sampling procedures result in the same distribution
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+ggplot() + 
+  geom_histogram(bins = 30, alpha = 0.5, aes(x = samp2$Sample, fill = "Rcpp Gaussian", y = ..density..)) +
+  geom_histogram(bins = 30,  alpha = 0.5, aes(x = samp_rcpp$sample,fill = "Piece log affine", y = ..density..)) +
+  labs(title = "Histogram of samples", x = "y",
+         y = "Density")+
+  scale_fill_manual(values = c("Rcpp Gaussian" = "green3", "Piece log affine" = "blue"))
+```
+
+---
+### Benchmarking
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+bench_results2 <- bench::mark(
+    "Gaussian vectorized" = rs_gauss_vec(10^4),
+    "Rcpp Gaussian" = gauss_rej_cpp(10^4, mu_opt, sigma_opt, alpha_p, x, sum1),
+    "Piece log affine" = pa_sample(10^4, ys),
+    iterations = 50,
+    check = F
+)
+plot(bench_results2) + ggtitle("n = 10^4")
+```
+
+
 

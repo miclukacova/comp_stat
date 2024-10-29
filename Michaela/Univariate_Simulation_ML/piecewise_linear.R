@@ -16,8 +16,7 @@ r_i <- function(as, bs, zs, n) {
     1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
 }
 
-
-rf <- function(N, ys) {
+piece_lin_rejec_samp <- function(N, ys) {
   
   # Calculating a's, b's, z's
   as <- sapply(ys, a_i, simplify = TRUE)
@@ -31,8 +30,6 @@ rf <- function(N, ys) {
   
   # Distribution function (ish)
   Q <- c(0, cumsum(R))
-  
-  print(R); print(Q)
   
   # Drawing from piecewise linear density and uniform
   u0 <- Q[n + 1] * runif(N)
@@ -59,5 +56,3 @@ rf <- function(N, ys) {
 
   return(x[accept])
 }
-
-rf(1, c(0.1,0.2,0.3))

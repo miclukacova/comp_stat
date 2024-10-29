@@ -32,16 +32,16 @@ plot.density_object <- function(obj, h, p = 1, binned = FALSE, B = 100) {
   }
   
   if(p == 1){
-    pp <- ggplot(tibble(x = x), aes(x = obj$x)) + 
-      geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = obj$x, y = ..density..)) +
+    pp <- ggplot(tibble(x = obj$x), aes(x = x)) + 
+      geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = x, y = ..density..)) +
       geom_function(fun = x_dens, alpha = 0.5, aes(color = "True dens"), linewidth = 1.1)+
       geom_line(data = dens_data, aes(x = x, y = y, color = "Est dens"), linetype = "dashed", linewidth = 1.1)+
       scale_color_manual(values = c("True dens" = "blue", "Est dens" = "hotpink"))+
       labs(title = "Comparison of true and estimated density", x = "x", y = "Density", color = "Density types")
   }
   if(p == 2){
-    pp <- ggplot(tibble(x = x), aes(x = obj$x)) + 
-      geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = obj$x, y = ..density..)) +
+    pp <- ggplot(tibble(x = obj$x), aes(x = x)) + 
+      geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = x, y = ..density..)) +
       geom_function(fun = x_dens, alpha = 0.5, aes(color = "True dens"), linewidth = 1.1)+
       geom_line(data = dens_data, aes(x = x, y = y, color = "Est dens"), linetype = "dashed", linewidth = 1.1)+
       geom_line(data = dens_r, aes(x = x, y = y, color = "density"), linetype = "dashed", linewidth = 1.1) +
@@ -50,8 +50,8 @@ plot.density_object <- function(obj, h, p = 1, binned = FALSE, B = 100) {
   }
   
   if(p == 3){
-    pp <- ggplot(tibble(x = x), aes(x = obj$x)) + 
-      geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = obj$x, y = ..density..)) +
+    pp <- ggplot(tibble(x = obj$x), aes(x = x)) + 
+      geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = x, y = ..density..)) +
       geom_function(fun = x_dens, alpha = 0.5, linewidth = 1.1, aes(color = "True dens"))+
       geom_line(data = dens_data, aes(x = x, y = y, color = "Est dens"), linetype = "dashed", linewidth = 1.1)+
       geom_line(data = dens_r, aes(x = x, y = y, color = "density"), linetype = "dashed", linewidth = 1.1) +
@@ -63,8 +63,8 @@ plot.density_object <- function(obj, h, p = 1, binned = FALSE, B = 100) {
   }
   
   if(p == 4){
-    pp <- ggplot(tibble(x = x), aes(x = obj$x)) + 
-      geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = obj$x, y = ..density..)) +
+    pp <- ggplot(tibble(x = obj$x), aes(x = x)) + 
+      geom_histogram(bins = 30, fill = "blue", alpha = 0.3, aes(x = x, y = ..density..)) +
       geom_function(fun = x_dens, alpha = 0.5, aes(color = "True dens"), linewidth = 1.1)+
       geom_line(data = dens_data_binned, aes(x = x, y = y, color = "Binned"), linetype = "dashed", linewidth = 1.1) +
       scale_color_manual(values = c("True dens" = "blue", "Binned" = "purple"))+

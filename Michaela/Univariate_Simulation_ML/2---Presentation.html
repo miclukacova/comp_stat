@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>Rejection Sampling</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Michaela Lukacova (dns525)" />
+    <meta name="date" content="2024-10-29" />
+    <script src="2---Presentation_files/header-attrs-2.26/header-attrs.js"></script>
+    <script src="2---Presentation_files/kePrint-0.0.1/kePrint.js"></script>
+    <link href="2---Presentation_files/lightable-0.0.1/lightable.css" rel="stylesheet" />
+    <link href="2---Presentation_files/htmltools-fill-0.5.8.1/fill.css" rel="stylesheet" />
+    <script src="2---Presentation_files/htmlwidgets-1.6.4/htmlwidgets.js"></script>
+    <script src="2---Presentation_files/jquery-1.12.4/jquery.min.js"></script>
+    <script src="2---Presentation_files/d3-3.5.6/d3.min.js"></script>
+    <link href="2---Presentation_files/profvis-0.3.6.9000/profvis.css" rel="stylesheet" />
+    <script src="2---Presentation_files/profvis-0.3.6.9000/profvis.js"></script>
+    <script src="2---Presentation_files/profvis-0.3.6.9000/scroll.js"></script>
+    <link href="2---Presentation_files/highlight-6.2.0/textmate.css" rel="stylesheet" />
+    <script src="2---Presentation_files/highlight-6.2.0/highlight.js"></script>
+    <script src="2---Presentation_files/profvis-binding-0.3.8/profvis.js"></script>
+    <link rel="stylesheet" href="themer-new.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+.title[
+# Rejection Sampling
+]
+.author[
+### Michaela Lukacova (dns525)
+]
+.institute[
+### University of Copenhagen
+]
+.date[
+### 2024-10-29
+]
+
+---
+
+&lt;style type="text/css"&gt;
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content &gt; h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+&lt;/style&gt;
+
+
+
+
+
+
+
+
+
+
+### Introduction and outline
+
+- We are given a Poisson data set with 100 rows and `\(2\)` variables `\(z \in \mathbb{N}\)` and `\(x \in \mathbb{R}_+\)`
+
+- We wish to sample from the distribution on `\([0, \infty)\)` with density function 
+`$$f(y) \propto \prod_{i=1}^{100} \exp \left( yx_i z_i - \exp(yx_i) \right) =  \exp \left( y\left(\sum_{i=1}^{100}x_i z_i\right) - \sum_{i=1}^{100}\exp(yx_i) \right) = f^*(y)$$`
+- We wish to do this by
+  + Implementing rejection sampling from the distribution with density `\(f\)`
+  + We will use first a Gaussian envelope
+  + Then we will implement an adaptive rejection sampling algorithm that uses a piecewise log-affine envelope
+
+- And we will compare of the two methods
+
+---
+### The Gaussian Envelope
+
+To do rejection sampling one needs an envelope, we wish to use a Gaussian envelope
+
+`$$g(y) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left( - \frac{(y- \mu)^2}{2\sigma^2}\right)$$`
+
+We start out by plotting the function `\(f^*\)` that we are given
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-2-1.png" width="720" style="display: block; margin: auto;" /&gt;
+
+We can determine the proportionality constant `\(f^*(y) = c f(y)\)` by integrating the function `\(f^*\)`. 
+
+&lt;table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;"&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:right;"&gt; c &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;"&gt; 9.507782e+40 &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+
+---
+### Optimal mean parameter
+- The Gaussian density has two parameters, the mean `\(\mu\)` and the variance `\(\sigma^2\)` 
+
+- The envelope should be as tight as possible
+
+  + Due to symmetry we will pick the max of the `\(f^*\)` function as the mean parameter
+
+&lt;table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;"&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:right;"&gt; mu &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;"&gt; 0.2424037 &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+- Still another parameter to determine `\(\sigma\)`
+
+  + Can be determined by considering the acceptance rates associated to the different variance parameters
+  
+  + And picking the variance that maximizes the acceptance rate. 
+  
+---
+### Optimal variance parameter
+
+The envelope should fulfill
+
+`$$f^*(y) \alpha' \leq g(y)$$`
+
+Rearranging the above equation 
+
+$$ \alpha' \leq \frac{g(y)}{f^*(y)}$$
+
+Thus we for a specific `\(g\)` find `\(\alpha'\)` by
+
+`$$\alpha' = \min \lbrace \frac{g(y)}{f^*(y)} \rbrace$$`
+
+We have the relationship 
+
+`$$\alpha' = c \alpha$$`
+
+where `\(c\)` is the proportionality constant between `\(f\)` and `\(f^*\)`. Finding the largest `\(\alpha\)` is equivalent to finding the largest `\(\alpha'\)`! 
+
+We pick
+
+`$$\sigma_{opt} = \arg \max_{\sigma} \min_{y \in \RR_+} \left\{ \frac{g(y)}{f^*(y)} \right\}$$`
+
+---
+### Optimal variance parameter
+
+One can find the second derivative of the ratio `\(\frac{g(y)}{f^*(y)}\)`, and discover that this function is not convex. Below we plot the ratio for `\(\sigma = 0.05\)`. 
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-5-1.png" width="720" style="display: block; margin: auto;" /&gt;
+
+So when we look for the minimum of the ratio, we might end up in a local minimum. We will, since this is a relatively small problem, resort to a simple way of finding the infimum, namely taking the minimum over a grid of points. This minimum will be our `\(\alpha'\)`. 
+
+---
+### Optimal variance parameter
+
+We for a sequence of `\(\sigma\)` values ranging from `\(0.01\)` to `\(0.2\)` determine the minimum of the ratio `\(\frac{g(y)}{f^*(y)}\)` for a sequence of `\(y\)` values ranging from `\(0.01\)` to `\(0.2\)`.
+
+
+
+We find the largest `\(\alpha'\)`
+
+&lt;table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;"&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:right;"&gt; alpha prime &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;"&gt; 8.694964e+40 &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+And the corresponding `\(\sigma\)` value.
+&lt;table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;"&gt;
+ &lt;thead&gt;
+  &lt;tr&gt;
+   &lt;th style="text-align:right;"&gt; sigma &lt;/th&gt;
+  &lt;/tr&gt;
+ &lt;/thead&gt;
+&lt;tbody&gt;
+  &lt;tr&gt;
+   &lt;td style="text-align:right;"&gt; 0.0621121 &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/tbody&gt;
+&lt;/table&gt;
+
+Now we have our Gaussian envelope!
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-9-1.png" width="720" style="display: block; margin: auto;" /&gt;
+
+---
+
+We test that the envelope indeed covers `\(f^*\)` for a grid of `\(y\)` values between `\(0\)` and `\(1\)`. By plotting the differences
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-10-1.png" width="720" style="display: block; margin: auto;" /&gt;
+
+And testing that the differences are non-negative using `test_that`
+
+
+```
+## Test passed 😀
+```
+---
+### Rejection sampling using Gaussian envelope
+
+We implement a naive rejection sampler `rs_gauss`.
+
+
+
+And create an S3 class `sampling_object`. With a print method
+
+
+```r
+samp0 &lt;- my_sample(n = 10^5, sampler = rs_gauss)
+samp0
+```
+
+```
+## Number of data points:
+## [1] 1e+05
+## Acceptance rate:
+## [1] 0.9144864
+```
+
+Note that we can estimate the target distribution by
+
+`$$f(y) = cf^*(y)  = \frac{\alpha'}{\hat{\alpha}} f^*(y)$$`
+
+Using the estimated acceptance rate `\(\hat{\alpha}\)`
+
+
+---
+### Rejection sampling using Gaussian envelope
+
+A historgram of the sample distribution is plotted together with the estimated density and the true density by the `plot` method
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-15-1.png" width="720" style="display: block; margin: auto;" /&gt;
+The estimated density and the true density are very close to each other. So close that we cannot see the difference. 
+
+---
+### Optimizing
+
+<div class="profvis html-widget html-fill-item" id="htmlwidget-5650af7ce9ad495032ef" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-5650af7ce9ad495032ef">{"x":{"message":{"prof":{"time":[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,9,10,10,11,11,12,12,13,13,14,14,15,15,16,16,17,17,17,18,18,19,19,20,20,21,21,22,22,23,23,24,24,24,25,25,26,26,27,27,28,28,29,29,30,30,30,31,31,32,32,33,33,34,34,34,35,35,35,36,36,36,37,37,38,38,38,39,39,40,40,41,41,41,42,42,42,43,43,44,45,45,46,46,46,47,47,48,48,49,49,50,50,50,51,51,52,52,52,53,53,54,54,55,55,56,56,57,57,58,58,58,59,59,60,60,61,61,62,62,63,63,63,64,64,65,66,66,67,67,68,68,69,69,69,70,70,71,71,72,72,72,73,73,74,74,75,75,75,76,76,77,78,78,79,79,80,80,80,81,81,82,82,83,83,84,84,85,85,85,86,86,87,87,88,88,89,89,90,90,91,91,91,92,92],"depth":[52,51,50,49,48,47,46,45,44,43,42,41,40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,3,2,1,3,2,1,3,2,1,2,1,3,2,1,2,1,2,1,3,2,1,3,2,1,2,1,1,2,1,3,2,1,2,1,2,1,2,1,3,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,1,2,1,2,1,2,1,3,2,1,2,1,2,1,3,2,1,2,1,2,1,3,2,1,2,1,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1],"label":["$","findCenvVar","getInlineInfo","isBaseVar","getFoldFun","constantFoldCall","constantFold","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpWhileBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpForBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","h","tryInline","cmpCall","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","rnorm","rs_gauss","f","rs_gauss","rnorm","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","rs_gauss","rnorm","rs_gauss","dnorm","rs_gauss","<GC>","runif","rs_gauss","f","rs_gauss","runif","rs_gauss","f","rs_gauss","rnorm","rs_gauss","runif","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","rs_gauss","f","rs_gauss","<GC>","runif","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","rs_gauss","f","rs_gauss","f","rs_gauss","dnorm","rs_gauss","rnorm","rs_gauss","dnorm","rs_gauss","<GC>","rnorm","rs_gauss","dnorm","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","f","rs_gauss","rnorm","rs_gauss","runif","rs_gauss","<GC>","runif","rs_gauss","f","rs_gauss","runif","rs_gauss","u <- runif(1)","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","dnorm","rs_gauss","<GC>","runif","rs_gauss","<GC>","runif","rs_gauss","u <- runif(1)","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","dnorm","rs_gauss","runif","rs_gauss","rnorm","rs_gauss","<GC>","rnorm","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","dnorm","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","sum","rnorm","rs_gauss","<GC>","rnorm","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","rnorm","rs_gauss","rnorm","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","dnorm","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","<GC>","runif","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","rs_gauss","rnorm","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","runif","rs_gauss","<GC>","runif","rs_gauss","f","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","dnorm","rs_gauss","f","rs_gauss","<GC>","rnorm","rs_gauss","f","rs_gauss","sum","f","rs_gauss","f","rs_gauss","rnorm","rs_gauss","<GC>","runif","rs_gauss","rnorm","rs_gauss","runif","rs_gauss","y0 <- rnorm(1, mu, sigma)","rnorm","rs_gauss","y0 <- rnorm(1, mu, sigma)","rs_gauss","f","rs_gauss","<GC>","runif","rs_gauss","runif","rs_gauss","sum","f","rs_gauss","dnorm","rs_gauss","<GC>","rnorm","rs_gauss","y[i] <- y0","rs_gauss","f","rs_gauss","dnorm","rs_gauss","runif","rs_gauss","<GC>","rnorm","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","rs_gauss","runif","rs_gauss","runif","rs_gauss","reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha","rs_gauss","f","rs_gauss","<GC>","runif","rs_gauss","u <- runif(1)","rs_gauss"],"filenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,null,1,1,null,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,null,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,null,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,null,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1],"linenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,22,10,24,12,24,10,24,10,24,12,24,10,24,12,24,null,11,24,12,24,11,24,12,24,10,24,11,24,12,24,12,24,null,11,24,12,24,12,24,12,24,12,24,10,24,12,24,null,10,24,12,24,10,24,12,24,10,24,11,24,null,11,24,12,24,11,24,11,24,12,12,24,null,11,24,null,11,24,11,24,12,12,24,11,24,10,24,null,10,24,12,12,24,10,24,null,10,24,null,10,24,10,24,10,24,10,24,12,12,24,10,24,null,11,24,10,24,12,24,10,24,10,24,11,24,null,11,24,12,24,10,24,12,24,12,24,null,10,24,12,24,null,12,24,12,24,10,24,null,11,24,10,24,11,24,10,10,24,10,24,12,24,null,11,24,11,24,null,12,24,12,24,null,10,24,15,24,12,24,12,24,11,24,null,10,24,12,24,11,24,11,24,12,24,12,24,null,11,24,11,24],"memalloc":[36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,36.43137359619141,39.33955383300781,39.33955383300781,44.94768524169922,44.94768524169922,50.51603698730469,50.51603698730469,57.98136138916016,57.98136138916016,64.02133941650391,64.02133941650391,70.42066192626953,70.42066192626953,76.22400665283203,76.22400665283203,49.16356658935547,49.16356658935547,49.16356658935547,40.56368255615234,40.56368255615234,45.06123352050781,45.06123352050781,49.96665191650391,49.96665191650391,55.95088958740234,55.95088958740234,63.64090728759766,63.64090728759766,70.08244323730469,70.08244323730469,75.59260559082031,75.59260559082031,50.20899963378906,50.20899963378906,50.20899963378906,44.43660736083984,44.43660736083984,48.50786590576172,48.50786590576172,54.83152008056641,54.83152008056641,62.42829895019531,62.42829895019531,68.47068023681641,68.47068023681641,73.49323272705078,73.49323272705078,77.40836334228516,77.40836334228516,77.40836334228516,39.73435211181641,39.73435211181641,49.80657958984375,49.80657958984375,60.55918121337891,60.55918121337891,66.80793762207031,66.80793762207031,74.10835266113281,74.10835266113281,70.67463684082031,70.67463684082031,70.67463684082031,42.89579772949219,42.89579772949219,50.35236358642578,50.35236358642578,63.55093383789062,63.55093383789062,70.8935546875,70.8935546875,70.8935546875,77.41000366210938,77.41000366210938,77.41000366210938,43.27112579345703,43.27112579345703,43.27112579345703,44.95375823974609,44.95375823974609,53.32256317138672,53.32256317138672,53.32256317138672,61.50337219238281,61.50337219238281,67.18960571289062,67.18960571289062,77.41001892089844,77.41001892089844,77.41001892089844,42.65840148925781,42.65840148925781,42.65840148925781,49.66880798339844,49.66880798339844,57.89498901367188,71.94609069824219,71.94609069824219,73.17749786376953,73.17749786376953,73.17749786376953,41.53424835205078,41.53424835205078,48.84820556640625,48.84820556640625,56.49996948242188,56.49996948242188,64.05451965332031,64.05451965332031,64.05451965332031,73.21210479736328,73.21210479736328,77.40847778320312,77.40847778320312,77.40847778320312,45.2764892578125,45.2764892578125,52.33708190917969,52.33708190917969,59.90519714355469,59.90519714355469,67.81031799316406,67.81031799316406,74.88446044921875,74.88446044921875,66.57671356201172,66.57671356201172,66.57671356201172,40.90644073486328,40.90644073486328,47.17510986328125,47.17510986328125,60.00241088867188,60.00241088867188,72.84008026123047,72.84008026123047,69.57883453369141,69.57883453369141,69.57883453369141,42.48398590087891,42.48398590087891,50.62095642089844,61.29550170898438,61.29550170898438,70.35750579833984,70.35750579833984,76.59587097167969,76.59587097167969,47.49985504150391,47.49985504150391,47.49985504150391,41.4825439453125,41.4825439453125,47.00625610351562,47.00625610351562,57.18522644042969,57.18522644042969,57.18522644042969,64.37966918945312,64.37966918945312,73.96031951904297,73.96031951904297,65.13824462890625,65.13824462890625,65.13824462890625,43.66799163818359,43.66799163818359,52.63671112060547,60.72348785400391,60.72348785400391,73.23849487304688,73.23849487304688,62.50726318359375,62.50726318359375,62.50726318359375,47.77274322509766,47.77274322509766,55.43563842773438,55.43563842773438,64.93343353271484,64.93343353271484,73.39070129394531,73.39070129394531,77.40939331054688,77.40939331054688,77.40939331054688,40.05088806152344,40.05088806152344,54.25494384765625,54.25494384765625,60.84706115722656,60.84706115722656,67.52919769287109,67.52919769287109,74.19303131103516,74.19303131103516,72.04215240478516,72.04215240478516,72.04215240478516,39.89156341552734,39.89156341552734],"meminc":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2.908180236816406,0,5.608131408691406,0,5.568351745605469,0,7.465324401855469,0,6.03997802734375,0,6.399322509765625,0,5.8033447265625,0,-27.06044006347656,0,0,-8.599884033203125,0,4.497550964355469,0,4.905418395996094,0,5.984237670898438,0,7.690017700195312,0,6.441535949707031,0,5.510162353515625,0,-25.38360595703125,0,0,-5.772392272949219,0,4.071258544921875,0,6.323654174804688,0,7.596778869628906,0,6.042381286621094,0,5.022552490234375,0,3.915130615234375,0,0,-37.67401123046875,0,10.07222747802734,0,10.75260162353516,0,6.248756408691406,0,7.3004150390625,0,-3.4337158203125,0,0,-27.77883911132812,0,7.456565856933594,0,13.19857025146484,0,7.342620849609375,0,0,6.516448974609375,0,0,-34.13887786865234,0,0,1.682632446289062,0,8.368804931640625,0,0,8.180809020996094,0,5.686233520507812,0,10.22041320800781,0,0,-34.75161743164062,0,0,7.010406494140625,0,8.226181030273438,14.05110168457031,0,1.231407165527344,0,0,-31.64324951171875,0,7.313957214355469,0,7.651763916015625,0,7.554550170898438,0,0,9.157585144042969,0,4.196372985839844,0,0,-32.13198852539062,0,7.060592651367188,0,7.568115234375,0,7.905120849609375,0,7.074142456054688,0,-8.307746887207031,0,0,-25.67027282714844,0,6.268669128417969,0,12.82730102539062,0,12.83766937255859,0,-3.261245727539062,0,0,-27.0948486328125,0,8.136970520019531,10.67454528808594,0,9.062004089355469,0,6.238365173339844,0,-29.09601593017578,0,0,-6.017311096191406,0,5.523712158203125,0,10.17897033691406,0,0,7.194442749023438,0,9.580650329589844,0,-8.822074890136719,0,0,-21.47025299072266,0,8.968719482421875,8.086776733398438,0,12.51500701904297,0,-10.73123168945312,0,0,-14.73451995849609,0,7.662895202636719,0,9.497795104980469,0,8.457267761230469,0,4.018692016601562,0,0,-37.35850524902344,0,14.20405578613281,0,6.592117309570312,0,6.682136535644531,0,6.663833618164062,0,-2.15087890625,0,0,-32.15058898925781,0],"filename":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"profvis::profvis({\n  \n  gauss_rej <- function(mu, sigma, alpha, f) {\n  sampler <-function(n){\n      y <- numeric(n)\n      counter <- 0\n      for (i in 1:n) {\n        reject <- TRUE\n        while (reject) {\n          y0 <- rnorm(1, mu, sigma)\n          u <- runif(1)\n          reject <- u > f(y0) / dnorm(y0, mu, sigma) * alpha\n          counter <- counter + 1\n        }\n        y[i] <- y0\n      }\n      return(list(\"sample\" = y, \"accept\" = n / counter))\n    }\n    return(sampler)\n  }\n\n  rs_gauss <- gauss_rej(mu_opt, sigma_opt, alpha_p, f_star)\n  \n  rs_gauss(10^5)\n})","normpath":"<expr>"}],"prof_output":"/var/folders/kq/0f1vjrnj2xn0q3t1270kq05r0000gn/T//Rtmpr1l3hO/file4f3f96404ff.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+
+---
+### Optimizing
+
+We improve by implementing a vectorized version. Instead of sampling one pair of variables at a time, the vectorized version samples `\(m\)` pairs of variables at a time, until we reach the desired random sample size. The number `\(m\)` is adapted for each iteration, such that the number of proposals is equal to the missing number of samples times the estimated acceptance rate. 
+
+
+```r
+vec_f_random &lt;- function(m, mu, sigma, f, alpha_p) {
+  y &lt;- rnorm(m, mu, sigma)
+  u &lt;- runif(m)
+  accept &lt;- u &lt;= f(y) / dnorm(y, mean = mu, sd = sigma) * alpha_p
+  
+  return("Sample" = y[accept])
+}
+
+rng_wrapper &lt;- function(rng, fact = 1.05, M_min = 100) {
+  function(N, ...) {
+    j &lt;- 0     # The number of iterations
+    l &lt;- 0     # The number of accepted samples
+    counter &lt;- 0 # The number of proposals
+    
+    x &lt;- list()
+    
+    while (l &lt; N) {
+      j &lt;- j + 1 
+      M &lt;- floor(max(fact * (N - l), M_min))
+      x[[j]] &lt;- rng(M, ...)
+      counter &lt;- counter + M
+      l &lt;- l + length(x[[j]])
+      # Update 'fact' by estimated acceptance probability l / n
+      if (j == 1) fact &lt;- fact * N / l
+    }
+    return(list("sample" = unlist(x)[1:N], "accept" = length(unlist(x)) / counter))
+  }
+}
+```
+
+---
+### Check of the vectorized version
+
+
+
+We create a new `sampling_object`. 
+
+
+```
+## Number of data points:
+## [1] 1e+05
+## Acceptance rate:
+## [1] 0.9149559
+```
+
+And create the same plot as before in order to check whether the drawn samples result in the desired density
+
+
+
+This estimate is plotted together with the sample distribution
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-21-1.png" width="720" style="display: block; margin: auto;" /&gt;
+
+Again we cannot distinguish between the estimated density and the true density.
+
+---
+### Profiling
+
+<div class="profvis html-widget html-fill-item" id="htmlwidget-8b03be9a9f8d9ed6677b" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-8b03be9a9f8d9ed6677b">{"x":{"message":{"prof":{"time":[1,1,1,1,2,3,3,3,3,3,3,4,4,4,4,4,4,5,5,5,5,5,5,6,6,6,6,6,6,7,7,7,7,7,7,8,8,8,8,8,8,9,9,9,9,9,9,10,10,10,10,10,10,11,11,11,11,11,11,12,12,12,12,12,12,12,13,13,13,13,13,13,13,14,14,14,14,14,14,14,15,15,15,15,15,15,16,16,16,16,16,16,17,18,18,18,18,18,18,19,19,19,19,19,19,20,20,20,20,20,20,21,21,21,21,21,21,22,22,22,22,22,22,23,23,23,23,23,23,24,24,24,24,24,24,25,25,26,26,27,27,27,27,27,27,28,29,29,29,29,29,29,30,30,30,30,30,30,31,31,31,31,31,31,31,32,32,32,32,32,32,32,32,32,32,32,32,33,33,33,33,33,33],"depth":[4,3,2,1,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,7,6,5,4,3,2,1,7,6,5,4,3,2,1,7,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,2,1,2,1,6,5,4,3,2,1,1,6,5,4,3,2,1,6,5,4,3,2,1,7,6,5,4,3,2,1,12,11,10,9,8,7,6,5,4,3,2,1,6,5,4,3,2,1],"label":["runif","vec_f_random","rng","rs_gauss_vec","sum","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<GC>","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<GC>","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<GC>","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","sum","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<GC>","sum","<GC>","sum","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","sum","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec","unique.default","simplify2array","mapply","f","vec_f_random","rng","rs_gauss_vec","exists","findCenvVar","getInlineInfo","isBaseVar","FUN","lapply","Filter","findLocalsList","funEnv","make.functionContext","cmpfun","compiler:::tryCmpfun","<Anonymous>","mapply","f","vec_f_random","rng","rs_gauss_vec"],"filenum":[1,null,null,1,null,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,null,1,null,null,1,null,null,null,1,null,null,1,null,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,null,null,null,null,1,null,null,1,null,null,null,1,null,null,1,null,null,1,null,null,1,null,null,null,1,null,null,1,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,1],"linenum":[4,null,null,31,null,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,null,5,null,null,31,null,null,null,5,null,null,31,null,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,5,null,null,31,null,null,null,null,null,null,5,null,null,31,null,null,null,5,null,null,31,null,null,5,null,null,31,null,null,null,5,null,null,31,null,null,null,null,null,null,null,null,null,null,null,null,null,null,5,null,null,31],"memalloc":[39.11463928222656,39.11463928222656,39.11463928222656,39.11463928222656,42.32874298095703,47.18515777587891,47.18515777587891,47.18515777587891,47.18515777587891,47.18515777587891,47.18515777587891,50.22709655761719,50.22709655761719,50.22709655761719,50.22709655761719,50.22709655761719,50.22709655761719,53.29732513427734,53.29732513427734,53.29732513427734,53.29732513427734,53.29732513427734,53.29732513427734,56.71488952636719,56.71488952636719,56.71488952636719,56.71488952636719,56.71488952636719,56.71488952636719,60.33757781982422,60.33757781982422,60.33757781982422,60.33757781982422,60.33757781982422,60.33757781982422,63.53901672363281,63.53901672363281,63.53901672363281,63.53901672363281,63.53901672363281,63.53901672363281,66.46150970458984,66.46150970458984,66.46150970458984,66.46150970458984,66.46150970458984,66.46150970458984,68.75455474853516,68.75455474853516,68.75455474853516,68.75455474853516,68.75455474853516,68.75455474853516,71.21812438964844,71.21812438964844,71.21812438964844,71.21812438964844,71.21812438964844,71.21812438964844,74.39915466308594,74.39915466308594,74.39915466308594,74.39915466308594,74.39915466308594,74.39915466308594,74.39915466308594,64.08029937744141,64.08029937744141,64.08029937744141,64.08029937744141,64.08029937744141,64.08029937744141,64.08029937744141,47.17050933837891,47.17050933837891,47.17050933837891,47.17050933837891,47.17050933837891,47.17050933837891,47.17050933837891,43.70947265625,43.70947265625,43.70947265625,43.70947265625,43.70947265625,43.70947265625,48.36862182617188,48.36862182617188,48.36862182617188,48.36862182617188,48.36862182617188,48.36862182617188,52.11937713623047,54.67960357666016,54.67960357666016,54.67960357666016,54.67960357666016,54.67960357666016,54.67960357666016,57.22411346435547,57.22411346435547,57.22411346435547,57.22411346435547,57.22411346435547,57.22411346435547,60.0208740234375,60.0208740234375,60.0208740234375,60.0208740234375,60.0208740234375,60.0208740234375,63.12725067138672,63.12725067138672,63.12725067138672,63.12725067138672,63.12725067138672,63.12725067138672,65.84700012207031,65.84700012207031,65.84700012207031,65.84700012207031,65.84700012207031,65.84700012207031,68.44651794433594,68.44651794433594,68.44651794433594,68.44651794433594,68.44651794433594,68.44651794433594,71.02717590332031,71.02717590332031,71.02717590332031,71.02717590332031,71.02717590332031,71.02717590332031,72.86601257324219,72.86601257324219,54.17628479003906,54.17628479003906,42.3538818359375,42.3538818359375,42.3538818359375,42.3538818359375,42.3538818359375,42.3538818359375,46.15569305419922,50.75042724609375,50.75042724609375,50.75042724609375,50.75042724609375,50.75042724609375,50.75042724609375,53.70906829833984,53.70906829833984,53.70906829833984,53.70906829833984,53.70906829833984,53.70906829833984,56.38229370117188,56.38229370117188,56.38229370117188,56.38229370117188,56.38229370117188,56.38229370117188,56.38229370117188,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,61.29151916503906,62.7198486328125,62.7198486328125,62.7198486328125,62.7198486328125,62.7198486328125,62.7198486328125],"meminc":[0,0,0,0,3.214103698730469,4.856414794921875,0,0,0,0,0,3.041938781738281,0,0,0,0,0,3.070228576660156,0,0,0,0,0,3.417564392089844,0,0,0,0,0,3.622688293457031,0,0,0,0,0,3.201438903808594,0,0,0,0,0,2.922492980957031,0,0,0,0,0,2.293045043945312,0,0,0,0,0,2.463569641113281,0,0,0,0,0,3.1810302734375,0,0,0,0,0,0,-10.31885528564453,0,0,0,0,0,0,-16.9097900390625,0,0,0,0,0,0,-3.461036682128906,0,0,0,0,0,4.659149169921875,0,0,0,0,0,3.750755310058594,2.560226440429688,0,0,0,0,0,2.544509887695312,0,0,0,0,0,2.796760559082031,0,0,0,0,0,3.106376647949219,0,0,0,0,0,2.719749450683594,0,0,0,0,0,2.599517822265625,0,0,0,0,0,2.580657958984375,0,0,0,0,0,1.838836669921875,0,-18.68972778320312,0,-11.82240295410156,0,0,0,0,0,3.801811218261719,4.594734191894531,0,0,0,0,0,2.958641052246094,0,0,0,0,0,2.673225402832031,0,0,0,0,0,0,4.909225463867188,0,0,0,0,0,0,0,0,0,0,0,1.428329467773438,0,0,0,0,0],"filename":["<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,null,null,null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,"<expr>",null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,"<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"profvis::profvis({\n  vec_f_random <- function(m, mu, sigma, f, alpha_p) {\n    y <- rnorm(m, mu, sigma)\n    u <- runif(m)\n    accept <- u <= f(y) / dnorm(y, mean = mu, sd = sigma) * alpha_p\n    \n    return(\"Sample\" = y[accept])\n  }\n  \n  rng_wrapper <- function(rng, fact = 1.05, M_min = 100) {\n    function(N, ...) {\n      j <- 0     # The number of iterations\n      l <- 0     # The number of accepted samples\n      counter <- 0 # The number of proposals\n      \n      x <- list()\n      \n      while (l < N) {\n        j <- j + 1 \n        M <- floor(max(fact * (N - l), M_min))\n        x[[j]] <- rng(M, ...)\n        counter <- counter + M\n        l <- l + length(x[[j]])\n        # Update 'fact' by estimated acceptance probability l / n\n        if (j == 1) fact <- fact * N / l\n      }\n      return(list(\"sample\" = unlist(x)[1:N], \"accept\" = length(unlist(x)) / counter))\n    }\n  }\n\n  rs_gauss_vec(10^5)\n\n})","normpath":"<expr>"}],"prof_output":"/var/folders/kq/0f1vjrnj2xn0q3t1270kq05r0000gn/T//Rtmpr1l3hO/file4f3f7de4ed09.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+
+---
+### Benchmarking
+
+As a last attempt at optimizing we implement the `\(f^*\)` in Rcpp as the function `f_star_cpp` in order to further speed up the computations. We check that the functions output the same values using `test_that` and expect_equal in 100 randomly drawn points:
+
+
+```
+## Test passed 🎉
+```
+
+
+
+Then we benchmark the three implementations
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-25-1.png" width="720" style="display: block; margin: auto;" /&gt;
+---
+### Piecewise log-affine envelope
+
+Since
+
+`$$\frac{d^2}{dy^2} \log f^*(y) = \frac{d^2}{dy^2} \left( y\left(\sum_{i=1}^{100}x_i z_i\right) - \sum_{i=1}^{100}\exp(yx_i) \right) = - \sum_{i=1}^{100}x_i^2 \exp(yx_i) &lt; 0$$`
+
+Our target density is proportional to a log concave function. We can use the procedure described in chapter 6.2 of CSWR to construct a piecewise log-affine envelope. This procedure is implemented in the function `piece_lin_rejec_samp`. xxx beskriv proceduren her....
+
+
+---
+### Piecewise log-affine envelope
+
+We once again create a `sampling_object`. This time with piecewise log affine envelope. 
+
+
+```
+## Number of data points:
+## [1] 1e+05
+## Acceptance rate:
+## [1] 0.9675619
+```
+We get a higher acceptance rate than before. 
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-27-1.png" width="504" /&gt;
+
+---
+### Comparison
+
+
+
+
+
+
+
+
+
+
+---
+### For different sample sizes
+
+The estimated density approximates the true density well, even for small sample sizes. 
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-28-1.png" width="504" /&gt;
+
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"slideNumberFormat": "%current%",
+"highlightStyle": "github",
+"highlightLines": true,
+"highlightSpans": true,
+"ratio": "16:9",
+"countIncrementalSlides": true,
+"navigation": {
+"scroll": false
+}
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+// add `data-at-shortcutkeys` attribute to <body> to resolve conflicts with JAWS
+// screen reader (see PR #262)
+(function(d) {
+  let res = {};
+  d.querySelectorAll('.remark-help-content table tr').forEach(tr => {
+    const t = tr.querySelector('td:nth-child(2)').innerText;
+    tr.querySelectorAll('td:first-child .key').forEach(key => {
+      const k = key.innerText;
+      if (/^[a-z]$/.test(k)) res[k] = t;  // must be a single letter (key)
+    });
+  });
+  d.body.setAttribute('data-at-shortcutkeys', JSON.stringify(res));
+})(document);
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>

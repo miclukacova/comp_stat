@@ -80,12 +80,11 @@ $$
 The second derivative is not always positive, and the function is thus not convex. It will therefore be difficult to determine the global minimum by optimization. Below we plot the log ratio for a given $\sigma = 0.05$.
 
 ```{r}
-log_ratio_vec <- Vectorize(log_ratio)
-plot_ratio <- function(y) log_ratio_vec(y, mu = mu_opt, sigma = 0.05)
-
+ratio_vec <- Vectorize(ratio)
+plot_ratio <- function(y) ratio_vec(y, mu = mu_opt, sigma = 0.05)
 
 ggplot() +
-  geom_function(fun = plot_ratio1) +
+  geom_function(fun = plot_ratio) +
   xlim(0.01,0.6)+  
   labs(x = expression(y),
        y = "log ratio")
@@ -125,10 +124,19 @@ g <- function(y) 1 / (sqrt(2 * pi *sigma_opt^2)) * exp(-(y - mu_opt) ^ 2 / (2 * 
 f_star_alpha <- function(y) f_star_vec(y) * alpha_p
 
 ggplot() +
-  geom_function(fun = f_star_alpha) + 
-  geom_function(fun = g, color = "red", linetype = "dashed")+
+  geom_function(fun = f_star_alpha, aes(color = "Prop. density")) + 
+  geom_function(fun = g, aes(color = "Envelope"), linetype = "dashed")+
   labs(x = expression(y),
-       y = expression(density))
+       y = expression(density))+
+  scale_color_manual(values = c("Prop. density" = "purple3", "Envelope" = "hotpink"))
+
+ys <- seq(0.01, 0.7, by = 0.001)
+diffs <- g(ys) -  f_star_alpha(ys)
+
+ggplot(tibble(x = ys, y = diffs), aes(x = x, y = y)) +
+  geom_line(color = "purple3") +
+  labs(x = "y",
+       y = "Difference")
 
 
 sum(g(seq(0,1, by = 0.001)) - f_star_vec(seq(0,1, by = 0.001) * alpha_p) <= 0)
@@ -220,7 +228,7 @@ Since
 $$
 \frac{d^2}{dy^2}  \left( y\left(\sum_{i=1}^{100}x_i z_i\right) - \sum_{i=1}^{100}\exp(yx_i) \right) = - \sum_{i=1}^{100}x_i^2 \exp(yx_i) < 0
 $$
-Our target density is proportional to a log concave function. We choose the $y$'s as $y_1 = -2.5, y_2 = -2, ..., y_8 = 1$ and calculate the $a_i$'s according to CSR. 
+Our target density is proportional to a log concave function. We choose the $y$'s as $y_1 = -2.5, y_2 = -2, ..., y_8 = 1$ and calculate the $a_i$'s according to CSWR. 
 
 ```{r}
 ys <- seq(0.1,0.4, by = 0.01)
@@ -247,9 +255,36 @@ ggplot(data = tibble(x = seq(1,10^5), y = samp0$Sample))+
 - Implementer funktioner i rcpp
 - gør det hele pænere
 - evt. lav f* til matrix
-- skab objekter
+
 - tjek noter for andre ting som skal ordnes
 
 
 
+
+
+
+---
+### For different sample sizes
+
+The estimated density approximates the true density well, even for small sample sizes. 
+
+```{r, echo = FALSE}
+samp_sizes <- c(10, 20, 50, 100, 200, 1000)
+plots <- list()
+
+for(i in seq_along(samp_sizes)){
+  
+  obj <- my_sample(n = samp_sizes[i], sampler = rs_gauss_vec)
+  
+  c <- alpha_p /obj$Accept
+  f_est <- function(y) f_star_vec(y) * c
+  
+  plots[[i]] <- plot(obj)+
+    geom_function(fun = f_est, color = "purple")+
+    geom_function(fun = f_true, color = "steelblue")+
+    labs(title = paste("Sample Size =", samp_sizes[i]))
+}
+
+gridExtra::grid.arrange(grobs = plots, ncol = 3)
+```
 
