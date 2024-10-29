@@ -1,0 +1,326 @@
+---
+title: 'Stochastic Optimization A: '
+author: "Michaela Lukacova"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  fig_height: 5
+  fig_width: 5
+  theme: flatly
+  html_document: null
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r source, include=FALSE}
+source("~/comp_stat/Stochastic_Optimization_ML/sampler.R")
+source("~/comp_stat/Stochastic_Optimization_ML/SGD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/GD.R")
+source("~/comp_stat/Stochastic_Optimization_ML/grid_gd.R")
+```
+
+# Implement stochastic optimization algorithms for estimating the parameters of this model
+
+The four-parameter log-logistic dose-response model is the nonlinear model of the mean of a real valued random variable $Y$ given $x$ defined as
+
+$$
+f(x|\alpha, \beta, \gamma, \rho) = \gamma + \frac{\rho - \gamma}{1 + e^{\beta \log(x) - \alpha}}
+$$
+
+$\theta = (\alpha, \beta, \gamma, \rho) \in \RR^4$. We wish to minimize
+
+$$
+H(\alpha, \beta, \gamma, \rho) = \frac{1}{N} \sum_{i=1}^{n} \left( y_i -  f(x_i|\alpha, \beta, \gamma, \rho ) \right)^2 
+$$
+By stochastic gradient descent. The optimization works by the update rule
+
+$$\theta_{n+1} = \theta_n - \gamma_{n+1} \nabla H (\theta_{n+1})$$
+
+where $\gamma_n$ is the learning rate. And $\nabla H (\theta_{n})$ is the gradient of the loss function at the $n$-th iteration. Since we are performing SGD we will find the gradient of a single random observation instead of the entire sum
+
+$$
+\nabla H (\theta_{n}) = - 2 \nabla_{\theta} f(x_i| \alpha_n, \beta_n, \gamma_n, \rho_n) (y_i - f(x_i| \alpha_n, \beta_n, \gamma_n, \rho_n))
+$$
+
+The gradient of the $f$ function can by differentiation be obtained as:
+
+$$
+\nabla f(x| \alpha, \beta, \gamma, \rho) = \begin{pmatrix} \frac{\rho- \gamma}{(1 + e^{\beta \log(x) - \alpha})^2} e^{\beta \log(x) - \alpha} \\
+- \frac{\log(x) (\rho - \gamma)}{(1 + e^{\beta \log(x) - \alpha})^2} e^{\beta \log(x) - \alpha} \\
+1 - \frac{1}{1 + e^{\beta \log(x) - \alpha}} \\ \frac{1}{1 + e^{\beta \log(x) - \alpha}} \end{pmatrix}
+
+$$
+The $\nabla H (\theta_{n})$ is implemented in the function grad. We have created a parameters class. The parameter class has a simulate method, which per default samples $\log(x)$'s from a normal distribution and calculates the $y$'s by $y_i = f(x_i|\alpha, \beta, \gamma, \rho)$. If you set grid = TRUE, the $x$'s are sampled from a grid. The grid is the grid from $e^1,..., e^{15}$
+
+```{r}
+# Sim 1
+N <- 1000
+param <- parameters(0.1,1,2.2,1)
+data <- sim(param, N)
+x <- data$x
+y <- data$y
+head(data)
+```
+
+We have furthermore implemented a SGD class
+```{r}
+set.seed(3099)
+sgd0 <- SGD(par0 = c(1,1,1,1), grad = grad, gamma = 0.01, true_par = param$par,
+             x = x, y = y)
+```
+
+With a print function
+```{r}
+sgd0
+```
+The SGD algorithm does okay. We have also implemented a plot function
+```{r}
+plot(sgd0)
+```
+## Different starting values
+
+If we look at the algorithm for different starting values
+
+```{r}
+set.seed(34)
+rand <- round(rnorm(4, 0, 5))
+col_name <- sprintf("SV (%s)", paste(rand, collapse = ", "))
+
+sgd_true_sv <- SGD(par0 = param$par, grad = grad, gamma = 0.001, x = x, y = y,
+                           true_par = param$par)
+
+sgd_rand_sv <- SGD(par0 = rand, grad = grad, gamma = 0.001, x = x, y = y,
+                           true_par = param$par)
+
+diff_start_vals_sgd <- tibble(
+  "Par" = c("alpha", "beta", "gamma", "rho"),
+  "True vals" = param$par,
+  "Sv c(1,1,1,1)" = sgd0$est,
+  "True sv" = sgd_true_sv$est,
+   !!sym(col_name) := sgd_rand_sv$est)
+
+diff_start_vals_sgd
+
+grid.arrange(plot(sgd0, 1) + ggtitle("c(1,1,1,1)"),
+             plot(sgd_true_sv, 1)+ ggtitle("True vals"), 
+             plot(sgd_rand_sv, 1) + ggtitle("Random Vals"),
+             nrow = 1)
+```
+The plots and table suggests we find local optimas. But that the SGD algorithm does not necessarily have to start out in the true values in order to produce reasonable estimates. 
+
+## Decay schedule
+
+We implement a flexible three-parameter power law family of decay schedules
+
+$$
+\gamma_n = \frac{\gamma_0 K}{K + n^{a}}
+$$
+Where $a \in (0.5,1]$ and $K>0$. $\gamma_0$ is the initial learning rate. If $H$ is strongly convex and the gradient bounded, this decay schedule will ensure convergence. We try two different decay schedules, where we vary $a$ and $K$. A variations of this decay schedule is to specify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We implement one decay schedule this way. 
+
+```{r}
+decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 1)
+decay2 <- decay_scheduler(gamma0 = 1, a = 0.5, K = 10)
+decay3 <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.0002)
+
+sgd_decay1 <- SGD(par0 = param$par, grad = grad, gamma = decay1, x = x, y = y,
+                           true_par = param$par)
+
+sgd_decay2 <- SGD(par0 = param$par, grad = grad, gamma = decay2, x = x, y = y,
+                           true_par = param$par)
+
+
+sgd_decay3 <- SGD(par0 = param$par, grad = grad, gamma = decay3, x = x, y = y,
+                           true_par = param$par)
+
+grid.arrange(plot(sgd_decay1, 1) + ggtitle("a = 1, K = 1"),
+             plot(sgd_decay2, 1)+ ggtitle(" a = 0.5, K = 10"), 
+             plot(sgd_decay3, 1) + ggtitle("g1 = 0.0001, n1 = 100"),
+             nrow = 1)
+```
+The last decay rate seems to work best. 
+
+## Mini batch implementation
+
+Mini batches stabilizes the gradient, while maintaining the SGD speed. We investigate how th
+
+
+```{r}
+set.seed(983)
+SGD_tracer$clear()
+sgd_mb_20 <- SGD(par0 = param$par, grad = grad_mult, gamma = decay3, x = x, y = y,
+            true_par = param$par, m = 10, epoch = batch)
+SGD_tracer$clear()
+sgd_mb_50 <- SGD(par0 = param$par, grad = grad_mult, gamma = decay3, x = x, y = y,
+            true_par = param$par, m = 20, epoch = batch)
+SGD_tracer$clear()
+sgd_mb_100 <- SGD(par0 = param$par, grad = grad_mult, gamma = decay3, x = x, y = y,
+            true_par = param$par, m = 100, epoch = batch)
+
+grid.arrange(plot(sgd_mb_20, 1),
+             plot(sgd_mb_50, 1), 
+             plot(sgd_mb_100, 1),
+             nrow = 1)
+```
+
+## Profiling
+
+```{r}
+profvis({
+  sgd(par = param$par, grad = grad, gamma = decay3, x = x, y = y,
+                           true_par = param$par)
+})
+```
+
+It takes time to calculate the gradient. 
+
+## Benchmarking
+
+Comparing minibatch and vanilla SGD
+
+```{r}
+sgd_bench1 <- bench::press(
+  k = seq(100,500, length.out = 5),
+  {
+    bench::mark(
+      "Vanilla" = sgd(par = param$par, grad = grad, gamma = decay3, x = x[1:k], y = y[1:k],
+                           true_par = param$par),
+      "Mini-batch" = sgd(par = param$par, grad = grad, gamma = decay3, x = x[1:k], y = y[1:k],
+                           true_par = param$par, m = 10, epoch = batch),
+      check = FALSE)
+    }
+  )
+
+sgd_bench1 %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+
+autoplot(sgd_bench1)
+```
+
+## Scaling the input
+
+```{r}
+scaled_data <- scale(data) 
+# Shift the data so that the minimum value is 1 (or any positive value)
+scaled_data <- scaled_data + abs(min(scaled_data)) + 1
+sc_x <- scaled_data[,1]
+sc_y <- scaled_data[,2]
+
+sgd_bench2 <- bench::press(
+  k = seq(100,500, length.out = 5),
+  {
+    bench::mark(
+      "Vanilla" = sgd(par = param$par, grad = grad, gamma = decay3, x = sc_x[1:k], 
+                      y = sc_y[1:k], true_par = param$par),
+      "Mini-batch" = sgd(par = param$par, grad = grad, gamma = decay3, x = sc_x[1:k],
+                         y = sc_y[1:k], true_par = param$par),
+      check = FALSE)
+    }
+  )
+
+sgd_bench2 %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+
+autoplot(sgd_bench2)
+```
+
+
+## RCPP implementation
+
+# Compare the resulting optimization algorithm(s) with non-stochastic algorithms e.g. gradient descent or the Newton algorithm
+
+
+```{r}
+gd0 <- GD(par = c(1,1,1,1), H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+gd_true_sv <- GD(par = param$par, H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+gd_rand_sv <- GD(par = rand, H = H, x = x, t0 = 0.05, y = y, true_par = param$par)
+
+res <- rbind(gd0$est,
+gd_true_sv$est,
+gd_rand_sv$est,
+param$par)
+colnames(res) <- c("alpha", "beta", "gamma", "rho")
+rownames(res) <- c("Sv c(1,1,1,1)", "True sv", "Random sv", "True par")
+res
+```
+
+```{r}
+grid.arrange(
+  plot(gd0, 1) + ggtitle("c(1,1,1,1)"),
+  plot(gd_true_sv, 1) + ggtitle("True SV"),
+  plot(gd_rand_sv, 1) + ggtitle("Random SV"),
+  nrow = 1
+)
+```
+
+GD works very well if we start the algorithm out in the true values. 
+
+# Data sampled from a grid
+
+```{r}
+data2 <- sim(param, N, grid = TRUE)
+x2 <- data2$x
+y2 <- data2$y
+head(data2)
+```
+
+
+We see how well they do for the grid sampled data
+
+```{r}
+gd1 <- GD(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2,  y = y2, true_par = param$par)
+
+sgd1 <- SGD(par0 = c(1,1,1,1), grad = grad, gamma = 0.01, x = x2, y = y2,
+            true_par = param$par)
+
+print(gd1$est); print(sgd1$est); param$par
+```
+
+We have implemented a faster version of the GD algorithm. Where we exploit the fact that the $x$'s are sampled from a grid. We can then use the fact that the $x$'s are unique and only calculate the $f$ function and the derivative of the $f$ function for the unique $x$'s. We benchmark the two gradient descent algorithms to compare them
+
+```{r}
+# Sanity check - should do the same
+grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2, y = y2)
+grad_desc_grid(par = c(1,1,1,1), x = x2, y = y2)
+
+# They dont:(
+```
+
+## Profiling
+
+```{r}
+profvis({
+  grad_desc_grid(par = c(1,1,1,1), x = x2, y = y2)
+})
+```
+
+It takes time to calculate the gradient. 
+
+## Benchmarking
+
+Comparing grid version with regular GD. 
+
+```{r}
+gd_bench1 <- bench::press(
+  k = seq(100,500, length.out = 5),
+  {
+    bench::mark(
+      "Regular" = grad_desc(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2[1:k], y = y2[1:k]),
+      "Gird version" = gd_grid(par = c(1,1,1,1), x = x2[1:k], y = y2[1:k]),
+      check = FALSE)
+    }
+  )
+
+gd_bench1 %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+
+autoplot(gd_bench1)
+```
+

@@ -63,28 +63,28 @@ And the log-logistic dose-response model is given by:
 ---
 ### Test of Algorithm 
 
-We do a naive test of the algorithm. We simulate a data sets (of size `\(N=1000\)`) for the  parameter values: `\((0.1,1,2.2,1)\)`. 
+We do a naive test of the algorithm.  
 
 
 
-And run the algorithm with 3 different starting values. 
+And run the algorithm with 3 different starting values: the true values, `\((1,1,1,1)\)` and random values `\((2.63, 1.64, 1.00, 0.49)\)`. 
 
 
 
-Very different convergence schemes, converging to different values
+&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-6-1.png" style="display: block; margin: auto;" /&gt;
 
-![](4---PresentationMichaela_files/figure-html/unnamed-chunk-6-1.png)&lt;!-- --&gt;
+Very different convergence schemes. 
 
-![](4---PresentationMichaela_files/figure-html/unnamed-chunk-7-1.png)&lt;!-- --&gt;
+&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-7-1.png" style="display: block; margin: auto;" /&gt;
 
 Table: Different starting values
 
-|Par         |  True vals| (1, 1, 1, 1)| (0.2, 2, 4.4, 2)|
-|:-----------|----------:|------------:|----------------:|
-|alpha (0.1) | -0.1213310|    0.2075029|        0.3929716|
-|beta (1.0)  |  1.0014032|    1.1476542|        0.9275918|
-|gamma (2.2) |  2.1684862|    2.1755036|        2.3496939|
-|rho (1.0)   |  0.8923347|    1.0215186|        0.9961021|
+|Par         | True vals| (1, 1, 1, 1)| Random vals|
+|:-----------|---------:|------------:|-----------:|
+|alpha (0.1) |  2.099713|     2.089024|    2.085509|
+|beta (1.0)  |  5.378206|     5.345995|    5.354750|
+|gamma (2.2) |  0.970954|     1.006829|    1.049649|
+|rho (1.0)   |  2.042709|     1.985494|    1.933211|
 
 
 ---
@@ -96,54 +96,61 @@ $$
 \gamma_n = \frac{\gamma_0 K}{K + n^{a}}
 $$
 
-We try two different decay schedules, where we vary `\(a\)` and `\(K\)`. For the first one we let `\(a = 1\)`, `\(K= 0.4\)`. For the second one `\(a = 0.7\)`, `\(K = 1\)`. A variations of this decay schedule is to specify a desired learning rate `\(\gamma_1\)` which should be reached at iteration `\(n_1\)`. These specifications then determine the parameter `\(K\)`. We implement one decay schedule this way. 
+We try a decay schedules with `\(a = 1\)`, `\(K= 0.4\)` and `\(\gamma_0 = 1\)`. A different way to specify the decay schedule is to specify a desired learning rate `\(\gamma_1\)` which should be reached at iteration `\(n_1\)`. These specifications then determine the parameter `\(K\)`. We specify two decay schedules with `\(\gamma_0 = 1\)`, `\(n_1 = 100\)`, `\(a=2\)`. And `\(\gamma_1 = 0.1\)` and `\(\gamma_1 = 0.01\)`. 
 
 
 
-![](4---PresentationMichaela_files/figure-html/unnamed-chunk-9-1.png)&lt;!-- --&gt;![](4---PresentationMichaela_files/figure-html/unnamed-chunk-9-2.png)&lt;!-- --&gt;
+&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-9-1.png" style="display: block; margin: auto;" /&gt;&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-9-2.png" style="display: block; margin: auto;" /&gt;
 
 ---
 ### Gradient Descent
 
-We have also implemented a gradient descent algorithm. We have created an equivalent class for this algorithm as well. As stopping criterion we use $ | \theta_n - \theta_{n-1}| \leq \epsilon = 10^{-4}$. We use backtracking line search in the algorithm in order to find step length. We check that the algorithm works:
+We have also implemented a gradient descent algorithm. We have created an equivalent class for this algorithm as well. As stopping criterion we use `\(|\theta_n - \theta_{n-1}| \leq \epsilon = 10^{-4}\)`. We use backtracking line search in the algorithm in order to find step length. We check that the algorithm works: warning = FALSE, message = FALSE,
 
-![](4---PresentationMichaela_files/figure-html/unnamed-chunk-10-1.png)&lt;!-- --&gt;
+
+```
+## Warning in grad_desc(par = par, grad = grad, t0 = t0, maxit = maxit, cb = cb, :
+## Maximal number, 1200, of iterations reached
+
+## Warning in grad_desc(par = par, grad = grad, t0 = t0, maxit = maxit, cb = cb, :
+## Maximal number, 1200, of iterations reached
+```
+
+```
+## `geom_line()`: Each group consists of only one observation.
+## ℹ Do you need to adjust the group aesthetic?
+```
+
+&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-10-1.png" style="display: block; margin: auto;" /&gt;
 
 Table: Different starting values
 
 |Par         | (0.1, 0.8, 2.7, 1.5)| (1, 1, 1, 1)| True vals|
 |:-----------|--------------------:|------------:|---------:|
-|alpha (0.1) |            0.1624802|    0.5709169| 0.1624802|
-|beta (1.0)  |            0.8665684|    1.2024765| 0.8665684|
-|gamma (2.2) |            2.3127197|    2.2516662| 2.3127197|
-|rho (1.0)   |            0.8988933|    1.1122319| 0.8988933|
+|alpha (0.1) |                    2|    0.8940112|         2|
+|beta (1.0)  |                    5|    1.4416603|         5|
+|gamma (2.2) |                    1|    0.6560387|         1|
+|rho (1.0)   |                    2|    2.1617488|         2|
 
 ---
 ### Comparison
 
-We compare the performance of the two algorithms. 
+We compare the performance of the two algorithms. warning = FALSE, message = FALSE
 
 
 
 
 Table: GD vs. SGD
 
-|      | True|        GD|        SGD|
-|:-----|----:|---------:|----------:|
-|alpha |  0.1| 0.5709169| -0.0797157|
-|beta  |  1.0| 1.2024765|  1.0872478|
-|gamma |  2.2| 2.2516662|  2.1378754|
-|rho   |  1.0| 1.1122319|  0.9397566|
+|      | True|        GD|      SGD|
+|:-----|----:|---------:|--------:|
+|alpha |    2| 0.8975873| 1.802281|
+|beta  |    5| 1.4161093| 4.569185|
+|gamma |    1| 0.6687783| 0.977666|
+|rho   |    2| 2.1524844| 2.001999|
 
 
-![](4---PresentationMichaela_files/figure-html/unnamed-chunk-13-1.png)&lt;!-- --&gt;![](4---PresentationMichaela_files/figure-html/unnamed-chunk-13-2.png)&lt;!-- --&gt;
-
----
-### Comparison 2
-
-We benchmark the two algorithms. 
-
-![](4---PresentationMichaela_files/figure-html/unnamed-chunk-14-1.png)&lt;!-- --&gt;![](4---PresentationMichaela_files/figure-html/unnamed-chunk-14-2.png)&lt;!-- --&gt;
+&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-13-1.png" style="display: block; margin: auto;" /&gt;&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-13-2.png" style="display: block; margin: auto;" /&gt;
 
 ---
 ### Exploiting Grid Structure 
@@ -155,9 +162,9 @@ If we sample our `\(x\)`'s from a grid of `\(m\)` points we can exploit the fact
 gd_grid &lt;- function(
     par,
     t0 = 1e-2,
-    maxit = 1000,
+    maxit = 1200,
     cb = NULL,
-    epsilon = 1e-6,
+    epsilon = 1e-5,
     beta = 0.8,
     alpha = 0.1,
     x,
@@ -213,25 +220,25 @@ gd_grid &lt;- function(
 We sample data from a grid. 
 
 ```
-##              x         y
-## 1 22026.465795 2.1805075
-## 2   148.413159 2.6218884
-## 3     7.389056 1.3026705
-## 4    54.598150 0.8765165
-## 5 22026.465795 1.3062355
-## 6 59874.141715 2.5386807
+##           x        y
+## 1 0.6468499 1.119244
+## 2 2.0154853 1.530070
+## 3 0.2033028 2.680039
+## 4 0.9238346 2.827152
+## 5 0.1275452 1.674281
+## 6 0.6614636 2.804831
 ```
 
 We check that the two algorithms return the same output
 
 
 ```
-## [1] FALSE
+## [1] TRUE
 ```
 
 Comparing grid version with regular GD. 
 
-![](4---PresentationMichaela_files/figure-html/unnamed-chunk-18-1.png)&lt;!-- --&gt;![](4---PresentationMichaela_files/figure-html/unnamed-chunk-18-2.png)&lt;!-- --&gt;
+&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-17-1.png" style="display: block; margin: auto;" /&gt;&lt;img src="4---PresentationMichaela_files/figure-html/unnamed-chunk-17-2.png" style="display: block; margin: auto;" /&gt;
     </textarea>
 <style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
 <script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
