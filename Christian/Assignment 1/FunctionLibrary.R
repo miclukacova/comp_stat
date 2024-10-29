@@ -75,6 +75,10 @@ kern_bin_Rcpp <- function(x, l, u, B) {
 #-------------------------------------------------------------------------------
 
 
+
+
+
+
 calc_epa <- function(weights, centers, h){
   return(function(gridpoints){
     sum(weights * epanechnikov((gridpoints - centers) / h))
@@ -105,8 +109,6 @@ epanechnikov_pilot_bandwidth <- function(x) {
 #-------------------------------------------------------------------------------
 
 
-
-
 #-----------Calculate difference between min and max in x pilot bandwidth-------
 min_max_diff_sum <- function(x, r_hat){
   min_matrix <- outer(x,x, pmin)
@@ -115,7 +117,6 @@ min_max_diff_sum <- function(x, r_hat){
   return(sum(pmax(0, 2*r_hat + min_matrix - max_matrix)))
 }
 #-------------------------------------------------------------------------------
-
 
 #--------Calculate difference between min and max in x pilot bandwidth fast-----
 min_max_diff_sum_fast <- function(x, r_hat){
@@ -128,7 +129,7 @@ min_max_diff_sum_fast <- function(x, r_hat){
 
 #-------Calculate difference between min and max in x pilot bandwidth faster----
 min_max_diff_sum_faster <- function(x, r_hat){
-  abs_val_matrix <- - abs(Outer(x,x, "-"))
+  abs_val_matrix <- - abs(Rfast::Outer(x,x, "-"))
   
   return(sum(pmax(0,2*r_hat + abs_val_matrix)))
 }
@@ -142,9 +143,6 @@ min_max_diff_sum_Rcpp <- function(x, r_hat){
 #-------------------------------------------------------------------------------
 
 
-
-
-
 #-----------------Calculate f_tilde_norm2 for Epanechnikov kernel---------------
 epanechnikov_f_tilde_norm2 <- function(x){
   
@@ -155,7 +153,6 @@ epanechnikov_f_tilde_norm2 <- function(x){
   double_sum <- min_max_diff_sum_faster(x, r_hat)
   
   return(9/4 * 1/(n^2 * r_hat^6) * double_sum)
-  
 }
 
 epanechnikov_f_tilde_norm2_rcpp <- function(x){
@@ -170,6 +167,9 @@ epanechnikov_f_tilde_norm2_rcpp <- function(x){
   
 }
 #-------------------------------------------------------------------------------
+
+
+
 
 
 

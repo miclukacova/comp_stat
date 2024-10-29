@@ -5,13 +5,14 @@
 ###############################################
 
 
+
 AMISE_epa_bandwidth <- function(x){
   n <- length(x)
   K_square_norm <- 3/5
   k_sigma_4 <- 1/25
   f_tilde_norm2 <- epanechnikov_f_tilde_norm2(x)
   
-  (K_square_norm/(k_sigma_4 * f_tilde_norm2))^(1/5) * n^(-1/5)
+  return((K_square_norm/(k_sigma_4 * f_tilde_norm2))^(1/5) * n^(-1/5))
 }
 
 AMISE_epa_bandwidth_rcpp <- function(x){
@@ -20,7 +21,108 @@ AMISE_epa_bandwidth_rcpp <- function(x){
   k_sigma_4 <- 1/25
   f_tilde_norm2 <- epanechnikov_f_tilde_norm2_rcpp(x)
   
-  (K_square_norm/(k_sigma_4 * f_tilde_norm2))^(1/5) * n^(-1/5)
+  return((K_square_norm/(k_sigma_4 * f_tilde_norm2))^(1/5) * n^(-1/5))
+}
+
+
+
+# Silverman's rule of thumb (AMISE Gaussian kernel)
+silverman <- function(x){
+  n <- length(x)
+  sigma <- sd(x)
+  
+  sigma_tilde <- min(0.9 * sigma * n^(-1/5), IQR(x)/1.34)
+  
+  return(0.9 * sigma_tilde * n^(-1/5))
+}
+
+
+
+
+
+#------------ Cross-validation ------------
+
+
+cv_outer <- function(x, h_grid = seq(0, 2, 0.05), folds = 10, kernel = epanechnikovMatrixRcpp, seed = NA) {
+  
+  if (!is.na(seed)){
+    set.seed(seed)
+  }
+  
+  # Initiate variables
+  group <- sample(rep(1:folds, length.out = length(x))) # Randomly assign each observation to a fold
+  ll_sum <- numeric(length(h_grid))                     # Vector to store ll for each h
+  
+  
+  for (h_index in seq_along(h_grid)){
+    
+    h <- h_grid[h_index]          # Get h from grid of h's
+    fold_l_cv <- numeric(folds)   # Vector to store log-likelihood for each fold
+    
+    for (fold in seq_along(1:folds)) {
+      # Define hold-out set and remaining sets for fold
+      other_sets <- x[group != fold]
+      hold_out_set <- x[group == fold]
+      
+      N_i <- length(other_sets)
+      
+      # Precalculate kernel input to save computations
+      kernel_input <- Rfast::Outer(x = hold_out_set, y = other_sets, "-") / h
+      
+      # Calculate i'th kernel estimate
+      f_i_hats <- colSums(kernel(kernel_input))
+      
+      
+      # Get log-likelihood for fold
+      fold_l_cv[fold] <- sum(log(1/(h * N_i) * f_i_hats))
+    }
+    
+    # Sum log-likelihoods to obtain log-likelihood for h
+    ll_sum[h_index] <- sum(fold_l_cv)
+    
+  }
+  
+  cv_result <- data.frame(h = h_grid, cv_result = ll_sum)
+  best_h <- h_grid[which.max(ll_sum)]
+  
+  return(list(cv_result = cv_result, best_h = best_h))
+}
+
+
+CV <- function(x, h_grid = seq(0, 2, 0.05), folds = 10, kernel = epanechnikovMatrixRcpp, seed = NA, reps = 50){
+  h_CV_list <- numeric(reps)
+  for (i in seq_along(h_CV_list)){
+    h_CV_list[i] <- cv_outer(x = x, h_grid = h_grid, folds = folds, kernel = kernel, seed = seed)$best_h
+  }
+  h_CV <- mean(h_CV_list)
+}
+
+
+
+cv_cpp <- function(x, h_grid = seq(0, 2, 0.05), folds = 10, seed = NA) {
+  
+  if (!is.na(seed)){
+    set.seed(seed)
+  }
+  
+  # Initiate variables
+  group <- sample(rep(1:folds, length.out = length(x))) # Randomly assign each observation to a fold
+  
+  ll_sum <- cv_rcpp(x = x, h_grid = h_grid, folds = folds, group = group)
+  
+  cv_result <- data.frame(h = h_grid, cv_result = ll_sum)
+  best_h <- h_grid[which.max(ll_sum)]
+  
+  return(list(cv_result = cv_result, best_h = best_h))
+}
+
+
+CV_cpp <- function(x, h_grid = seq(0, 2, 0.05), folds = 10, seed = NA, B = 10){
+  h_CV_list <- numeric(B)
+  for (i in seq_along(h_CV_list)){
+    h_CV_list[i] <- cv_cpp(x = x, h_grid = h_grid, folds = folds, seed = seed)$best_h
+  }
+  h_CV <- mean(h_CV_list)
 }
 
 
@@ -30,11 +132,8 @@ AMISE_epa_bandwidth_rcpp <- function(x){
 
 
 
-#------------ Cross-validation ------------
 
 
-
-#Make cv class?
 
 cv_naive <- function(x, h_grid, folds, kernel = epanechnikov, seed = NA) {
   
@@ -81,52 +180,6 @@ cv_naive <- function(x, h_grid, folds, kernel = epanechnikov, seed = NA) {
   
   cv_result <- data.frame(h = h_grid, cv_result = cv_sum)
   best_h <- h_grid[which.max(cv_sum)]
-  
-  return(list(cv_result = cv_result, best_h = best_h))
-}
-
-
-cv_outer <- function(x, h_grid, folds, kernel = epanechnikov, seed = NA) {
-  
-  if (!is.na(seed)){
-    set.seed(seed)
-  }
-  
-  # Initiate variables
-  group <- sample(rep(1:folds, length.out = length(x))) # Randomly assign each observation to a fold
-  ll_sum <- numeric(length(h_grid))                     # Vector to store ll for each h
-  
-  
-  for (h_index in seq_along(h_grid)){
-    
-    h <- h_grid[h_index]          # Get h from grid of h's
-    fold_l_cv <- numeric(folds)   # Vector to store log-likelihood for each fold
-    
-    for (fold in seq_along(1:folds)) {
-      # Define hold-out set and remaining sets for fold
-      other_sets <- x[group != fold]
-      hold_out_set <- x[group == fold]
-      
-      N_i <- length(other_sets)
-      
-      # Precalculate kernel input
-      kernel_input <- Rfast::Outer(x = hold_out_set, y = other_sets, "-") / h
-      
-      # Calculate i'th kernel estimate
-      f_i_hats <- colSums(kernel(kernel_input))
-      
-      
-      # Get log-likelihood for fold
-      fold_l_cv[fold] <- sum(log(1/(h * N_i) * f_i_hats))
-    }
-    
-    # Sum log-likelihoods to obtain log-likelihood for h
-    ll_sum[h_index] <- sum(fold_l_cv)
-    
-  }
-  
-  cv_result <- data.frame(h = h_grid, cv_result = ll_sum)
-  best_h <- h_grid[which.max(ll_sum)]
   
   return(list(cv_result = cv_result, best_h = best_h))
 }

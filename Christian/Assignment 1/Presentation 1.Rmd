@@ -1,0 +1,624 @@
+---
+title: "Smoothing - A: Density Estimation"
+author: 
+- "Christian Rubjerg Hejstvig-Larsen (brf337)"
+institute: "University of Copenhagen"
+date: '`r Sys.Date()`'
+output:
+  xaringan::moon_reader:
+    css: xaringan-themer.css
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      highlightSpans: true
+      ratio: 16:9
+      countIncrementalSlides: true
+      navigation:
+        scroll: false
+---
+<style type="text/css">
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content > h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+</style>
+```{r, include=FALSE, eval = FALSE}
+rmarkdown::render('presentation.rmd')
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE}
+library(xaringanthemer)
+library(CSwR)
+knitr::opts_chunk$set(fig.retina = 2)
+style_mono_accent(
+ base_color = "#2C32A3")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Read required libraries
+library(ggplot2)          # For plotting
+library(grid)             # For arranging plots
+library(gridExtra)        # For arranging plots
+
+library(bench)            # For benchmarking
+library(microbenchmark)   # For benchmarking code
+library(testthat)         # For testing
+
+library(Rcpp)             # For C++ code
+
+library(dplyr)            # For data manipulation
+library(Rfast)            # For fast matrix operations
+library(parallel)         # For parallel processing
+library(doParallel)       # For parallel processing
+
+library(MASS)             # For ucv
+library(CSwR)             # For the data
+
+library(pander)           # For printing tables
+
+theme_set(theme_bw() + theme(text = element_text(size = 13)))
+
+source("/Users/christianhejstvig-larsen/Desktop/Studie/Master/First year/Block 1/Computational Statistics/comp_stat/Christian/Assignment 1/FunctionLibrary.R", local = knitr::knit_global())
+source("/Users/christianhejstvig-larsen/Desktop/Studie/Master/First year/Block 1/Computational Statistics/comp_stat/Christian/Assignment 1/BandwidthSelectionAlgorithms.R", local = knitr::knit_global())
+source("/Users/christianhejstvig-larsen/Desktop/Studie/Master/First year/Block 1/Computational Statistics/comp_stat/Christian/Assignment 1/EpanechnikovKernels.R", local = knitr::knit_global())
+Rcpp::sourceCpp("/Users/christianhejstvig-larsen/Desktop/Studie/Master/First year/Block 1/Computational Statistics/comp_stat/Christian/Assignment 1/RcppFunctions.cpp")
+```
+
+
+
+### The problem and overview
+The aim in this project is to implement a kernel density estimator using the Epanechnikov kernel
+
+$$ K(x) = \frac{3}{4}(1-x^2) \cdot 1_{[-1,1]}(x) $$
+and implement bandwidth selection algorithms. The project is structured as follows:
+
++ Implementation of the Epanechnikov kernel density estimator
++ Implementation of bandwidth selection algorithms
+ + AMISE-based
+ + Cross-validation-based
++ Putting it all together and testing on different data
+
+---
+
+### The Epanechnikov kernel density estimator
+Recall that the general Kernel estimator is given by
+
+$$\hat f_h (x) = \frac{1}{hN} \sum_{j = 1}^N K \left(\frac{x - x_j}{h} \right)$$
+The Epanechnikov kernel is given by:
+
+$$K(x) = \frac{3}{4}(1-x^2) \cdot 1_{[-1,1]}(x)$$
+so the Epanechnikov kernel density estimator will be given by
+
+$$\hat f_h (x) = \frac{1}{hN} \sum_{j = 1}^N \frac{3}{4}\biggl(1-\biggl(\frac{x-x_j}{h}\biggr)^2 \biggr) \cdot 1_{[-1,1]}(\frac{x-x_j}{h})$$
+---
+
+### Implementation
+We try three different implementations of the kernel.
+
++ Version 1: A loop-based version of the kernel
++ Version 2: The vectorized kernel
++ Version 3: The binned kernel
+
+```{r}
+epanechnikov <- function(x) {
+  (abs(x) <= 1) * 3/4 * (1 - x^2)
+}
+
+
+kern_dens_vec <- function(x, h, n = 512, normalization = TRUE) {
+  
+  if (h <= 0) stop("Bandwidth must be positive")
+  
+  # Prepare the kernel
+  prep <- kernel_prep(x, h, n)
+  gridpoints <- prep$gridpoints
+  y <- prep$y
+  N <- prep$N
+  
+  # Check if the normalization is requested
+  if (normalization){
+    # Multiply bandwidth by sqrt() inverse kernel variance if normalization is requested
+    # Variance of the Epanechnikov kernel is 1/5
+    h <- h * sqrt(5)
+  }
+  
+  const <- h * N
+  
+  # The inner loop from 'kern_dens_loop()' has been vectorized, and 
+  # only the outer loop over the grid points remains. 
+  
+  for (i in seq_along(gridpoints)) {
+    y[i] <- sum(epanechnikov((gridpoints[i] - x) / h)) / const
+  }
+  
+  list(x = gridpoints, y = y)
+}
+```
+
+---
+
+### The binned kernel
+
+The binned kernel is a way to speed up the kernel density estimation by binning the data into intervals and only calculating the kernel in the center of each interval and the weight this with the number of data points in the interval. That is, we now calculate
+
+$$\hat f_h (x) = \frac{1}{hN} \sum_{j = 1}^N n_j K \left(\frac{x - c_j}{h} \right)$$
+
+where $c_j$ is the center of the $j$'th bin and $n_j$ is the number of data points in the $j$'th bin. The procedure is as follows:
+
+1. Determine the range of the data and divide it into equal-sized bins.
+2. Count the number of data points in each bin.
+3. For each bin, compute the kernel density estimate using the bin count and the kernel function.
+4. For a new data point, find the bin it belongs to and use the pre-computed kernel density estimate for that bin.
+
+---
+
+### Implementation
+
+```{r}
+# Function to determine bins
+kern_bin <- function(x, l, u, B) {
+  
+  # Create vectors to store weights and centers
+  w <- numeric(B)
+  
+  # Define interval length
+  delta <- (u - l) / (B - 1)
+  
+  # Create vector of centers
+  centers <- seq(l + delta/2, u - delta/2, length.out = B)
+  
+  # Loop through each data point
+  for (j in seq_along(x)) {
+    i <- floor((x[j] - l) / delta + 0.5) + 1
+    w[i] <- w[i] + 1
+  }
+  return(list(weights = w, centers = centers))
+}
+
+
+kern_dens_bin <- function(x, h, n = 512, B = 100, normalization = TRUE) {
+  
+  if (h <= 0) stop("Bandwidth must be positive")
+  
+  # Prepare the kernel
+  prep <- kernel_prep(x, h, n)
+  gridpoints <- prep$gridpoints
+  y <- prep$y
+  N <- prep$N
+  range <- prep$range
+  
+  # Check if the normalization is requested
+  if (normalization){
+    # Multiply bandwidth by sqrt() inverse kernel variance if normalization is requested
+    # Variance of the Epanechnikov kernel is 1/5
+    h <- h * sqrt(5)
+  }
+  
+  const <- h * N
+  
+  # Define the binning characteristics
+  bins <- kern_bin(x = x, l = range[1], u = range[2], B = B)
+  weights <- bins$weights
+  centers <- bins$centers
+  
+  # Calculate binned kernel density estimates
+  y <- c(outer(gridpoints, centers, FUN = function(x,y) epanechnikov((x - y) / h)) %*% weights)
+  
+  # for (i in seq_along(gridpoints)) {
+  #     y[i] <- sum(weights * epanechnikov((gridpoints[i] - centers) / h))
+  # }
+  
+  y <- y / const
+  
+  
+  list(x = gridpoints, y = y)
+}
+```
+
+---
+
+### Check implementation
+
+```{r echo=F, message = FALSE, fig.width=9, fig.height=7, fig.align='center'}
+#Simulate data to test the kernel function
+set.seed(123)
+x <- rnorm(1000)
+h <- 0.25
+n <- 512
+
+r_dens_x <- density(x, bw = h, n = n, kernel = "epanechnikov")$x
+r_dens_y <- density(x, bw = h, n = n, kernel = "epanechnikov")$y
+loop_dens_y <- kern_dens_loop(x, h, n, normalization = T)$y
+vec_dens_y <- kern_dens_vec(x, h, n, normalization = T)$y
+bin_dens_y <- kern_dens_bin(x, h, n, normalization = T, B = 100)$y # Here using 100 bins. This could of course also be a parameter to tune
+
+hist(x, prob = T)
+legend(1.2, 0.4, legend=c("R density estimate", 
+                       "Loop density estimate", 
+                       "Vectorized density estimate", 
+                       "Binned density estimate"),
+       col=c("green", "red", "blue", "darkgreen"), lty=1:4, cex=0.8)
+lines(density(x, bw = h, n = n, kernel = "epanechnikov"), col = "green", lwd = 2)
+lines(kern_dens_loop(x, h, n, normalization = T), col = "red", lty = 2, lwd = 1)
+lines(kern_dens_vec(x, h, n, normalization = T), col = "blue", lty = 3, lwd = 1)
+lines(kern_dens_bin(x, h, n, normalization = T, B = 100), col = "darkgreen", lty = 4, lwd = 1)
+```
+
+We can numerically check the mean difference between R's density function and our implementations.
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=9, fig.height=7, fig.align='center'}
+# We then check that the results are about the same
+avg_diff_loop <- mean(r_dens_y - loop_dens_y)
+avg_diff_vec <- mean(r_dens_y - vec_dens_y)
+avg_diff_bin <- mean(r_dens_y - bin_dens_y)
+
+pander(data.frame(
+  "Loop" = avg_diff_loop,
+  "Vectorized" = avg_diff_vec,
+  "Binned" = avg_diff_bin))
+
+# 
+# # We can also use test_that to check that the results are about the same
+# test_that("Vectorized density implementation corresponds to density() with tolerance 1e-3", {
+#   expect_equal(
+#     r_dens_y,
+#     vec_dens_y,
+#     tolerance = 1e-3
+#     )
+# })
+# 
+# test_that("Binned density implementation corresponds to density() with tolerance 1e-2", {
+#   expect_equal(
+#     r_dens_y,
+#     bin_dens_y,
+#     tolerance = 1e-2
+#     )
+# })
+```
+
+---
+
+### Benchmarking implementations
+
+```{r echo = F}
+# Benchmark the three functions against the density estimate
+# bench::mark(Loop = kern_dens_loop(x, h, n, normalization = T),
+#             Vectorized = kern_dens_vec(x, h, n, normalization = T),
+#             Binned = kern_dens_bin(x, h, n, normalization = T),
+#             Rdens = density(x, bw = h, n = n, kernel = "epanechnikov"),
+#             check = F)
+```
+
+
+```{r echo=F, message = FALSE, fig.width=9, fig.height=7, fig.align='center'}
+kern_benchmarks <- bench::press(
+  k = 2^(4:9),
+  {
+      bench::mark(
+        loop = kern_dens_loop(x[1:k], h, n, normalization = T),
+        vectorized = kern_dens_vec(x[1:k], h, n, normalization = T),
+        binned = kern_dens_bin(x[1:k], h, n, normalization = T),
+        r_dens = density(x[1:k], bw = h, n = n, kernel = "epanechnikov"),
+        check = F)
+  }
+)
+
+plot(kern_benchmarks)
+
+kern_benchmarks %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+```
+
+---
+
+### Profiling
+
+We choose to proceed with the binned kernel as this by far is the fastest and the estimates are very close to the other algorithms.
+
+```{r echo = F}
+x <- rnorm(1e7)
+profvis::profvis({
+  
+  epanechnikov <- function(x) {
+    (abs(x) <= 1) * 3/4 * (1 - x^2)
+  }
+
+
+  kern_bin <- function(x, l, u, B) {
+
+  # Create vectors to store weights and centers
+  w <- numeric(B)
+
+  # Define interval length
+  delta <- (u - l) / (B - 1)
+
+  # Create vector of centers
+  centers <- seq(l + delta/2, u - delta/2, length.out = B)
+
+  # Loop through each data point
+  for (j in seq_along(x)) {
+    i <- floor((x[j] - l) / delta + 0.5) + 1
+    w[i] <- w[i] + 1
+  }
+  return(list(weights = w, centers = centers))
+  }
+
+
+  kern_dens_bin <- function(x, h, n = 512, B = 100, normalization = TRUE, fast = TRUE) {
+
+    if (h <= 0) stop("Bandwidth must be positive")
+
+    # Prepare the kernel
+    prep <- kernel_prep(x, h, n)
+    gridpoints <- prep$gridpoints
+    y <- prep$y
+    N <- prep$N
+    range <- prep$range
+
+    # Check if the normalization is requested
+    if (normalization){
+      # Multiply bandwidth by sqrt() inverse kernel variance if normalization is requested
+      h <- h * sqrt(5)
+    }
+
+    const <- h * N
+
+    # Define the binning characteristics
+    bins <- kern_bin(x = x, l = range[1], u = range[2], B = B)
+    weights <- bins$weights
+    centers <- bins$centers
+
+    # Calculate binned kernel density estimates
+    if (fast){
+      y <- outer(gridpoints, centers, FUN = function(x,y) epanechnikov((x - y) / h))
+      y <- c(y %*% weights)
+    } else {
+      for (i in seq_along(gridpoints)) {
+        y[i] <- sum(weights * epanechnikov((gridpoints[i] - centers) / h))
+      }
+    }
+
+    y <- y / const
+
+
+    list(x = gridpoints, y = y)
+  }
+
+  
+  kern_dens_bin(x, h, n, normalization = T, fast = F)
+})
+```
+
+We see, that the main bottleneck is the for loop in the `kern_bin()` function so we implement this loop in C++ using the `Rcpp` package. 
+
+---
+
+### Rcpp implementation
+
+```{r}
+# // [[Rcpp::export]]
+# NumericVector kernbinloopRcpp(int B, NumericVector x, double l, double delta) {
+#   
+#   int n = x.size();
+#   NumericVector w(B);
+#   
+#   for (int j = 0; j < n; ++j){
+#     int i = floor((x[j] - l) / delta + 0.5); //Removed + 1 as Cpp is 0 index based
+#     w[i] = w[i] + 1;
+#   }
+#   return w;
+# }
+```
+
+We make a quick check that the implementation went well:
+
+```{r}
+test_that("Test that Rcpp implementation corresponds to R implementation 1e-12", {
+  expect_equal(
+    kern_bin(x, l = range(x)[1], u = range(x)[2], B = 100)$weights,
+    kern_bin_Rcpp(x = x, l = range(x)[1], u = range(x)[2], B = 100)$weights,
+    tolerance = 1e-12
+  )
+})
+```
+
+---
+
+### Final benchmark
+
+```{r echo = F, message=F, warning=F}
+kern_benchmarks_bin <- bench::press(
+  k = 2^(4:18),
+  {
+      bench::mark(
+        R_bin = kern_dens_bin(x[1:k], h, n, normalization = T),
+        Rcpp_bin = kern_dens_bin_Rcpp(x[1:k], h, n, normalization = T),
+        r_dens = density(x[1:k], bw = h, n = n, kernel = "epanechnikov"),
+        check = F)
+  }
+)
+
+kern_benchmarks_bin %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+```
+
+We wrap the kernel density estimator in a S3-object:
+
+```{r}
+EK <- epanechnikovKernel(x = x, h = h)
+plot(EK)
+```
+
+
+---
+
+### Bandwidth selection
+We consider two approaches. The bandwidth selection using the asymptotic AMISE and bandwidth selection using cross validation. We start with the asymptotic approach.
+
+
+### AMISE approach
+In this approach we use the AMISE (Asymptotic Mean Integrated Squared Error) to select a bandwidth. The AMISE is given by
+
+$$ AMISE(h) = \frac{||K||^2_2}{nh} + \frac{h^4 \sigma_K^4 ||f_0''||_2^2}{4} $$
+By minimizing the AMISE with respect to $h$ we obtain the optimal oracle bandwidth:
+
+$$h = \biggl(\frac{||K||^2_2}{\sigma_K^4 ||f_0''||^2_2} \biggr)^{1/5} n^{-1/5}$$
+$f_0$ is still unknown and must be estimated
+
+$$\|\tilde{f}''\|^2_2 = \frac{1}{n^2r^6} \sum_{i = 1}^n \sum_{j=1}^n 
+\int H''\left( \frac{x - x_i}{r} \right) H''\left( \frac{x - x_j}{r} \right) \mathrm{d} x\\ = \frac{1}{n^2 r^6} \sum_{i = 1}^n \sum_{j = 1}^n \int \biggl(-\frac{3}{2} 1_{[-1,1]} \biggl( \frac{x - x_i}{r}\biggr) \biggr)\biggl(-\frac{3}{2} 1_{[-1,1]} \biggl( \frac{x - x_j}{r}\biggr)\biggr) \mathrm{d}x \\ = \frac{9}{4n^2 r^6} \sum_{i = 1}^n \sum_{j = 1}^n \max \{0, (2r + \min \{x_i, x_j \} - \max \{x_i, x_j \} ) \}$$
+
+where $H$ is the Epanechnikov kernel and the pilot bandwidth $r$ is estimated by:
+
+$$r_n = \left( \frac{8 \sqrt{\pi} \|K\|_2^2}{3 \sigma_K^4} \right)^{1/5} \tilde\sigma n^{-1/5}, \qquad \tilde \sigma = \min \{\hat \sigma, IQR/1.34 \}$$
+For the Epanechnikov kernel, we have $||K||^2_2 = 3/5$ and $\sigma_K^2 = 1/5$, so the pilot bandwidth is given by
+
+$$r_n = \left( \frac{8 \sqrt{\pi} 3/5}{3 (1/5)^2} \right)^{1/5} \tilde\sigma n^{-1/5} = (40 \sqrt{\pi}) ^{1/5} \tilde \sigma n^{-1/5} $$
+
+---
+
+### Implementation
+
+We implement this in the following function.
+
+```{r}
+AMISE_epa_bandwidth_rcpp <- function(x){
+  n <- length(x)
+  K_square_norm <- 3/5
+  k_sigma_4 <- 1/25
+  f_tilde_norm2 <- epanechnikov_f_tilde_norm2_rcpp(x)
+  
+  return((K_square_norm/(k_sigma_4 * f_tilde_norm2))^(1/5) * n^(-1/5))
+}
+```
+
+The function has been profiled and optimized using Rcpp.
+
+```{r echo=F, message = FALSE, fig.width=9, fig.height=7, fig.align='center'}
+EK_AMISE <- epanechnikovKernel(x = x, h = "AMISE")
+plot(EK_AMISE)
+```
+
+---
+
+### Cross validation
+In the cross validation approach we split the data set into $K$ parts:
+
+$I_1, \ldots, I_k$ that form a partition of the index set $\{1, \ldots, N\}$
+and define 
+
+$$  I^{-i} = \bigcup_{l: i \not \in I_l} I_l. $$
+Let also $n_i = |I^{-i}|$ and 
+
+$$\hat{f}^{-i}_h = \frac{1}{h n_i} \sum_{j \in I^{-i}} K\left(\frac{x_i - x_j}{h}\right).$$
+such that $\hat{f}^{-i}_h$ is the kernel density estimate based on data with indices in $I^{-i}$ and evaluated in $x_i$. Note that the density estimate evaluated in $x_i$ is not based on $x_i$, so $\hat{f}^{-i}_h$ assesses how well the density estimate computed using a bandwidth $h$ concur with the data point $x_i$. This can be summarized using the log-likelihood 
+
+$$\ell_{\mathrm{CV}}(h) = \sum_{i=1}^N \log (\hat{f}^{-i}_h),$$
+
+that we will refer to as the cross-validated log-likelihood, and we define the bandwidth estimate as
+
+$$ \hat{h}_{\mathrm{CV}} = \arg \max_h \ \ \ell_{\mathrm{CV}}(h).$$
+This cross-validation based bandwidth can then be used for computing kernel density estimates using the entire data set. 
+
+---
+
+### Implementation
+
+The function has been profiled and optimized but is still very slow. With the current implementation it is probably difficult to make it much faster.
+
+```{r}
+x <- rnorm(5000)
+EK_CV <- epanechnikovKernel(x = x, h = "CV")
+plot(EK_CV)
+```
+
+
+
+
+# Putting it all together
+Having profiled and benchmarked we ended up with the best functions:
+
+`kern_dens_bin_Rcpp()`, `AMISE_epa_bandwidth` and `cv_outer()` with an Rcpp based kernel density.
+
+
+
+
+
+```{r}
+#Simulate data to test the kernel function
+x <- rnorm(5000)
+h_AMISE <- AMISE_epa_bandwidth(x)
+
+h_CV_list <- numeric(50)
+for (i in seq_along(h_CV_list)){
+  h_CV_list[i] <- cv_outer(x, h_grid, folds = 10, kernel = epanechnikovMatrixRcpp)$best_h
+  print(i)
+}
+h_CV <- mean(h_CV_list)
+n <- 512
+
+
+hist(x, prob = T)
+legend(1.2, 0.4, legend=c("AMISE", "CV"),
+       col=c("red", "blue"), lty=1:4, cex=0.8)
+lines(kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100), col = "red", lty = 1, lwd = 1)
+lines(kern_dens_bin_Rcpp(x, h_CV, n, normalization = T, B = 100), col = "blue", lty = 2, lwd = 1)
+```
+
+
+
+
+
+```{r}
+kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100)
+
+
+AMISE_est <- kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100)$y
+AMISE_gridpoints <- kernel_prep(x, h_AMISE, n)$gridpoints
+AMISE_analytical <- dnorm(AMISE_gridpoints)
+
+CV_est <- kern_dens_bin_Rcpp(x, h_CV, n, normalization = T, B = 100)$y
+CV_gridpoints <- kernel_prep(x, h_CV, n)$gridpoints
+CV_analytical <- dnorm(CV_gridpoints)
+
+# Plot the difference between the analytical and the estimated density
+plot(CV_gridpoints, CV_est - CV_analytical, col = "blue", type = "l", lwd = 2, xlab = "x", ylab = "Difference")
+lines(AMISE_gridpoints, AMISE_est - AMISE_analytical, lwd = 2, col = "red")
+legend(2, -0.01, legend=c("AMISE", "CV"), col=c("red", "blue"), lty=1:4, cex=0.8)
+
+
+mean(AMISE_est - AMISE_analytical)
+mean(CV_est - CV_analytical)
+
+```
+
+---
+
+### Real bimodal dataset
+
+
+
+
+# What remains
+
++ Compare different bandwidth selection methods and compare to the R density
++ Check that the implementation of CV is correct
++ Test on a real bimodal dataset
++ Trim the presentation and practice presentation 
+
+
+
+
+

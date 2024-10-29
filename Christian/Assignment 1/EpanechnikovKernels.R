@@ -77,7 +77,7 @@ kern_dens_vec <- function(x, h, n = 512, normalization = TRUE) {
 
 #---------------------------------Binned kernel---------------------------------
 
-kern_dens_bin <- function(x, h, n = 512, B = 100, normalization = TRUE, fast = TRUE) {
+kern_dens_bin <- function(x, h, n = 512, B = 100, normalization = TRUE) {
   
   if (h <= 0) stop("Bandwidth must be positive")
   
@@ -102,14 +102,13 @@ kern_dens_bin <- function(x, h, n = 512, B = 100, normalization = TRUE, fast = T
   centers <- bins$centers
   
   # Calculate binned kernel density estimates
-  if (fast){
-    y <- outer(gridpoints, centers, FUN = function(x,y) epanechnikov((x - y) / h))
-    y <- c(y %*% weights)
-  } else {
-    for (i in seq_along(gridpoints)) {
-      y[i] <- sum(weights * epanechnikov((gridpoints[i] - centers) / h))
-    }
-  }
+  # Calculate binned kernel density estimates
+  
+  y <- c(outer(gridpoints, centers, FUN = function(x,y) epanechnikov((x - y) / h)) %*% weights)
+  
+  # for (i in seq_along(gridpoints)) {
+  #     y[i] <- sum(weights * epanechnikov((gridpoints[i] - centers) / h))
+  # }
   
   y <- y / const
   
@@ -121,7 +120,7 @@ kern_dens_bin <- function(x, h, n = 512, B = 100, normalization = TRUE, fast = T
 
 
 
-kern_dens_bin_Rcpp <- function(x, h, n = 512, B = 100, normalization = TRUE, fast = TRUE) {
+kern_dens_bin_Rcpp <- function(x, h, n = 512, B = 100, normalization = TRUE) {
   
   if (h <= 0) stop("Bandwidth must be positive")
   
@@ -146,13 +145,12 @@ kern_dens_bin_Rcpp <- function(x, h, n = 512, B = 100, normalization = TRUE, fas
   centers <- bins$centers
   
   # Calculate binned kernel density estimates
-  if (fast){
-    y <- c(outer(gridpoints, centers, FUN = function(x,y) epanechnikov((x - y) / h)) %*% weights)
-  } else {
-    for (i in seq_along(gridpoints)) {
-      y[i] <- sum(weights * epanechnikov((gridpoints[i] - centers) / h))
-    }
-  }
+  y <- c(outer(gridpoints, centers, FUN = function(x,y) epanechnikov((x - y) / h)) %*% weights)
+  
+  # for (i in seq_along(gridpoints)) {
+  #     y[i] <- sum(weights * epanechnikov((gridpoints[i] - centers) / h))
+  # }
+  
   
   y <- y / const
   
@@ -166,13 +164,69 @@ kern_dens_bin_Rcpp <- function(x, h, n = 512, B = 100, normalization = TRUE, fas
 
 
 
-# Use sparcity?
+# Object
 
+epanechnikovKernel <- function(x, 
+                               h = "Silverman", 
+                               n = 512, 
+                               normalization = TRUE,
+                               h_grid = seq(0, 2, 0.05),
+                               kernel = "binned",
+                               seed = NA, 
+                               B = 100,
+                               folds = 10,
+                               reps = 50) {
+  
+  if (h <= 0) stop("Bandwidth must be positive")
+  
+  bandwidth_method <- h
+  
+  if (h == "AMISE"){
+    h <- AMISE_epa_bandwidth_rcpp(x)
+  } else if (h == "CV") {
+    h <- CV(x = x, h_grid = h_grid, folds = folds, seed = seed, reps = reps)
+  } else if (h == "Silverman"){
+    h <- silverman(x)
+  }
+  
+  if (kernel == "vectorized"){
+    kernel_est <- kern_dens_vec(x = x, h = h, n = n, normalization = normalization)
+  } else if (kernel == "binned") {
+    kernel_est <- kern_dens_bin_Rcpp(x = x, h = h, n = n, B = B, normalization = normalization)
+  }
+  
+  output <- structure(
+    list(
+      x = kernel_est$x,
+      y = kernel_est$y,
+      h = h,
+      bandwidth_method = bandwidth_method,
+      kernel_method = kernel,
+      data = x
+    ),
+    class = "epanechnikovKernel"
+  )
+}
 
+plot.epanechnikovKernel <- function(object, 
+                                    bins = 30, 
+                                    color = "white", 
+                                    fill = "steelblue", linecolor = "red", lty = 1, lwd = 0.5, ...) {
+  
+  data_df <- data.frame(object$data)
+  kernel_est_df <- data.frame(x = object$x, y = object$y)
+  
+  ggplot(data = data_df, aes(x = x)) + geom_histogram(aes(y = ..density..), color = color, fill = fill) +
+    geom_line(data = kernel_est_df, aes(x = x, y = y), color = linecolor, lty = lty, lwd = lwd) +
+    ggtitle("Epanechnikov Kernel Density Estimate")
+}
 
-
-
-
+print.epanechnikovKernel <- function(object, ...) {
+  cat("Epanechnikov Kernel Density Estimate\n")
+  cat("Bandwidth: ", object$h, "\n")
+  cat("Bandwidth method: ", object$bandwidth_method, "\n")
+  cat("Kernel method: ", object$kernel_method, "\n")
+}
 
 
 

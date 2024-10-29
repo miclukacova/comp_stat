@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>Smoothing - A: Density Estimation</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Christian Rubjerg Hejstvig-Larsen (brf337)" />
+    <meta name="date" content="2024-10-28" />
+    <script src="Presentation-1_files/header-attrs-2.28/header-attrs.js"></script>
+    <link href="Presentation-1_files/htmltools-fill-0.5.8.1/fill.css" rel="stylesheet" />
+    <script src="Presentation-1_files/htmlwidgets-1.6.4/htmlwidgets.js"></script>
+    <script src="Presentation-1_files/jquery-1.12.4/jquery.min.js"></script>
+    <script src="Presentation-1_files/d3-3.5.6/d3.min.js"></script>
+    <link href="Presentation-1_files/profvis-0.3.6.9000/profvis.css" rel="stylesheet" />
+    <script src="Presentation-1_files/profvis-0.3.6.9000/profvis.js"></script>
+    <script src="Presentation-1_files/profvis-0.3.6.9000/scroll.js"></script>
+    <link href="Presentation-1_files/highlight-6.2.0/textmate.css" rel="stylesheet" />
+    <script src="Presentation-1_files/highlight-6.2.0/highlight.js"></script>
+    <script src="Presentation-1_files/profvis-binding-0.3.8/profvis.js"></script>
+    <link rel="stylesheet" href="xaringan-themer.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+.title[
+# Smoothing - A: Density Estimation
+]
+.author[
+### Christian Rubjerg Hejstvig-Larsen (brf337)
+]
+.institute[
+### University of Copenhagen
+]
+.date[
+### 2024-10-28
+]
+
+---
+
+&lt;style type="text/css"&gt;
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content &gt; h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+&lt;/style&gt;
+
+
+
+
+
+
+
+
+### The problem and overview
+The aim in this project is to implement a kernel density estimator using the Epanechnikov kernel
+
+$$ K(x) = \frac{3}{4}(1-x^2) \cdot 1_{[-1,1]}(x) $$
+and implement bandwidth selection algorithms. The project is structured as follows:
+
++ Implementation of the Epanechnikov kernel density estimator
++ Implementation of bandwidth selection algorithms
+ + AMISE-based
+ + Cross-validation-based
++ Putting it all together and testing on different data
+
+---
+
+### The Epanechnikov kernel density estimator
+Recall that the general Kernel estimator is given by
+
+`$$\hat f_h (x) = \frac{1}{hN} \sum_{j = 1}^N K \left(\frac{x - x_j}{h} \right)$$`
+The Epanechnikov kernel is given by:
+
+`$$K(x) = \frac{3}{4}(1-x^2) \cdot 1_{[-1,1]}(x)$$`
+so the Epanechnikov kernel density estimator will be given by
+
+`$$\hat f_h (x) = \frac{1}{hN} \sum_{j = 1}^N \frac{3}{4}\biggl(1-\biggl(\frac{x-x_j}{h}\biggr)^2 \biggr) \cdot 1_{[-1,1]}(\frac{x-x_j}{h})$$`
+---
+
+### Implementation
+We try three different implementations of the kernel.
+
++ Version 1: A loop-based version of the kernel
++ Version 2: The vectorized kernel
++ Version 3: The binned kernel
+
+
+``` r
+epanechnikov &lt;- function(x) {
+  (abs(x) &lt;= 1) * 3/4 * (1 - x^2)
+}
+
+
+kern_dens_vec &lt;- function(x, h, n = 512, normalization = TRUE) {
+  
+  if (h &lt;= 0) stop("Bandwidth must be positive")
+  
+  # Prepare the kernel
+  prep &lt;- kernel_prep(x, h, n)
+  gridpoints &lt;- prep$gridpoints
+  y &lt;- prep$y
+  N &lt;- prep$N
+  
+  # Check if the normalization is requested
+  if (normalization){
+    # Multiply bandwidth by sqrt() inverse kernel variance if normalization is requested
+    # Variance of the Epanechnikov kernel is 1/5
+    h &lt;- h * sqrt(5)
+  }
+  
+  const &lt;- h * N
+  
+  # The inner loop from 'kern_dens_loop()' has been vectorized, and 
+  # only the outer loop over the grid points remains. 
+  
+  for (i in seq_along(gridpoints)) {
+    y[i] &lt;- sum(epanechnikov((gridpoints[i] - x) / h)) / const
+  }
+  
+  list(x = gridpoints, y = y)
+}
+```
+
+---
+
+### The binned kernel
+
+The binned kernel is a way to speed up the kernel density estimation by binning the data into intervals and only calculating the kernel in the center of each interval and the weight this with the number of data points in the interval. That is, we now calculate
+
+`$$\hat f_h (x) = \frac{1}{hN} \sum_{j = 1}^N n_j K \left(\frac{x - c_j}{h} \right)$$`
+
+where `\(c_j\)` is the center of the `\(j\)`'th bin and `\(n_j\)` is the number of data points in the `\(j\)`'th bin. The procedure is as follows:
+
+1. Determine the range of the data and divide it into equal-sized bins.
+2. Count the number of data points in each bin.
+3. For each bin, compute the kernel density estimate using the bin count and the kernel function.
+4. For a new data point, find the bin it belongs to and use the pre-computed kernel density estimate for that bin.
+
+---
+
+### Implementation
+
+
+``` r
+# Function to determine bins
+kern_bin &lt;- function(x, l, u, B) {
+  
+  # Create vectors to store weights and centers
+  w &lt;- numeric(B)
+  
+  # Define interval length
+  delta &lt;- (u - l) / (B - 1)
+  
+  # Create vector of centers
+  centers &lt;- seq(l + delta/2, u - delta/2, length.out = B)
+  
+  # Loop through each data point
+  for (j in seq_along(x)) {
+    i &lt;- floor((x[j] - l) / delta + 0.5) + 1
+    w[i] &lt;- w[i] + 1
+  }
+  return(list(weights = w, centers = centers))
+}
+
+
+kern_dens_bin &lt;- function(x, h, n = 512, B = 100, normalization = TRUE, fast = TRUE) {
+  
+  if (h &lt;= 0) stop("Bandwidth must be positive")
+  
+  # Prepare the kernel
+  prep &lt;- kernel_prep(x, h, n)
+  gridpoints &lt;- prep$gridpoints
+  y &lt;- prep$y
+  N &lt;- prep$N
+  range &lt;- prep$range
+  
+  # Check if the normalization is requested
+  if (normalization){
+    # Multiply bandwidth by sqrt() inverse kernel variance if normalization is requested
+    # Variance of the Epanechnikov kernel is 1/5
+    h &lt;- h * sqrt(5)
+  }
+  
+  const &lt;- h * N
+  
+  # Define the binning characteristics
+  bins &lt;- kern_bin(x = x, l = range[1], u = range[2], B = B)
+  weights &lt;- bins$weights
+  centers &lt;- bins$centers
+  
+  # Calculate binned kernel density estimates
+  if (fast){
+    y &lt;- outer(gridpoints, centers, FUN = function(x,y) epanechnikov((x - y) / h))
+    y &lt;- c(y %*% weights)
+  } else {
+    for (i in seq_along(gridpoints)) {
+      y[i] &lt;- sum(weights * epanechnikov((gridpoints[i] - centers) / h))
+    }
+  }
+  
+  y &lt;- y / const
+  
+  
+  list(x = gridpoints, y = y)
+}
+```
+
+---
+
+### Check implementation
+
+&lt;img src="Presentation-1_files/figure-html/unnamed-chunk-5-1.png" width="648" style="display: block; margin: auto;" /&gt;
+
+We can numerically check the mean difference between R's density function and our implementations.
+
+
+--------------------------------------
+    Loop      Vectorized     Binned   
+------------ ------------ ------------
+ -1.886e-05   -1.886e-05   -1.885e-05 
+--------------------------------------
+
+---
+
+### Benchmarking implementations
+
+
+```
+## # A tibble: 4 × 6
+##   expression      min   median `itr/sec` mem_alloc `gc/sec`
+##   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;
+## 1 loop       268.41ms 273.51ms      3.66   30.12KB     12.8
+## 2 vectorized   6.24ms   9.43ms    101.     17.72MB     53.3
+## 3 binned     725.78µs 918.54µs    822.      2.58MB     91.8
+## 4 r_dens     169.12µs 188.81µs   4615.     212.1KB     37.8
+```
+
+&lt;img src="Presentation-1_files/figure-html/unnamed-chunk-7-1.png" width="504" /&gt;&lt;img src="Presentation-1_files/figure-html/unnamed-chunk-7-2.png" width="504" /&gt;
+
+---
+
+### Profiling
+
+We choose to proceed with the binned kernel as this by far is the fastest and the estimates are very close to the other algorithms.
+
+<div class="profvis html-widget html-fill-item" id="htmlwidget-8f7ab02848c57004ba35" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-8f7ab02848c57004ba35">{"x":{"message":{"prof":{"time":[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,3,3,3,3,3,4,4,4,4,4,5,5,5,5,5,6,6,6,6,6,7,7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10,11,11,11,11,12,13,14,15,16,16,16,17,17,17,18,18,18,19,19,19,20,20,20,21,21,21,22,22,22,23,23,23,24,24,24,25,25,25,26,26,26,27,27,27,28,28,28,29,29,29,30,30,30,31,31,31,32,32,32,33,33,33,34,34,34,35,35,35,36,36,36,37,37,37,38,38,38,39,39,39,40,40,40,41,41,41,42,42,42,43,43,43,44,44,44,45,45,45,46,46,46,47,47,47,48,48,48,49,49,49,50,50,50,51,51,51,52,52,52,53,53,53,54,54,54,55,55,55,56,56,56,57,57,57,58,58,58,59,59,59,60,60,60,61,61,61,62,62,62,63,63,63,64,64,64,65,65,65,66,66,66,67,67,67,68,68,68,69,69,69,70,70,70,71,71,71,72,72,72,73,73,73,74,74,74,75,75,75,76,76,76,77,77,77,78,78,78,79,79,79,80,80,80,81,81,81,82,82,82,83,83,83,84,84,84,85,85,85,86,86,86,87,87,87,88,88,88,89,89,89,90,90,90,91,91,91,92,92,92,93,93,93,94,94,94,95,95,95,96,96,96,97,97,97,98,98,98,99,99,99,100,100,100,101,101,101,102,102,102,103,103,103,104,104,104,105,105,105,106,106,106,107,107,107,108,108,108,109,109,109,110,110,110,111,111,111,112,112,112,113,113,113,114,114,114,115,115,115,116,116,116,117,117,117,118,118,118,119,119,119,120,120,120,121,121,121,122,122,122,123,123,123,124,124,124,125,125,125],"depth":[26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,4,3,2,1,4,3,2,1,4,3,2,1,4,3,2,1,1,1,1,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1],"label":["exists","findCenvVar","getInlineInfo","tryInline","cmpCall","cmp","cmpForBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","<GC>",".rangeNum","range","kernel_prep","kern_dens_bin","<GC>",".rangeNum","range","kernel_prep","kern_dens_bin","<GC>",".rangeNum","range","kernel_prep","kern_dens_bin","<GC>",".rangeNum","range","kernel_prep","kern_dens_bin","<GC>",".rangeNum","range","kernel_prep","kern_dens_bin","<GC>",".rangeNum","range","kernel_prep","kern_dens_bin",".rangeNum","range","kernel_prep","kern_dens_bin",".rangeNum","range","kernel_prep","kern_dens_bin",".rangeNum","range","kernel_prep","kern_dens_bin",".rangeNum","range","kernel_prep","kern_dens_bin","min","min","max","max","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","for (j in seq_along(x)) {","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","for (j in seq_along(x)) {","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","for (j in seq_along(x)) {","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","for (j in seq_along(x)) {","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","for (j in seq_along(x)) {","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","w[i] <- w[i] + 1","kern_bin","kern_dens_bin","i <- floor((x[j] - l) / delta + 0.5) + 1","kern_bin","kern_dens_bin"],"filenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,null,1,1,null,null,1,1,null,null,1,1,null,null,1,1,null,null,null,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],"linenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,70,null,null,null,34,70,null,null,null,34,70,null,null,null,34,70,null,null,null,34,70,null,null,null,34,70,null,null,null,34,70,null,null,34,70,null,null,34,70,null,null,34,70,null,null,34,70,null,null,null,null,23,49,70,22,49,70,22,49,70,23,49,70,23,49,70,22,49,70,21,49,70,23,49,70,23,49,70,22,49,70,23,49,70,22,49,70,23,49,70,22,49,70,22,49,70,23,49,70,22,49,70,23,49,70,22,49,70,23,49,70,22,49,70,22,49,70,23,49,70,22,49,70,23,49,70,22,49,70,22,49,70,23,49,70,22,49,70,21,49,70,22,49,70,22,49,70,22,49,70,22,49,70,22,49,70,21,49,70,23,49,70,21,49,70,23,49,70,22,49,70,23,49,70,22,49,70,22,49,70,22,49,70,22,49,70,21,49,70,22,49,70,23,49,70,23,49,70,22,49,70,23,49,70,23,49,70,23,49,70,22,49,70,23,49,70,22,49,70,22,49,70,23,49,70,23,49,70,23,49,70,23,49,70,23,49,70,22,49,70,22,49,70,22,49,70,22,49,70,22,49,70,23,49,70,23,49,70,22,49,70,22,49,70,22,49,70,22,49,70,22,49,70,22,49,70,23,49,70,22,49,70,22,49,70,23,49,70,22,49,70,22,49,70,22,49,70,23,49,70,23,49,70,22,49,70,22,49,70,23,49,70,23,49,70,23,49,70,23,49,70,23,49,70,22,49,70,23,49,70,22,49,70,23,49,70,23,49,70,23,49,70,22,49,70,22,49,70,22,49,70,22,49,70,22,49,70,23,49,70,22,49,70,22,49,70,23,49,70,22,49,70,23,49,70,23,49,70,22,49,70],"memalloc":[117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.708381652832,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,117.3781433105469,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717834472656,193.6717910766602,193.6717910766602,193.6717987060547,193.6717987060547,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484,193.9485931396484],"meminc":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-0.3302383422851562,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,76.29364013671875,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7.62939453125e-06,0,7.62939453125e-06,0,0.27679443359375,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"filename":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"x <- rnorm(1e7)\nprofvis::profvis({\n  \n  epanechnikov <- function(x) {\n    (abs(x) <= 1) * 3/4 * (1 - x^2)\n  }\n\n\n  kern_bin <- function(x, l, u, B) {\n\n  # Create vectors to store weights and centers\n  w <- numeric(B)\n\n  # Define interval length\n  delta <- (u - l) / (B - 1)\n\n  # Create vector of centers\n  centers <- seq(l + delta/2, u - delta/2, length.out = B)\n\n  # Loop through each data point\n  for (j in seq_along(x)) {\n    i <- floor((x[j] - l) / delta + 0.5) + 1\n    w[i] <- w[i] + 1\n  }\n  return(list(weights = w, centers = centers))\n  }\n\n\n  kern_dens_bin <- function(x, h, n = 512, B = 100, normalization = TRUE, fast = TRUE) {\n\n    if (h <= 0) stop(\"Bandwidth must be positive\")\n\n    # Prepare the kernel\n    prep <- kernel_prep(x, h, n)\n    gridpoints <- prep$gridpoints\n    y <- prep$y\n    N <- prep$N\n    range <- prep$range\n\n    # Check if the normalization is requested\n    if (normalization){\n      # Multiply bandwidth by sqrt() inverse kernel variance if normalization is requested\n      h <- h * sqrt(5)\n    }\n\n    const <- h * N\n\n    # Define the binning characteristics\n    bins <- kern_bin(x = x, l = range[1], u = range[2], B = B)\n    weights <- bins$weights\n    centers <- bins$centers\n\n    # Calculate binned kernel density estimates\n    if (fast){\n      y <- outer(gridpoints, centers, FUN = function(x,y) epanechnikov((x - y) / h))\n      y <- c(y %*% weights)\n    } else {\n      for (i in seq_along(gridpoints)) {\n        y[i] <- sum(weights * epanechnikov((gridpoints[i] - centers) / h))\n      }\n    }\n\n    y <- y / const\n\n\n    list(x = gridpoints, y = y)\n  }\n\n  \n  kern_dens_bin(x, h, n, normalization = T, fast = F)\n})","normpath":"<expr>"}],"prof_output":"/var/folders/48/mqbp1d5s7bz1dmwh4vzyc1cc0000gn/T//RtmphnKPos/file596946f95a7f.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+
+We see, that the main bottleneck is the for loop in the `kern_bin()` function so we implement this loop in C++ using the `Rcpp` package. 
+
+---
+### Rcpp implementation
+
+
+``` r
+# // [[Rcpp::export]]
+# NumericVector kernbinloopRcpp(int B, NumericVector x, double l, double delta) {
+#   
+#   int n = x.size();
+#   NumericVector w(B);
+#   
+#   for (int j = 0; j &lt; n; ++j){
+#     int i = floor((x[j] - l) / delta + 0.5); //Removed + 1 as Cpp is 0 index based
+#     w[i] = w[i] + 1;
+#   }
+#   return w;
+# }
+```
+
+We make a quick check that the implementation went well:
+
+
+``` r
+test_that("Test that Rcpp implementation corresponds to R implementation 1e-12", {
+  expect_equal(
+    kern_bin(x, l = range(x)[1], u = range(x)[2], B = 100)$weights,
+    kern_bin_Rcpp(x = x, l = range(x)[1], u = range(x)[2], B = 100)$weights,
+    tolerance = 1e-12
+  )
+})
+```
+
+```
+## Test passed 😸
+```
+
+---
+
+### Final benchmark
+
+&lt;img src="Presentation-1_files/figure-html/unnamed-chunk-11-1.png" width="504" /&gt;
+
+
+
+
+# Bandwidth selection
+We consider two approaches. The bandwidth selection using asymptotics and the bandwidth selection using cross validation. We start with the asymptotic approach.
+
+
+## AMISE approach
+In this approach we use the AMISE (Asymptotic Mean Integrated Squared Error) to select a bandwidth. The AMISE is given by
+
+$$ AMISE(h) = \frac{||K||^2_2}{nh} + \frac{h^4 \sigma_K^4 ||f_0''||_2^2}{4} $$
+
+where `\(K\)` is the kernel and `\(||K||^2_2 = \int K^2(x)dx\)`. `\(h\)` is the bandwidth and `\(\sigma_K^2 = \int x^2 K(x)dx\)` is the variance of the kernel. `\(f_0''\)` is the second derivative (assumed to exist) of the true/oracle density and both the kernel function and the second derivative of the true density are assumed to be square integrable. It can be shown that the MISE and AMISE are asymptotically equivalent which we use to select the bandwidth. By minimizing the AMISE with respect to `\(h\)` we obtain the optimal oracle bandwidth:
+
+$$ h = \biggl(\frac{||K||^2_2}{\sigma_K^4 ||f_0''||^2_2} \biggr)^{1/5} n^{-1/5} $$
+We can determine all components of the above expression except the true density `\(f_0\)` which has to be estimated. To do this we estimate a pilot estimate:
+
+`$$\|\tilde{f}''\|^2_2 = \frac{1}{n^2r^6} \sum_{i = 1}^N \sum_{j=1}^N 
+\int H''\left( \frac{x - x_i}{r} \right) H''\left( \frac{x - x_j}{r} \right) \mathrm{d} x.$$`
+
+where `\(H\)` is a Kernel (usually assumed to be Gaussian) and `\(r\)` is the pilot bandwidth. If we assume `\(f_0\)` is Gaussian this pilot bandwidth can be estimated by
+
+`$$h_n = \left( \frac{8 \sqrt{\pi} \|K\|_2^2}{3 \sigma_K^4} \right)^{1/5} \tilde\sigma n^{-1/5}, \qquad \tilde \sigma = \min \{\hat \sigma, IQR/1.34 \}$$`
+In this estimator, IQR denotes the empirical interquartile range, and `\(1.34\)` is approximately the interquartile range, `\(\Phi^{-1}(0.75) - \Phi^{-1}(0.25)\)` of the standard Gaussian distribution. 
+
+We implement this for the Epanechnikov kernel. For the Epanechnikov kernel, we have `\(||K||^2_2 = 3/5\)` and `\(\sigma_K^2 = 1/5\)`, so the pilot bandwidth is given by
+
+$$\hat h_n = \left( \frac{8 \sqrt{\pi} 3/5}{3 (1/5)^2} \right)^{1/5} \tilde\sigma n^{-1/5} = (40 \sqrt{\pi}) ^{1/5} \tilde \sigma n^{-1/5} $$
+Having found the pilot bandwidth we determine an estimate for `\(\|\tilde{f}''\|^2_2\)`. A few calculations show that this gives
+
+$$ \|\tilde{f}''\|^2_2 = \frac{9}{4n^2 r^6} \sum_{i = 1}^n \sum_{j = 1}^n \max \{0, (2r + \min \{x_i, x_j \} - \max \{x_i, x_j \} ) \}$$
+We can now determine the optimal bandwidth by plugging in the pilot bandwidth and the estimate for `\(\|\tilde{f}''\|^2_2\)` into the formula for the optimal bandwidth. We implement this in the following function:
+
+
+``` r
+AMISE_epa_bandwidth &lt;- function(x){
+  n &lt;- length(x)
+  K_square_norm &lt;- 3/5
+  k_sigma_4 &lt;- 1/25
+  
+  f_tilde_norm2 &lt;- epanechnikov_f_tilde_norm2(x)
+  
+  (K_square_norm/(k_sigma_4 * f_tilde_norm2))^(1/5) * n^(-1/5)
+}
+
+x &lt;- rnorm(1000)
+AMISE_epa_bandwidth(x)
+```
+
+```
+## [1] 0.2362831
+```
+
+We profile the function:
+
+
+``` r
+profvis::profvis(AMISE_epa_bandwidth(x))
+```
+
+<div class="profvis html-widget html-fill-item" id="htmlwidget-d96a78f035f9a4210d91" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-d96a78f035f9a4210d91">{"x":{"message":{"prof":{"time":[1,1,1,1,1,1,1,1,1,1,1],"depth":[11,10,9,8,7,6,5,4,3,2,1],"label":["h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun"],"filenum":[null,null,null,null,null,null,null,null,null,null,null],"linenum":[null,null,null,null,null,null,null,null,null,null,null],"memalloc":[64.62316131591797,64.62316131591797,64.62316131591797,64.62316131591797,64.62316131591797,64.62316131591797,64.62316131591797,64.62316131591797,64.62316131591797,64.62316131591797,64.62316131591797],"meminc":[0,0,0,0,0,0,0,0,0,0,0],"filename":[null,null,null,null,null,null,null,null,null,null,null]},"interval":10,"files":[],"prof_output":"/var/folders/48/mqbp1d5s7bz1dmwh4vzyc1cc0000gn/T//RtmphnKPos/file59696381cfe4.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+
+We note that it is quite slow and that it is one function that is the bottleneck. We may therefore consider writing an Rcpp function to take care of this step. We test that the Rcpp implementation results in the same as the old implementation:
+
+
+``` r
+test_that("AMISE_epa_bandwidth", {
+  x &lt;- rnorm(10000)
+  r &lt;- 0.5
+  expect_equal(min_max_diff_sum_faster(x, r), min_max_diff_sum_Rcpp(x = x, r_hat = r))
+})
+```
+
+```
+## Test passed 🎉
+```
+
+
+``` r
+x &lt;- rnorm(1000)
+microbenchmark::microbenchmark(AMISE_epa_bandwidth(x), AMISE_epa_bandwidth_rcpp(x))
+```
+
+```
+## Warning in microbenchmark::microbenchmark(AMISE_epa_bandwidth(x),
+## AMISE_epa_bandwidth_rcpp(x)): less accurate nanosecond times to avoid potential
+## integer overflows
+```
+
+```
+## Unit: milliseconds
+##                         expr      min       lq     mean   median       uq
+##       AMISE_epa_bandwidth(x) 10.70043 11.31618 11.35814 11.41444 11.48560
+##  AMISE_epa_bandwidth_rcpp(x) 19.82682 20.07229 20.72858 20.12909 20.26333
+##       max neval cld
+##  11.89242   100  a 
+##  65.91103   100   b
+```
+
+We see that the Rcpp did not solve the issue. What we could do instead is use a Gaussian kernel as pilot kernel:...
+
+
+## Cross validation
+In the cross validation approach we split the data set into `\(K\)` parts:
+
+`\(I_1, \ldots, I_k\)` that form a partition of the index set `\(\{1, \ldots, N\}\)`
+and define 
+
+$$  I^{-i} = \bigcup_{l: i \not \in I_l} I_l. $$
+Let also `\(n_i = |I^{-i}|\)` and 
+
+`$$\hat{f}^{-i}_h = \frac{1}{h n_i} \sum_{j \in I^{-i}} K\left(\frac{x_i - x_j}{h}\right).$$`
+such that `\(\hat{f}^{-i}_h\)` is the kernel density estimate based on data with indices in `\(I^{-i}\)` and evaluated in `\(x_i\)`. Note that the density estimate evaluated in `\(x_i\)` is not based on `\(x_i\)`, so `\(\hat{f}^{-i}_h\)` assesses how well the density estimate computed using a bandwidth `\(h\)` concur with the data point `\(x_i\)`. This can be summarized using the log-likelihood 
+
+`$$\ell_{\mathrm{CV}}(h) = \sum_{i=1}^N \log (\hat{f}^{-i}_h),$$`
+
+that we will refer to as the cross-validated log-likelihood, and we define the bandwidth estimate as
+
+$$ \hat{h}_{\mathrm{CV}} = \arg \max_h \ \ \ell_{\mathrm{CV}}(h).$$
+This cross-validation based bandwidth can then be used for computing kernel density estimates using the entire data set. 
+
+We benchmark the functions and ensure that they produce the same result:
+
+
+``` r
+x &lt;- rnorm(1000)
+h_grid &lt;- seq(0.1, 1, by = 0.01)
+bench::mark(cv_naive(x, h_grid, folds = 5, seed = 1),
+            cv_outer(x, h_grid, folds = 5, seed = 1),
+            cv_Outer(x, h_grid, folds = 5, seed = 1))
+```
+
+```
+## Warning: Some expressions had a GC in every iteration; so filtering is
+## disabled.
+```
+
+```
+## # A tibble: 3 × 6
+##   expression                           min   median `itr/sec` mem_alloc `gc/sec`
+##   &lt;bch:expr&gt;                      &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;
+## 1 cv_naive(x, h_grid, folds = 5,…    1.38s    1.38s     0.724    2.48GB     3.62
+## 2 cv_outer(x, h_grid, folds = 5,… 916.83ms 916.83ms     1.09     2.46GB     5.45
+## 3 cv_Outer(x, h_grid, folds = 5,…    1.33s    1.33s     0.751    3.83GB     6.01
+```
+
+It appears that the `cv_outer()` function is the fastest. We can profile the `cv_outer` function to see where the bottleneck is:
+
+
+``` r
+profvis::profvis(cv_outer(x, h_grid, folds = 5))
+```
+
+<div class="profvis html-widget html-fill-item" id="htmlwidget-cbf48a5cb561205224dc" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-cbf48a5cb561205224dc">{"x":{"message":{"prof":{"time":[1,1,1,2,2,2,3,4,4,5,6,7,7,7,8,8,8,9,9,9,10,10,10,11,11,11,12,12,12,13,13,13,14,14,14,15,15,15,16,16,16,16,17,17,17,17,18,18,19,19,19,20,20,21,21,21,22,22,22,23,23,23,24,24,24,25,25,25,26,26,26,27,27,27,28,28,28,29,29,29,30,30,30,31,31,31,32,32,32,33,33,33,33,34,34,34,34,35,35,36,36,37,38,39,40,40,40,41,41,41,42,42,42,43,43,43,44,44,44,45,45,45,46,46,46,47,47,47,48,48,48,49,49,49,50,50,50,50,51,51,51,51,52,53,54,55,55,56,56,57,57,58,58,59,59,60,60,61,61,61,62,62,62,63,63,63,64,64,64,65,65,65,66,66,66,67,67,67,68,68,68,69,69,69,70,70,70,71,71,71,72,72,72,73,73,74,75,75,75,76,77,78,79,80,81,81,81,82,82,82,83,83,83,84,84,84,85,85,85,86,86,86],"depth":[3,2,1,3,2,1,1,2,1,1,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,4,3,2,1,2,1,3,2,1,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,4,3,2,1,2,1,2,1,1,1,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,4,3,2,1,4,3,2,1,1,1,1,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,2,1,1,3,2,1,1,1,1,1,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1],"label":[null,"kernel","cv_outer",null,"kernel","cv_outer","abs","Rfast::Outer","cv_outer","abs","abs",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer","<GC>",null,"kernel","cv_outer","<GC>",null,"kernel","cv_outer","Rfast::Outer","cv_outer",null,"kernel","cv_outer","Rfast::Outer","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer","<GC>",null,"kernel","cv_outer","<GC>",null,"kernel","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","abs","abs","abs",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer","<GC>",null,"kernel","cv_outer","<GC>",null,"kernel","cv_outer","abs","abs","abs","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer","<GC>","Rfast::Outer","cv_outer","<GC>","Rfast::Outer","cv_outer","<GC>","Rfast::Outer","cv_outer","<GC>","Rfast::Outer","cv_outer","<GC>","Rfast::Outer","cv_outer","<GC>","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","abs",null,"kernel","cv_outer","abs","abs","abs","abs","abs",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer",null,"kernel","cv_outer"],"filenum":[1,null,null,1,null,null,1,null,null,1,1,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,null,1,null,null,null,1,null,null,null,null,1,null,null,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,null,1,null,null,null,1,null,null,null,null,null,null,1,1,1,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,null,1,null,null,null,1,null,null,1,1,1,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,1,null,null,1,1,1,1,1,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null,1,null,null],"linenum":[5,null,null,5,null,null,5,null,null,5,5,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,null,5,null,null,null,5,null,null,null,null,5,null,null,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,null,5,null,null,null,5,null,null,null,null,null,null,5,5,5,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,null,5,null,null,null,5,null,null,5,5,5,null,null,null,null,null,null,null,null,null,null,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,5,5,null,null,5,5,5,5,5,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null,5,null,null],"memalloc":[111.7113800048828,111.7113800048828,111.7113800048828,142.4091262817383,142.4091262817383,142.4091262817383,174.9379425048828,206.8564071655273,206.8564071655273,239.9955902099609,274.3556213378906,308.1051559448242,308.1051559448242,308.1051559448242,341.2443313598633,341.2443313598633,341.2443313598633,374.3835067749023,374.3835067749023,374.3835067749023,407.5226821899414,407.5226821899414,407.5226821899414,440.6620101928711,440.6620101928711,440.6620101928711,475.0218963623047,475.0218963623047,475.0218963623047,506.9403610229492,506.9403610229492,506.9403610229492,541.3002471923828,541.3002471923828,541.3002471923828,574.4394226074219,574.4394226074219,574.4394226074219,529.027946472168,529.027946472168,529.027946472168,529.027946472168,164.5143051147461,164.5143051147461,164.5143051147461,164.5143051147461,104.9659271240234,104.9659271240234,141.1568832397461,141.1568832397461,141.1568832397461,177.9883117675781,177.9883117675781,212.9585571289062,212.9585571289062,212.9585571289062,247.3184432983398,247.3184432983398,247.3184432983398,279.2369079589844,279.2369079589844,279.2369079589844,312.3762359619141,312.3762359619141,312.3762359619141,345.5154113769531,345.5154113769531,345.5154113769531,378.6545867919922,378.6545867919922,378.6545867919922,413.0144729614258,413.0144729614258,413.0144729614258,446.1536483764648,446.1536483764648,446.1536483764648,479.2929763793945,479.2929763793945,479.2929763793945,512.4321517944336,512.4321517944336,512.4321517944336,545.5713272094727,545.5713272094727,545.5713272094727,577.4897918701172,577.4897918701172,577.4897918701172,465.8112945556641,465.8112945556641,465.8112945556641,465.8112945556641,214.8080902099609,214.8080902099609,214.8080902099609,214.8080902099609,100.6727294921875,100.6727294921875,135.0326156616211,135.0326156616211,168.1717987060547,202.5316772460938,235.6708526611328,269.420539855957,269.420539855957,269.420539855957,302.5597152709961,302.5597152709961,302.5597152709961,335.6988906860352,335.6988906860352,335.6988906860352,368.8380661010742,368.8380661010742,368.8380661010742,401.9772415161133,401.9772415161133,401.9772415161133,435.116569519043,435.116569519043,435.116569519043,468.255744934082,468.255744934082,468.255744934082,501.3949203491211,501.3949203491211,501.3949203491211,534.5340957641602,534.5340957641602,534.5340957641602,568.8939819335938,568.8939819335938,568.8939819335938,529.0140762329102,529.0140762329102,529.0140762329102,529.0140762329102,273.738410949707,273.738410949707,273.738410949707,273.738410949707,100.6520385742188,133.7912139892578,165.7096862792969,198.849006652832,198.849006652832,230.7674713134766,230.7674713134766,263.9066467285156,263.9066467285156,297.0458221435547,297.0458221435547,330.1849975585938,330.1849975585938,364.545036315918,364.545036315918,399.5152816772461,399.5152816772461,399.5152816772461,432.6544570922852,432.6544570922852,432.6544570922852,465.7936325073242,465.7936325073242,465.7936325073242,500.1535186767578,500.1535186767578,500.1535186767578,532.072135925293,532.072135925293,532.072135925293,566.4320220947266,566.4320220947266,566.4320220947266,562.1634063720703,562.1634063720703,562.1634063720703,197.6497650146484,197.6497650146484,197.6497650146484,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,79.79126739501953,90.83760833740234,90.83760833740234,125.1976547241211,160.1678924560547,160.1678924560547,160.1678924560547,198.2198791503906,231.3590545654297,264.4983825683594,297.6375579833984,330.7767333984375,364.5262680053711,364.5262680053711,364.5262680053711,397.6654434204102,397.6654434204102,397.6654434204102,430.8047714233398,430.8047714233398,430.8047714233398,463.9439468383789,463.9439468383789,463.9439468383789,497.083122253418,497.083122253418,497.083122253418,530.222297668457,530.222297668457,530.222297668457],"meminc":[0,0,0,30.69774627685547,0,0,32.52881622314453,31.91846466064453,0,33.13918304443359,34.36003112792969,33.74953460693359,0,0,33.13917541503906,0,0,33.13917541503906,0,0,33.13917541503906,0,0,33.13932800292969,0,0,34.35988616943359,0,0,31.91846466064453,0,0,34.35988616943359,0,0,33.13917541503906,0,0,-45.41147613525391,0,0,0,-364.5136413574219,0,0,0,-59.54837799072266,0,36.19095611572266,0,0,36.83142852783203,0,34.97024536132812,0,0,34.35988616943359,0,0,31.91846466064453,0,0,33.13932800292969,0,0,33.13917541503906,0,0,33.13917541503906,0,0,34.35988616943359,0,0,33.13917541503906,0,0,33.13932800292969,0,0,33.13917541503906,0,0,33.13917541503906,0,0,31.91846466064453,0,0,-111.6784973144531,0,0,0,-251.0032043457031,0,0,0,-114.1353607177734,0,34.35988616943359,0,33.13918304443359,34.35987854003906,33.13917541503906,33.74968719482422,0,0,33.13917541503906,0,0,33.13917541503906,0,0,33.13917541503906,0,0,33.13917541503906,0,0,33.13932800292969,0,0,33.13917541503906,0,0,33.13917541503906,0,0,33.13917541503906,0,0,34.35988616943359,0,0,-39.87990570068359,0,0,0,-255.2756652832031,0,0,0,-173.0863723754883,33.13917541503906,31.91847229003906,33.13932037353516,0,31.91846466064453,0,33.13917541503906,0,33.13917541503906,0,33.13917541503906,0,34.36003875732422,0,34.97024536132812,0,0,33.13917541503906,0,0,33.13917541503906,0,0,34.35988616943359,0,0,31.91861724853516,0,0,34.35988616943359,0,0,-4.26861572265625,0,0,-364.5136413574219,0,0,-117.8584976196289,0,0,0,0,0,0,0,0,0,0,0,11.04634094238281,0,34.36004638671875,34.97023773193359,0,0,38.05198669433594,33.13917541503906,33.13932800292969,33.13917541503906,33.13917541503906,33.74953460693359,0,0,33.13917541503906,0,0,33.13932800292969,0,0,33.13917541503906,0,0,33.13917541503906,0,0,33.13917541503906,0,0],"filename":["<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>","<expr>","<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,null,"<expr>",null,null,null,null,"<expr>",null,null,null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,null,"<expr>",null,null,null,null,null,null,"<expr>","<expr>","<expr>","<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,null,"<expr>",null,null,null,"<expr>",null,null,"<expr>","<expr>","<expr>",null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>","<expr>",null,null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null,"<expr>",null,null]},"interval":10,"files":[{"filename":"<expr>","content":"","normpath":"<expr>"}],"prof_output":"/var/folders/48/mqbp1d5s7bz1dmwh4vzyc1cc0000gn/T//RtmphnKPos/file596956f41fed.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+
+We see that it is the calculation of the Epanechnikov kernel that is slow. We implement this in Rcpp instead.
+
+
+
+``` r
+test_that("expect equalt", {
+  expect_equal(cv_outer(x, h_grid, folds = 5, kernel = epanechnikov, seed = 1)$best_h,
+               cv_outer(x, h_grid, folds = 5, kernel = epanechnikovMatrixRcpp, seed = 1)$best_h)
+})
+```
+
+```
+## Test passed 🌈
+```
+
+
+benchmark
+
+
+``` r
+bench::mark(cv_outer(x, h_grid, folds = 5, kernel = epanechnikov, seed = 1),
+               cv_outer(x, h_grid, folds = 5, kernel = epanechnikovMatrixRcpp, seed = 1))
+```
+
+```
+## Warning: Some expressions had a GC in every iteration; so filtering is
+## disabled.
+```
+
+```
+## # A tibble: 2 × 6
+##   expression                             min median `itr/sec` mem_alloc `gc/sec`
+##   &lt;bch:expr&gt;                           &lt;bch&gt; &lt;bch:&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;
+## 1 cv_outer(x, h_grid, folds = 5, kern… 881ms  881ms      1.14    2.45GB     6.81
+## 2 cv_outer(x, h_grid, folds = 5, kern… 535ms  535ms      1.87     1.1GB     5.61
+```
+
+
+``` r
+profvis::profvis(cv_outer(x, h_grid, folds = 5, kernel = epanechnikovMatrixRcpp, seed = 1))
+```
+
+<div class="profvis html-widget html-fill-item" id="htmlwidget-0bc8d04a8ac265691280" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-0bc8d04a8ac265691280">{"x":{"message":{"prof":{"time":[1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,12,13,13,13,14,14,15,15,16,16,17,17,18,18,19,19,20,20,21,21,22,22,23,23,24,24,25,25,26,26,26,27,27,28,28,29,29,30,30,31,31,32,32,33,33,34,34,35,35,36,36,37,37,38,38,39,39,40,40,40,41,41,42,42,43,43,44,44,45,45,46,46,47,47,48,48,49,49,50,50],"depth":[2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1],"label":["Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","kernel","cv_outer","kernel","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","<GC>","Rfast::Outer","cv_outer","<GC>","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","kernel","cv_outer","Rfast::Outer","cv_outer","kernel","cv_outer","kernel","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","kernel","cv_outer","Rfast::Outer","cv_outer","kernel","cv_outer","<GC>","kernel","cv_outer","Rfast::Outer","cv_outer","kernel","cv_outer","Rfast::Outer","cv_outer","kernel","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","colSums","cv_outer","<GC>","kernel","cv_outer","kernel","cv_outer","kernel","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer","Rfast::Outer","cv_outer"],"filenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],"linenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],"memalloc":[105.8263626098633,105.8263626098633,133.0118713378906,133.0118713378906,160.1674194335938,160.1674194335938,187.3529357910156,187.3529357910156,212.0970153808594,212.0970153808594,238.031852722168,238.031852722168,262.745979309082,262.745979309082,287.4601058959961,287.4601058959961,310.9535217285156,310.9535217285156,335.6676483154297,335.6676483154297,360.3817749023438,360.3817749023438,378.8942642211914,378.8942642211914,378.8942642211914,86.07477569580078,86.07477569580078,86.07477569580078,104.5441589355469,104.5441589355469,129.2582855224609,129.2582855224609,153.9424591064453,153.9424591064453,178.6865386962891,178.6865386962891,203.3707122802734,203.3707122802734,226.864128112793,226.864128112793,250.357536315918,250.357536315918,275.071662902832,275.071662902832,299.7857894897461,299.7857894897461,324.4699630737305,324.4699630737305,347.9633712768555,347.9633712768555,371.4266738891602,371.4266738891602,234.3220291137695,234.3220291137695,234.3220291137695,92.19635772705078,92.19635772705078,116.8805236816406,116.8805236816406,139.1532287597656,139.1532287597656,162.6166915893555,162.6166915893555,188.5814819335938,188.5814819335938,210.8242263793945,210.8242263793945,233.0669708251953,233.0669708251953,255.3095626831055,255.3095626831055,277.5523071289062,277.5523071289062,299.795051574707,299.795051574707,322.0377960205078,322.0377960205078,344.2805404663086,344.2805404663086,366.4948348999023,366.4948348999023,291.1385726928711,291.1385726928711,291.1385726928711,89.70429229736328,89.70429229736328,111.9470367431641,111.9470367431641,134.1897735595703,134.1897735595703,155.2116546630859,155.2116546630859,177.4543991088867,177.4543991088867,200.917854309082,200.917854309082,221.9398880004883,221.9398880004883,244.1826324462891,244.1826324462891,266.4252243041992,266.4252243041992,289.8886795043945,289.8886795043945],"meminc":[0,0,27.18550872802734,0,27.15554809570312,0,27.18551635742188,0,24.74407958984375,0,25.93483734130859,0,24.71412658691406,0,24.71412658691406,0,23.49341583251953,0,24.71412658691406,0,24.71412658691406,0,18.51248931884766,0,0,-292.8194885253906,0,0,18.46938323974609,0,24.71412658691406,0,24.68417358398438,0,24.74407958984375,0,24.68417358398438,0,23.49341583251953,0,23.493408203125,0,24.71412658691406,0,24.71412658691406,0,24.68417358398438,0,23.493408203125,0,23.46330261230469,0,-137.1046447753906,0,0,-142.1256713867188,0,24.68416595458984,0,22.272705078125,0,23.46346282958984,0,25.96479034423828,0,22.24274444580078,0,22.24274444580078,0,22.24259185791016,0,22.24274444580078,0,22.24274444580078,0,22.24274444580078,0,22.24274444580078,0,22.21429443359375,0,-75.35626220703125,0,0,-201.4342803955078,0,22.24274444580078,0,22.24273681640625,0,21.02188110351562,0,22.24274444580078,0,23.46345520019531,0,21.02203369140625,0,22.24274444580078,0,22.24259185791016,0,23.46345520019531,0],"filename":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]},"interval":10,"files":[],"prof_output":"/var/folders/48/mqbp1d5s7bz1dmwh4vzyc1cc0000gn/T//RtmphnKPos/file59693b1a8405.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+
+With the current implementation it is probably difficult to make it much faster.
+
+
+# Putting it all together
+Having profiled and benchmarked we ended up with the best functions:
+
+`kern_dens_bin_Rcpp()`, `AMISE_epa_bandwidth` and `cv_outer()` with an Rcpp based kernel density.
+
+
+
+
+
+
+``` r
+#Simulate data to test the kernel function
+x &lt;- rnorm(5000)
+h_AMISE &lt;- AMISE_epa_bandwidth(x)
+
+h_CV_list &lt;- numeric(50)
+for (i in seq_along(h_CV_list)){
+  h_CV_list[i] &lt;- cv_outer(x, h_grid, folds = 10, kernel = epanechnikovMatrixRcpp)$best_h
+  print(i)
+}
+```
+
+```
+## [1] 1
+## [1] 2
+## [1] 3
+## [1] 4
+## [1] 5
+## [1] 6
+## [1] 7
+## [1] 8
+## [1] 9
+## [1] 10
+## [1] 11
+## [1] 12
+## [1] 13
+## [1] 14
+## [1] 15
+## [1] 16
+## [1] 17
+## [1] 18
+## [1] 19
+## [1] 20
+## [1] 21
+## [1] 22
+## [1] 23
+## [1] 24
+## [1] 25
+## [1] 26
+## [1] 27
+## [1] 28
+## [1] 29
+## [1] 30
+## [1] 31
+## [1] 32
+## [1] 33
+## [1] 34
+## [1] 35
+## [1] 36
+## [1] 37
+## [1] 38
+## [1] 39
+## [1] 40
+## [1] 41
+## [1] 42
+## [1] 43
+## [1] 44
+## [1] 45
+## [1] 46
+## [1] 47
+## [1] 48
+## [1] 49
+## [1] 50
+```
+
+``` r
+h_CV &lt;- mean(h_CV_list)
+n &lt;- 512
+
+
+hist(x, prob = T)
+legend(1.2, 0.4, legend=c("AMISE", "CV"),
+       col=c("red", "blue"), lty=1:4, cex=0.8)
+lines(kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100), col = "red", lty = 1, lwd = 1)
+lines(kern_dens_bin_Rcpp(x, h_CV, n, normalization = T, B = 100), col = "blue", lty = 2, lwd = 1)
+```
+
+&lt;img src="Presentation-1_files/figure-html/unnamed-chunk-21-1.png" width="504" /&gt;
+
+
+``` r
+kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100)
+```
+
+```
+## $x
+##   [1] -4.076168496 -4.060276890 -4.044385283 -4.028493677 -4.012602071
+##   [6] -3.996710465 -3.980818859 -3.964927253 -3.949035647 -3.933144041
+##  [11] -3.917252435 -3.901360829 -3.885469223 -3.869577617 -3.853686011
+##  [16] -3.837794405 -3.821902799 -3.806011193 -3.790119587 -3.774227981
+##  [21] -3.758336375 -3.742444769 -3.726553163 -3.710661557 -3.694769951
+##  [26] -3.678878345 -3.662986739 -3.647095133 -3.631203526 -3.615311920
+##  [31] -3.599420314 -3.583528708 -3.567637102 -3.551745496 -3.535853890
+##  [36] -3.519962284 -3.504070678 -3.488179072 -3.472287466 -3.456395860
+##  [41] -3.440504254 -3.424612648 -3.408721042 -3.392829436 -3.376937830
+##  [46] -3.361046224 -3.345154618 -3.329263012 -3.313371406 -3.297479800
+##  [51] -3.281588194 -3.265696588 -3.249804982 -3.233913375 -3.218021769
+##  [56] -3.202130163 -3.186238557 -3.170346951 -3.154455345 -3.138563739
+##  [61] -3.122672133 -3.106780527 -3.090888921 -3.074997315 -3.059105709
+##  [66] -3.043214103 -3.027322497 -3.011430891 -2.995539285 -2.979647679
+##  [71] -2.963756073 -2.947864467 -2.931972861 -2.916081255 -2.900189649
+##  [76] -2.884298043 -2.868406437 -2.852514831 -2.836623225 -2.820731618
+##  [81] -2.804840012 -2.788948406 -2.773056800 -2.757165194 -2.741273588
+##  [86] -2.725381982 -2.709490376 -2.693598770 -2.677707164 -2.661815558
+##  [91] -2.645923952 -2.630032346 -2.614140740 -2.598249134 -2.582357528
+##  [96] -2.566465922 -2.550574316 -2.534682710 -2.518791104 -2.502899498
+## [101] -2.487007892 -2.471116286 -2.455224680 -2.439333074 -2.423441467
+## [106] -2.407549861 -2.391658255 -2.375766649 -2.359875043 -2.343983437
+## [111] -2.328091831 -2.312200225 -2.296308619 -2.280417013 -2.264525407
+## [116] -2.248633801 -2.232742195 -2.216850589 -2.200958983 -2.185067377
+## [121] -2.169175771 -2.153284165 -2.137392559 -2.121500953 -2.105609347
+## [126] -2.089717741 -2.073826135 -2.057934529 -2.042042923 -2.026151317
+## [131] -2.010259710 -1.994368104 -1.978476498 -1.962584892 -1.946693286
+## [136] -1.930801680 -1.914910074 -1.899018468 -1.883126862 -1.867235256
+## [141] -1.851343650 -1.835452044 -1.819560438 -1.803668832 -1.787777226
+## [146] -1.771885620 -1.755994014 -1.740102408 -1.724210802 -1.708319196
+## [151] -1.692427590 -1.676535984 -1.660644378 -1.644752772 -1.628861166
+## [156] -1.612969559 -1.597077953 -1.581186347 -1.565294741 -1.549403135
+## [161] -1.533511529 -1.517619923 -1.501728317 -1.485836711 -1.469945105
+## [166] -1.454053499 -1.438161893 -1.422270287 -1.406378681 -1.390487075
+## [171] -1.374595469 -1.358703863 -1.342812257 -1.326920651 -1.311029045
+## [176] -1.295137439 -1.279245833 -1.263354227 -1.247462621 -1.231571015
+## [181] -1.215679409 -1.199787802 -1.183896196 -1.168004590 -1.152112984
+## [186] -1.136221378 -1.120329772 -1.104438166 -1.088546560 -1.072654954
+## [191] -1.056763348 -1.040871742 -1.024980136 -1.009088530 -0.993196924
+## [196] -0.977305318 -0.961413712 -0.945522106 -0.929630500 -0.913738894
+## [201] -0.897847288 -0.881955682 -0.866064076 -0.850172470 -0.834280864
+## [206] -0.818389258 -0.802497651 -0.786606045 -0.770714439 -0.754822833
+## [211] -0.738931227 -0.723039621 -0.707148015 -0.691256409 -0.675364803
+## [216] -0.659473197 -0.643581591 -0.627689985 -0.611798379 -0.595906773
+## [221] -0.580015167 -0.564123561 -0.548231955 -0.532340349 -0.516448743
+## [226] -0.500557137 -0.484665531 -0.468773925 -0.452882319 -0.436990713
+## [231] -0.421099107 -0.405207501 -0.389315894 -0.373424288 -0.357532682
+## [236] -0.341641076 -0.325749470 -0.309857864 -0.293966258 -0.278074652
+## [241] -0.262183046 -0.246291440 -0.230399834 -0.214508228 -0.198616622
+## [246] -0.182725016 -0.166833410 -0.150941804 -0.135050198 -0.119158592
+## [251] -0.103266986 -0.087375380 -0.071483774 -0.055592168 -0.039700562
+## [256] -0.023808956 -0.007917350  0.007974257  0.023865863  0.039757469
+## [261]  0.055649075  0.071540681  0.087432287  0.103323893  0.119215499
+## [266]  0.135107105  0.150998711  0.166890317  0.182781923  0.198673529
+## [271]  0.214565135  0.230456741  0.246348347  0.262239953  0.278131559
+## [276]  0.294023165  0.309914771  0.325806377  0.341697983  0.357589589
+## [281]  0.373481195  0.389372801  0.405264407  0.421156014  0.437047620
+## [286]  0.452939226  0.468830832  0.484722438  0.500614044  0.516505650
+## [291]  0.532397256  0.548288862  0.564180468  0.580072074  0.595963680
+## [296]  0.611855286  0.627746892  0.643638498  0.659530104  0.675421710
+## [301]  0.691313316  0.707204922  0.723096528  0.738988134  0.754879740
+## [306]  0.770771346  0.786662952  0.802554558  0.818446165  0.834337771
+## [311]  0.850229377  0.866120983  0.882012589  0.897904195  0.913795801
+## [316]  0.929687407  0.945579013  0.961470619  0.977362225  0.993253831
+## [321]  1.009145437  1.025037043  1.040928649  1.056820255  1.072711861
+## [326]  1.088603467  1.104495073  1.120386679  1.136278285  1.152169891
+## [331]  1.168061497  1.183953103  1.199844709  1.215736315  1.231627922
+## [336]  1.247519528  1.263411134  1.279302740  1.295194346  1.311085952
+## [341]  1.326977558  1.342869164  1.358760770  1.374652376  1.390543982
+## [346]  1.406435588  1.422327194  1.438218800  1.454110406  1.470002012
+## [351]  1.485893618  1.501785224  1.517676830  1.533568436  1.549460042
+## [356]  1.565351648  1.581243254  1.597134860  1.613026466  1.628918073
+## [361]  1.644809679  1.660701285  1.676592891  1.692484497  1.708376103
+## [366]  1.724267709  1.740159315  1.756050921  1.771942527  1.787834133
+## [371]  1.803725739  1.819617345  1.835508951  1.851400557  1.867292163
+## [376]  1.883183769  1.899075375  1.914966981  1.930858587  1.946750193
+## [381]  1.962641799  1.978533405  1.994425011  2.010316617  2.026208223
+## [386]  2.042099830  2.057991436  2.073883042  2.089774648  2.105666254
+## [391]  2.121557860  2.137449466  2.153341072  2.169232678  2.185124284
+## [396]  2.201015890  2.216907496  2.232799102  2.248690708  2.264582314
+## [401]  2.280473920  2.296365526  2.312257132  2.328148738  2.344040344
+## [406]  2.359931950  2.375823556  2.391715162  2.407606768  2.423498374
+## [411]  2.439389981  2.455281587  2.471173193  2.487064799  2.502956405
+## [416]  2.518848011  2.534739617  2.550631223  2.566522829  2.582414435
+## [421]  2.598306041  2.614197647  2.630089253  2.645980859  2.661872465
+## [426]  2.677764071  2.693655677  2.709547283  2.725438889  2.741330495
+## [431]  2.757222101  2.773113707  2.789005313  2.804896919  2.820788525
+## [436]  2.836680131  2.852571738  2.868463344  2.884354950  2.900246556
+## [441]  2.916138162  2.932029768  2.947921374  2.963812980  2.979704586
+## [446]  2.995596192  3.011487798  3.027379404  3.043271010  3.059162616
+## [451]  3.075054222  3.090945828  3.106837434  3.122729040  3.138620646
+## [456]  3.154512252  3.170403858  3.186295464  3.202187070  3.218078676
+## [461]  3.233970282  3.249861889  3.265753495  3.281645101  3.297536707
+## [466]  3.313428313  3.329319919  3.345211525  3.361103131  3.376994737
+## [471]  3.392886343  3.408777949  3.424669555  3.440561161  3.456452767
+## [476]  3.472344373  3.488235979  3.504127585  3.520019191  3.535910797
+## [481]  3.551802403  3.567694009  3.583585615  3.599477221  3.615368827
+## [486]  3.631260433  3.647152039  3.663043646  3.678935252  3.694826858
+## [491]  3.710718464  3.726610070  3.742501676  3.758393282  3.774284888
+## [496]  3.790176494  3.806068100  3.821959706  3.837851312  3.853742918
+## [501]  3.869634524  3.885526130  3.901417736  3.917309342  3.933200948
+## [506]  3.949092554  3.964984160  3.980875766  3.996767372  4.012658978
+## [511]  4.028550584  4.044442190
+## 
+## $y
+##   [1] 0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00
+##   [6] 0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 9.845238e-06
+##  [11] 6.029774e-05 1.079933e-04 1.529320e-04 1.951138e-04 2.345386e-04
+##  [16] 2.712066e-04 3.051176e-04 3.362717e-04 3.646689e-04 4.407376e-04
+##  [21] 5.118679e-04 5.774844e-04 6.375870e-04 6.921758e-04 7.412508e-04
+##  [26] 7.848119e-04 8.228592e-04 8.553927e-04 8.824123e-04 9.039181e-04
+##  [31] 9.199101e-04 9.303883e-04 9.353526e-04 9.348031e-04 9.287398e-04
+##  [36] 9.171626e-04 9.000716e-04 9.989036e-04 1.168183e-03 1.320922e-03
+##  [41] 1.457119e-03 1.576774e-03 1.730318e-03 1.865137e-03 1.980658e-03
+##  [46] 2.076881e-03 2.173964e-03 2.292561e-03 2.432343e-03 2.552826e-03
+##  [51] 2.654011e-03 2.978601e-03 3.333978e-03 3.653515e-03 3.937213e-03
+##  [56] 4.194919e-03 4.457929e-03 4.735561e-03 4.977353e-03 5.183305e-03
+##  [61] 5.383778e-03 5.567400e-03 5.712424e-03 5.818853e-03 5.886684e-03
+##  [66] 6.117646e-03 6.301271e-03 6.435271e-03 6.519647e-03 6.675364e-03
+##  [71] 6.959896e-03 7.178262e-03 7.330462e-03 7.416496e-03 7.638627e-03
+##  [76] 7.966185e-03 8.305580e-03 8.576052e-03 8.856406e-03 9.393192e-03
+##  [81] 9.892217e-03 1.030302e-02 1.062560e-02 1.113323e-02 1.174523e-02
+##  [86] 1.227734e-02 1.269918e-02 1.301074e-02 1.386766e-02 1.484585e-02
+##  [91] 1.575373e-02 1.653204e-02 1.736224e-02 1.834158e-02 1.920977e-02
+##  [96] 1.992633e-02 2.049125e-02 2.134955e-02 2.218046e-02 2.285236e-02
+## [101] 2.334507e-02 2.380636e-02 2.469962e-02 2.558519e-02 2.626123e-02
+## [106] 2.672775e-02 2.747057e-02 2.843793e-02 2.935052e-02 3.002602e-02
+## [111] 3.046442e-02 3.172487e-02 3.291892e-02 3.388115e-02 3.456216e-02
+## [116] 3.534510e-02 3.650044e-02 3.766805e-02 3.852414e-02 3.906869e-02
+## [121] 4.027266e-02 4.165754e-02 4.287120e-02 4.373198e-02 4.450594e-02
+## [126] 4.603025e-02 4.781901e-02 4.921629e-02 5.022209e-02 5.171703e-02
+## [131] 5.356646e-02 5.524275e-02 5.647242e-02 5.725546e-02 5.920588e-02
+## [136] 6.111624e-02 6.263071e-02 6.364065e-02 6.513424e-02 6.774646e-02
+## [141] 7.036756e-02 7.239041e-02 7.381501e-02 7.642150e-02 7.931626e-02
+## [146] 8.185852e-02 8.372534e-02 8.548837e-02 8.894202e-02 9.267776e-02
+## [151] 9.563605e-02 9.781689e-02 1.008298e-01 1.044839e-01 1.078442e-01
+## [156] 1.103333e-01 1.119512e-01 1.161781e-01 1.204227e-01 1.239090e-01
+## [161] 1.264000e-01 1.294689e-01 1.341608e-01 1.388097e-01 1.423227e-01
+## [166] 1.446998e-01 1.488138e-01 1.533256e-01 1.571712e-01 1.597650e-01
+## [171] 1.618762e-01 1.659196e-01 1.701990e-01 1.731000e-01 1.746226e-01
+## [176] 1.775303e-01 1.818511e-01 1.861664e-01 1.889875e-01 1.903143e-01
+## [181] 1.950900e-01 2.000633e-01 2.038278e-01 2.059491e-01 2.082628e-01
+## [186] 2.122816e-01 2.169137e-01 2.198117e-01 2.209755e-01 2.244919e-01
+## [191] 2.288374e-01 2.323860e-01 2.340681e-01 2.347910e-01 2.374199e-01
+## [196] 2.416001e-01 2.438505e-01 2.441710e-01 2.463885e-01 2.507619e-01
+## [201] 2.554427e-01 2.580614e-01 2.586179e-01 2.639724e-01 2.700432e-01
+## [206] 2.745732e-01 2.768619e-01 2.792895e-01 2.838482e-01 2.892120e-01
+## [211] 2.922240e-01 2.928845e-01 2.977888e-01 3.046554e-01 3.108081e-01
+## [216] 3.144108e-01 3.167551e-01 3.219208e-01 3.293894e-01 3.342169e-01
+## [221] 3.364033e-01 3.402008e-01 3.459909e-01 3.517693e-01 3.547714e-01
+## [226] 3.549973e-01 3.594588e-01 3.652159e-01 3.690887e-01 3.700805e-01
+## [231] 3.712173e-01 3.749521e-01 3.793690e-01 3.807451e-01 3.790803e-01
+## [236] 3.805658e-01 3.843777e-01 3.876166e-01 3.877402e-01 3.861885e-01
+## [241] 3.875229e-01 3.925753e-01 3.944848e-01 3.932514e-01 3.933403e-01
+## [246] 3.956394e-01 3.983001e-01 3.977380e-01 3.939531e-01 3.948149e-01
+## [251] 3.991756e-01 4.019408e-01 4.015025e-01 4.003422e-01 4.010870e-01
+## [256] 4.039514e-01 4.036344e-01 4.001359e-01 3.987975e-01 3.999246e-01
+## [261] 4.007170e-01 3.983499e-01 3.940762e-01 3.918750e-01 3.935594e-01
+## [266] 3.921175e-01 3.875493e-01 3.838341e-01 3.827374e-01 3.831230e-01
+## [271] 3.804347e-01 3.746724e-01 3.720412e-01 3.726970e-01 3.718707e-01
+## [276] 3.680531e-01 3.633024e-01 3.602111e-01 3.601578e-01 3.572346e-01
+## [281] 3.514414e-01 3.476749e-01 3.468213e-01 3.461350e-01 3.426504e-01
+## [286] 3.373444e-01 3.333452e-01 3.345741e-01 3.331619e-01 3.291085e-01
+## [291] 3.252089e-01 3.230865e-01 3.221443e-01 3.186464e-01 3.125929e-01
+## [296] 3.093314e-01 3.090024e-01 3.074912e-01 3.034960e-01 2.989944e-01
+## [301] 2.963300e-01 2.964004e-01 2.940668e-01 2.893292e-01 2.854251e-01
+## [306] 2.840388e-01 2.830315e-01 2.797608e-01 2.749866e-01 2.711427e-01
+## [311] 2.713667e-01 2.694540e-01 2.654048e-01 2.612848e-01 2.585349e-01
+## [316] 2.568400e-01 2.531023e-01 2.473217e-01 2.433325e-01 2.423780e-01
+## [321] 2.406978e-01 2.370987e-01 2.328119e-01 2.295173e-01 2.284143e-01
+## [326] 2.254973e-01 2.207663e-01 2.166495e-01 2.142070e-01 2.118943e-01
+## [331] 2.078558e-01 2.024764e-01 1.970134e-01 1.953561e-01 1.921576e-01
+## [336] 1.874180e-01 1.824741e-01 1.789538e-01 1.770174e-01 1.736888e-01
+## [341] 1.689680e-01 1.652766e-01 1.635552e-01 1.613183e-01 1.577774e-01
+## [346] 1.537398e-01 1.504412e-01 1.490560e-01 1.464687e-01 1.426795e-01
+## [351] 1.383762e-01 1.352218e-01 1.323773e-01 1.284714e-01 1.237904e-01
+## [356] 1.192677e-01 1.176465e-01 1.150935e-01 1.116086e-01 1.079211e-01
+## [361] 1.050829e-01 1.032673e-01 1.006220e-01 9.714673e-02 9.455714e-02
+## [366] 9.366376e-02 9.260360e-02 9.078529e-02 8.861251e-02 8.670867e-02
+## [371] 8.567691e-02 8.393938e-02 8.149608e-02 7.915652e-02 7.770723e-02
+## [376] 7.650565e-02 7.466447e-02 7.232192e-02 6.993502e-02 6.942324e-02
+## [381] 6.836558e-02 6.676206e-02 6.491652e-02 6.358434e-02 6.300364e-02
+## [386] 6.195978e-02 6.045276e-02 5.928988e-02 5.836550e-02 5.714823e-02
+## [391] 5.547055e-02 5.341322e-02 5.133620e-02 5.004092e-02 4.835416e-02
+## [396] 4.627591e-02 4.396810e-02 4.208191e-02 4.034333e-02 3.826841e-02
+## [401] 3.590652e-02 3.343047e-02 3.241284e-02 3.113881e-02 2.960839e-02
+## [406] 2.794313e-02 2.653215e-02 2.551618e-02 2.428793e-02 2.284739e-02
+## [411] 2.129549e-02 2.039401e-02 1.952693e-02 1.849718e-02 1.736534e-02
+## [416] 1.631539e-02 1.569946e-02 1.495120e-02 1.407061e-02 1.309817e-02
+## [421] 1.232666e-02 1.164926e-02 1.086434e-02 9.971902e-03 8.981060e-03
+## [426] 8.733749e-03 8.423029e-03 8.048899e-03 7.672140e-03 7.356863e-03
+## [431] 7.105141e-03 6.795525e-03 6.428013e-03 6.053066e-03 5.791442e-03
+## [436] 5.519597e-03 5.198128e-03 4.827034e-03 4.461828e-03 4.263045e-03
+## [441] 4.028422e-03 3.757959e-03 3.451656e-03 3.239500e-03 3.083176e-03
+## [446] 2.902040e-03 2.696091e-03 2.466474e-03 2.318422e-03 2.151072e-03
+## [451] 1.964423e-03 1.758476e-03 1.598467e-03 1.518514e-03 1.427532e-03
+## [456] 1.325523e-03 1.212487e-03 1.131782e-03 1.052657e-03 9.652600e-04
+## [461] 8.695926e-04 7.656544e-04 6.534456e-04 5.329659e-04 4.042156e-04
+## [466] 3.076769e-04 2.761789e-04 2.794854e-04 2.772781e-04 2.695569e-04
+## [471] 2.568955e-04 2.919074e-04 3.241623e-04 3.536603e-04 3.804015e-04
+## [476] 4.043857e-04 4.256130e-04 4.440833e-04 4.597968e-04 4.727533e-04
+## [481] 4.829530e-04 4.903957e-04 4.950815e-04 4.970104e-04 4.961823e-04
+## [486] 4.925974e-04 4.862555e-04 4.771567e-04 4.653010e-04 4.506884e-04
+## [491] 4.333189e-04 4.131925e-04 3.903091e-04 3.646689e-04 3.362717e-04
+## [496] 3.051176e-04 2.712066e-04 2.345386e-04 1.951138e-04 1.529320e-04
+## [501] 1.079933e-04 6.029774e-05 9.845238e-06 0.000000e+00 0.000000e+00
+## [506] 0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00
+## [511] 0.000000e+00 0.000000e+00
+```
+
+``` r
+AMISE_est &lt;- kern_dens_bin_Rcpp(x, h_AMISE, n, normalization = T, B = 100)$y
+AMISE_gridpoints &lt;- kernel_prep(x, h_AMISE, n)$gridpoints
+AMISE_analytical &lt;- dnorm(AMISE_gridpoints)
+
+CV_est &lt;- kern_dens_bin_Rcpp(x, h_CV, n, normalization = T, B = 100)$y
+CV_gridpoints &lt;- kernel_prep(x, h_CV, n)$gridpoints
+CV_analytical &lt;- dnorm(CV_gridpoints)
+
+# Plot the difference between the analytical and the estimated density
+plot(CV_gridpoints, CV_est - CV_analytical, col = "blue", type = "l", lwd = 2, xlab = "x", ylab = "Difference")
+lines(AMISE_gridpoints, AMISE_est - AMISE_analytical, lwd = 2, col = "red")
+legend(2, -0.01, legend=c("AMISE", "CV"), col=c("red", "blue"), lty=1:4, cex=0.8)
+```
+
+&lt;img src="Presentation-1_files/figure-html/unnamed-chunk-22-1.png" width="504" /&gt;
+
+``` r
+mean(AMISE_est - AMISE_analytical)
+```
+
+```
+## [1] 1.990623e-06
+```
+
+``` r
+mean(CV_est - CV_analytical)
+```
+
+```
+## [1] 5.795455e-09
+```
+
+
+
+
+
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"slideNumberFormat": "%current%",
+"highlightStyle": "github",
+"highlightLines": true,
+"highlightSpans": true,
+"ratio": "16:9",
+"countIncrementalSlides": true,
+"navigation": {
+"scroll": false
+}
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+// add `data-at-shortcutkeys` attribute to <body> to resolve conflicts with JAWS
+// screen reader (see PR #262)
+(function(d) {
+  let res = {};
+  d.querySelectorAll('.remark-help-content table tr').forEach(tr => {
+    const t = tr.querySelector('td:nth-child(2)').innerText;
+    tr.querySelectorAll('td:first-child .key').forEach(key => {
+      const k = key.innerText;
+      if (/^[a-z]$/.test(k)) res[k] = t;  // must be a single letter (key)
+    });
+  });
+  d.body.setAttribute('data-at-shortcutkeys', JSON.stringify(res));
+})(document);
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>

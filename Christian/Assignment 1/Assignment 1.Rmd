@@ -143,8 +143,6 @@ test_that("Binned density implementation corresponds to density() with tolerance
     tolerance = 1e-3
     )
 })
-
-
 ```
 
 We note that all results are about the same. The binned kernel estimate is a bit off, but this is expected as we are only approximating the kernel with the bins. We can increase the number of bins to get a better estimate.
@@ -209,8 +207,7 @@ bench::mark(kern_dens_loop(x, h, n, normalization = T),
             kern_dens_bin(x, h, n, normalization = T),
             density(x, bw = h, n = n, kernel = "epanechnikov"),
             check = F)
-```
-```{r warning =FALSE}
+
 kern_benchmarks <- bench::press(
   k = 2^(4:13),
   {
@@ -252,14 +249,14 @@ test_that("Binned density implementation corresponds to density() with tolerance
 We note that the implementation went well so we implement a new binned kernel with this implementation.
 
 ```{r}
-profvis::profvis(kern_dens_bin_Rcpp(x, h, n, normalization = T, fast = T))
+profvis::profvis(kern_dens_bin_Rcpp(x, h, n, normalization = T, fast = F))
 ```
 
 we see that it reduced the runtime. We can benchmark the function again:
 
 ```{r}
 kern_benchmarks_bin <- bench::press(
-  k = 2^(4:13),
+  k = 2^(4:18),
   {
       bench::mark(
         slow = kern_dens_bin(x[1:k], h, n, normalization = T, fast = F),
@@ -269,8 +266,6 @@ kern_benchmarks_bin <- bench::press(
         check = F)
   }
 )
-
-plot(kern_benchmarks_bin)
 
 kern_benchmarks_bin %>% 
   mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
@@ -379,7 +374,7 @@ $$\ell_{\mathrm{CV}}(h) = \sum_{i=1}^N \log (\hat{f}^{-i}_h),$$
 that we will refer to as the cross-validated log-likelihood, and we define the bandwidth estimate as
 
 $$ \hat{h}_{\mathrm{CV}} = \arg \max_h \ \ \ell_{\mathrm{CV}}(h).$$
-This cross-validation based bandwidth can then be used for computing kernel density estimates using the entire dataset. 
+This cross-validation based bandwidth can then be used for computing kernel density estimates using the entire data set. 
 
 We benchmark the functions and ensure that they produce the same result:
 
