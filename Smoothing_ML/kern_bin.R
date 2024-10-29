@@ -13,3 +13,9 @@ kern_bin <- function(x, l, u, B) {
 }
 
 
+kern_bin_fast <- function(x, l, u, B) {
+  delta <- (u - l) / (B - 1)
+  is <- floor((x - l) / delta + 0.5) + 1
+  w <- tabulate(is)
+  w/sum(w)
+}

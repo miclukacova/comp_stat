@@ -1,0 +1,121 @@
+---
+title: "Rejection Sampling"
+author: "Michaela Lukacova (dns525)"
+institute: "University of Copenhagen"
+date: '`r Sys.Date()`'
+output:
+  xaringan::moon_reader:
+    css: themer-new.css
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      highlightSpans: true
+      ratio: 16:9
+      countIncrementalSlides: true
+      navigation:
+        scroll: false
+---
+<style type="text/css">
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content > h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+</style>
+
+```{r, include=FALSE, eval = FALSE}
+rmarkdown::render('presentation.rmd')
+```
+
+```{r xaringan-themer, include = FALSE, warning = FALSE}
+library(xaringanthemer)
+library(CSwR)
+style_mono_accent(
+ base_color = "#4f7942")
+```
+
+```{r packages, echo=FALSE, warning=FALSE, message=FALSE}
+library(microbenchmark)
+library(bench)
+library(tidyverse)
+library(profvis)
+library(bench)
+library(knitr)
+library(testthat)
+knitr::opts_chunk$set(fig.retina = 2)
+theme_set(
+  theme_bw(base_size = 18, base_family = 'Noto Sans') +  # Set base font size and family
+    theme(
+      text = element_text(size = 15),           # Adjust text size
+      axis.line = element_line(size = 4),       # Set axis line thickness (use `size` not `linewidth`)
+      panel.grid = element_line(size = 0.5)     # Set grid line thickness
+    )
+)
+```
+
+### Introduction and outline
+
+- We are given a Poisson data set with 100 rows and $2$ variables $z \in \mathbb{N}$ and $x \in \mathbb{R}_+$
+
+- We wish to sample from the distribution on $[0, \infty)$ with density function 
+$$f(y) \propto \prod_{i=1}^{100} \exp \left( yx_i z_i - \exp(yx_i) \right) =  \exp \left( y\left(\sum_{i=1}^{100}x_i z_i\right) - \sum_{i=1}^{100}\exp(yx_i) \right) = f^*(y)$$
+- We wish to do this by
+  + Finding a Gaussian envelope of $f$  
+  + Implement rejection sampling from the distribution with density $f$ using this envelope
+  
+- We will further implement the adaptive rejection sampling algorithm that uses a piecewise log-affine envelope
+
+- And we will compare of the two methods
+
+---
+### The Gaussian Envelope
+
+To do rejection sampling one needs an envelope. The envelope should satisfy
+
+
+
+We wish to use a Gaussian envelope, which means that We start out by plotting the function $f^*$ that we are given.  
+
+```{r, echo = FALSE}
+ggplot() +
+  geom_function(fun = f_star_vec) +  
+  labs(x = expression(y),
+       y = expression({f^{"*"}}(y)))
+```
+
+---
+###
+
+
+$$g(y) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left( - \frac{(y- \mu)^2}{2\sigma^2}\right)$$
+- The Gaussian density has two parameters, the mean $\mu$ and the variance $\sigma^2$ 
+- The envelope should be as tight as possible
+  + Due to symmetry we will pick the me we use the max of the $f^*$ function as the mean parameter
+
+Bel
+
+```{r, echo = FALSE}
+mu_opt <- optimize(function(y) -f_star(y), interval = c(0.2, 0.3))$minimum
+mu_opt
+```
+
+
+---
+### Gaussian envelope
+
+Note that
+
+$$ 1 = \int f(x) dx = c \int f^*(x) dx \Leftrightarrow \frac{1}{\int f(x) dx} = c$$
+We can thus find the proportionality constant by integrating the function $f^*$.
+```{r, echo = FALSE}
+c <- 1 / integrate(f_star_vec, lower = 0, upper = Inf, abs.tol = 10^(-60))$value
+c %>% kable()
+```
+

@@ -54,7 +54,6 @@ ggplot() +
   geom_function(fun = f_star_vec) +  
   labs(x = expression(y),
        y = expression({f^{"*"}}(y)))
-
 ```
 
 In order to do rejection sampling one needs an envelope. We wish to use a Gaussian envelope $g = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left( - \frac{(y- \mu)^2}{2\sigma^2}\right)$. The Gaussian density has two parameters, the mean and the variance. The envelope should be as tight as possible, and the density looks quite symmetric, therefore as the optimal mean of the Gaussian envelope we use the max of $f^*$ function. 

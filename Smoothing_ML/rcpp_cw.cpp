@@ -5,8 +5,8 @@ using namespace Rcpp;
 // Assumes kern_vals_h is a precomputed matrix, and N is a vector of counts per group
 
 // [[Rcpp::export]]
-NumericVector calculate_f_hat_i(NumericVector x, NumericVector h, IntegerVector groups, 
-                                NumericMatrix kern_vals_h, IntegerVector N, int j) {
+NumericVector inner_loop_rcpp(NumericVector x, double h, IntegerVector groups, 
+                                NumericMatrix kern_vals_h, IntegerVector N) {
   int n = x.size();
   NumericVector f_hat_i(n);
   
@@ -16,7 +16,7 @@ NumericVector calculate_f_hat_i(NumericVector x, NumericVector h, IntegerVector 
     
     // Compute the condition for each element
     for (int m = 0; m < n; ++m) {
-      if (m != i && std::abs(x[m] - x[i]) <= h[j] && groups[m] != kk) {
+      if (m != i && std::abs(x[m] - x[i]) <= h && groups[m] != kk) {
         sum_vals += kern_vals_h(i, m);
       }
     }
@@ -24,6 +24,8 @@ NumericVector calculate_f_hat_i(NumericVector x, NumericVector h, IntegerVector 
     // Calculate density estimate for each observation
     f_hat_i[i] = (N[kk - 1] > 0) ? (sum_vals / N[kk - 1]) : 0;
   }
+  
+  f_hat_i = 3 * f_hat_i / (4 * h);
   
   return f_hat_i;
 }

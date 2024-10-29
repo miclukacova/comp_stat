@@ -1,31 +1,7 @@
-##################################################
-################### Packages #####################
-##################################################
-
-library(bench)
-library(ggplot2)
-library(tidyverse)
-library(testthat)
-library(profvis)
-theme_set(theme_bw())
-
-##################################################
-################### Data #########################
-##################################################
-
-setwd("~/Desktop/Uni/5aar/CompStat/Assignments/Univariate Simulation")
-poisson_data <- read_csv("poisson.csv")
-x <- poisson_data$x
-z <- poisson_data$z
 
 ##################################################
 ################# Gaussian Envelope ##############
 ##################################################
-
-# The target densitity
-sum1 <- sum(x * z)
-f_star <- function(y) exp(y * sum1  - sum(exp(y * x)))
-df1 <- function(y) exp(y * sum1  - sum(exp(y * x))) * (sum1  - sum(x * exp(y * x)))
 
 # Ratio to minimize
 ratio <- function(y, mu, sigma) 1 / (sqrt(2 * pi *sigma^2)) * 
