@@ -32,6 +32,12 @@ library(doParallel)       # For parallel processing
 library(CSwR)             # For data set
 
 # Source relevant scripts
+source("Generate_data.R")
+source("Full_data_likelihood.R")
+source("EM_algorithm.R")
+source("Gradient_descent.R")
+source("Fisher_information.R")
+Rcpp::sourceCpp("EM.cpp")
 ```
 
 
@@ -42,7 +48,103 @@ The EM algorithm is used in cases where we may not observe the entire data we ar
   f(x,w | \theta) = \frac{1}{\sqrt{\pi \nu \sigma^2} 2^{(\nu + 1)/2} \Gamma(\nu/2)} w^{\frac{\nu - 1}{2}} \exp(- \frac{w}{2} (1 + \frac{(x-\mu)^2}{\nu \sigma^2}) )
 \]
 
-where $\theta = (\mu, \sigma)$. We then define
+where $\theta = (\mu, \sigma)$. We want implement the EM-algorithm to estimate $\mu$ and $\sigma$ given $X$ and compare this to other optimization algorithms of the marginal log-likelihood.
+
+We will
+
++ Derive the complete data log-likelihood and maximize this to find the MLE of $\mu$ and $\sigma$ for comparison
++ Derive the marginal density of $X$ and implement the EM-algorithm to estimate $\mu$ and $\sigma$
++ Implement a gradient descent algorithm to estimate $\mu$ and $\sigma$ and compare this to the EM-algorithm
++ Calculate the Fisher information matrix and compare the standard errors of the estimates from the EM-algorithm and the gradient descent algorithm
++ Finally extend the EM-algorithm to estimate $\nu$ as well.
+
+
+
+# Simulating data
+
+We check that the simulation produces the correct results
+
+```{r}
+# Simulate data
+N <- 10000
+
+oracle_param <- parameters(mu = 3, sigma = 5, nu = 7)
+simulated_data <- simulate(oracle_param, N = N)
+x <- simulated_data$x
+w <- simulated_data$w
+
+nu <- oracle_param$nu
+mu_oracle <- oracle_param$mu
+sigma_oracle <- oracle_param$sigma
+```
+
+
+# Deriving the complete data log-likelihood
+The complete data log-likelihood is given by
+
+\[
+  \log f(X,W \ | \ \theta) = \log \frac{1}{\sqrt{\pi \nu \sigma^2} 2^{(\nu + 1)/2} \Gamma(\nu/2)} + \frac{\nu - 1}{2} \log W - \frac{W}{2} \biggl(1 + \frac{(X-\mu)^2}{\nu \sigma^2} \biggr)
+\]
+
+The MLE of $\mu$ and $\sigma$ is then given by
+
+\[
+  \hat{\mu} = \frac{\sum_{i = 1}^n x_i w_i}{\sum_{i = 1}^N w_i}\\
+  \hat{\sigma} = \sqrt{\frac{1}{n \nu} \sum_{i = 1}^n w_i (x_i - \hat{\mu})^2}
+\]
+
+where $n$ is the number of observations. We can then calculate the MLE of $\mu$ and $\sigma$ and the log-likelihood of the data given these estimates.
+
+```{r}
+FDMLE <- full_data_mle(x = x, w = w, nu = nu)
+FDMLE
+```
+
+```{r}
+full_data_log_likelihood(x = x, w = w, mu = FDMLE$mu, sigma = FDMLE$sigma, nu = nu)
+```
+
+We finally plot the log-likelihood and the MLE of $\mu$ and $\sigma$.
+
+```{r}
+mu_values_FDLL <- seq(FDMLE$mu - 0.5, FDMLE$mu + 0.5, length.out = 20)  # Adjust the range as needed
+sigma_values_FDLL <- seq(FDMLE$sigma - 0.5, FDMLE$sigma + 0.5, length.out = 20)   # Avoid zero to prevent division by zero errors
+
+# Create a grid for mu and sigma
+grid_FDLL <- expand.grid(mu = mu_values_FDLL, sigma = sigma_values_FDLL)
+
+# Calculate marginal_log_likelihood for each combination of mu and sigma
+FDLL_func_fac <- FDLL_function_factory(x = x, w = w, nu = nu)
+grid_FDLL$log_likelihood <- mapply(function(mu, sigma) {
+  FDLL_func_fac$H(c(mu, sigma))
+}, grid_FDLL$mu, grid_FDLL$sigma)
+
+
+breaks_seq <- seq(min(grid_FDLL$log_likelihood), max(grid_FDLL$log_likelihood), length.out = 20)  # Adjust length.out for smaller intervals
+
+# Alternatively, for a contour plot
+ggplot(grid_FDLL, aes(x = mu, y = sigma, z = log_likelihood)) +
+  geom_contour_filled(breaks = breaks_seq, show.legend = FALSE) +
+  geom_point(aes(x = FDMLE$mu, y = FDMLE$sigma), color = "red") +
+  labs(title = "Contour Plot of Marginal Log-Likelihood", x = "Mu", y = "Sigma") +
+  theme_bw()
+```
+
+
+
+# Deriving the marginal density of X
+It can be shown that the marginal density of $X$ is given by
+
+\[
+  f(x \ | \ \theta) = \frac{\Gamma((\nu + 1)/2)}{\sqrt{\pi \nu \sigma^2} \Gamma(\nu/2)} (1 + \frac{(x - \mu)^2}{\nu \sigma^2})^{-(\nu + 1)/2}
+\]
+
+which is a Student's t-distribution with location $\mu$, scale $\sigma^2$ and $\nu$ degrees of freedom.
+
+
+# Implementing the EM-algorithm
+
+We then define
 
 \[
   Q(\theta|\theta') = \mathbb{E}[\log f(X,W \ | \ \theta) \ |\ X = x]
@@ -54,92 +156,221 @@ and we wish to iteratively compute
   \theta_{n+1} = \arg \max_\theta Q(\theta \ | \ \theta_n)
 \]
 
-# Deriving the marginal density of X
+
+We check implementation of `alpha_prime_func`, `beta_prime_func`, `mu_hat_func` and `sigma_hat_func`:
+
+```{r}
+alpha_prime <- alpha_prime_func(nu)
+beta_prime <- beta_prime_func(x, nu, mu_oracle, sigma_oracle)
+
+mu_hat <- mu_hat_func(x = x, beta_prime = beta_prime)
+sigma_hat <- sigma_hat_func(x = x, nu = nu, mu_hat = mu_oracle, alpha_prime = alpha_prime, beta_prime = beta_prime)
+```
 
 
-
-# Maximizing the full data log likelihood and implementation
-
-
+We then implement the EM-algorithm:
 
 ```{r}
 
-alpha_prime_func <- function(nu){
-  return((nu + 1)/2)
-}
-
-beta_prime_func <- Vectorize(function(x, nu, mu, sigma){
-  return(1/2 * (1 + (x - mu)^2 / (nu * sigma^2)))
-}, vectorize.args = "x")
+```
 
 
+We run a few tests to make to sure that the EM-algorithm works as expected:
 
-mu_hat_func <- function(x, beta_prime){
-  return(sum(x * beta_prime) / sum(1 / beta_prime))
-}
+```{r}
+set.seed(1245)
+par0 <- c(rnorm(1, 7, 2), abs(rnorm(1, 7, 2)))
+EM_algorithm(x = x, par0 = par0, nu = nu, maxiter = 100, tolerance = 1e-3)
+EM_algorithm(x = x, par0 = c(0, 1), nu = nu, maxiter = 100, tolerance = 1e-3)
+EM_algorithm(x = x, par0 = c(6, 3), nu = nu, maxiter = 100, tolerance = 1e-3)
+EM_algorithm(x = x, par0 = c(21, 100), nu = nu, maxiter = 100, tolerance = 1e-3)
+```
 
-sigma_hat_func <- function(x, nu, mu_hat, alpha_prime, beta_prime){
-  return(sqrt(alpha_prime/nu * mean((x - mu_hat)^2 / beta_prime)))
-}
 
+We then proceed to optimize runtime of the algorithm. First we profile:
 
-EM_algorithm <- function(x, init_theta, nu, max_iter = 100, tolerance = 1e-6, cb = NULL){
-  mu_hat <- init_theta[1]
-  sigma_hat <- init_theta[2]
+```{r}
+profvis::profvis({
+  EM_algorithm(x = x, par0 = par0, nu = nu, maxiter = 100, tolerance = 1e-3)
+})
+```
+
+We note that it is the `beta_prime_func` that is the bottleneck. We then implement a faster version of the in Rcpp `beta_prime_func`:
+
+```{r}
+test_that("beta_prime_func is correct", {
+  beta_prime <- beta_prime_func(x, nu, mu_oracle, sigma_oracle)
+  beta_prime_rcpp <- beta_prime_func_cpp(x, nu, mu_oracle, sigma_oracle)
   
-  alpha_prime <- alpha_prime_func(nu)
-  
-  for(i in 1:max_iter){
-    mu_old <- mu_hat
-    sigma_old <- sigma_hat
-    beta_prime <- beta_prime_func(x, nu, mu_old, sigma_old)
-    
-    if(!is.null(cb)) cb()
-    
-    mu_hat <- mu_hat_func(x, beta_prime)
-    sigma_hat <- sigma_hat_func(x, nu, mu_hat, alpha_prime, beta_prime)
-    
-    if(abs(mu_hat - mu_old) < tolerance & abs(sigma_hat - sigma_old) < tolerance){
-      break
-    }
-    
-    mu <- mu_hat
-    sigma <- sigma_hat
-    
-    iterations <- i
+  expect_equal(beta_prime, beta_prime_rcpp)
+})
+```
+
+```{r}
+microbenchmark::microbenchmark(
+  beta_prime_func(x, nu, mu_oracle, sigma_oracle),
+  beta_prime_func_cpp(x, nu, mu_oracle, sigma_oracle)
+)
+```
+Much faster. We continue with this version of the function.
+
+```{r}
+profvis::profvis({
+  EM_algorithm_cpp_naive(x = x, par0 = par0, nu = 5, maxiter = 100, tolerance = 1e-12)
+})
+```
+
+We note this time, that the `mu_hat` function and `sigma_hat` functions are slow. We implement all of this in Rcpp. We construct one where only the functions are implemented in Rcpp so we keep the `cb` functionality and one where the entire algorithm is implemented in Rcpp:
+
+```{r}
+EM_algorithm_cpp_naive(x = x, par0 = par0, nu = nu, maxiter = 100, tolerance = 1e-3, cb = EM_tracer)
+EM_algorithm_cpp(x = x, par0 = par0, nu = nu, maxiter = 100, tolerance = 1e-3, cb = EM_tracer)
+EM_algorithm_full_cpp(x = x, par0 = par0, nu = nu, maxiter = 100, tolerance = 1e-3)
+```
+
+We benchmark the different implementations:
+
+```{r}
+EM_bench <- bench::press(
+  k = 2^(7:12),
+  {
+      bench::mark(
+        R = EM_algorithm(x = x[1:k], par0 = par0, nu = nu),
+            Cpp_naive = EM_algorithm_cpp_naive(x = x[1:k], par0 = par0, nu = nu),
+            Cpp_R = EM_algorithm_cpp(x = x[1:k], par0 = par0, nu = nu),
+            FullCpp = EM_algorithm_full_cpp(x = x[1:k], par0 = par0, nu = nu),
+            check = F)
   }
-  
-  return(c(mu, sigma))
-}
+)
 
+plot(EM_bench) + theme_bw()
 
+EM_bench %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)") + theme_bw()
+```
+
+We continue with the implementation Cpp_R.
+
+```{r}
+EM_test <- EM(x = x, par0 = par0, nu = nu, maxiter = 100, tolerance = 1e-5, cb = EM_tracer, true_par = c(mu_oracle, sigma_oracle))
+plot(EM_test, plot_no = 1)
+plot(EM_test, plot_no = 2)
+plot(EM_test, plot_no = 3)
+plot(EM_test, plot_no = 4)
 ```
 
 
+# Gradient descent algorithm
+
+We implement the gradient descent algorithm and wrap it in an S3-object. We implement an R-version and a version where some of the calculations are done in Rcpp. We start by implementing the R-version. We benchmark the two implementations:
+
+```{r}
+GD_bench <- bench::press(
+  k = 2^(7:12),
+  {
+      bench::mark(
+        R = GD(x = x[1:k], nu = nu, par0 = par0, function_factory = GD_function_factory, 
+               maxiter = 1000, tolerance = 1e-5, cb = GD_tracer, gamma0 = 1, clipping = TRUE),
+        Cpp = GD(x = x[1:k], nu = nu, par0 = par0, function_factory = GD_function_factory_cpp,
+                 maxiter = 1000, tolerance = 1e-5, cb = GD_tracer, gamma0 = 1, clipping = TRUE),
+        check = F)
+  }
+)
+
+plot(GD_bench) + theme_bw()
+
+GD_bench %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)") + theme_bw()
+
+```
 
 
 ```{r}
+GD_test <- GD(x = x, nu = nu, par0 = par0, function_factory = GD_function_factory_cpp,
+                 maxiter = 1000, tolerance = 1e-9, cb = GD_tracer, gamma0 = 0.9, clipping = TRUE, true_par = c(mu_oracle, sigma_oracle))
 
-# Simulate data
-N <- 5000
-nu <- 3
-sigma_oracle <- 5
-mean_oracle <- 3
+plot(GD_test, plot_no = 1)
+plot(GD_test, plot_no = 2)
+plot(GD_test, plot_no = 3)
+plot(GD_test, plot_no = 4)
+```
 
-w <- rchisq(N, nu)
-x <- rnorm(N, mean = mean_oracle, sd = sqrt(nu * sigma_oracle^2 / w))
+# Comparing algorithms
 
-init_theta <- c(0, 4)
+```{r}
+plot(EM_test, plot_no = 3) + 
+  geom_point(data = GD_test$trace, aes(x = par0.1, y = par0.2), color = "blue", shape = 1) + 
+  geom_line(data = GD_test$trace, aes(x = par0.1, y = par0.2), color = "blue")
+```
 
-EM_algorithm(x, init_theta, nu, max_iter = 10000, tolerance = 1e-12)
 
+Include plots of converge. Try different starting values, different values of $\nu$ and different values of $\sigma$.
+
+
+
+# Calculating the Fisher information
+We have previously derived the derivative of the Q-function wrt. $\mu$ and $\sigma$. With these results the gradient of the $Q$ function wrt. $\theta = (\mu, \sigma)$ is given by
+\[
+  \nabla Q_\theta(\theta \ | \ \theta') = \begin{pmatrix} - \frac{\alpha'}{\nu \sigma^2} \sum_{i = 1}^n \frac{x_i - \mu}{\nu \sigma^2 \beta_i'} \\ - \frac{n}{\sigma} + \frac{\alpha'}{\nu \sigma^3} \sum_{i = 1}^n \frac{(x_i - \mu)^2}{\beta_i'} \end{pmatrix}
+\]
+where $\alpha' = \frac{\nu + 1}{\nu'}$ and $\beta_i' = \frac{1}{2} \biggl(1 + \frac{(x_i - \mu')^2}{\nu' \sigma'^2}\biggr)$. The Fisher information can be estimated by
+
+\[
+  \hat{\mathcal{I}}(\hat \theta) = \nabla Q_\theta(\hat \theta \ | \ \hat \theta) \nabla Q_\theta(\hat \theta \ | \ \hat \theta)^T
+\]
+This is not necessarily unbiased and we have dropped the score in the calculation (assuming it is zero) which is not necessarily the case.
+
+From NRH we have that 
+
+\[
+  \nabla_\theta \ell(\theta) = \sum_{i = 1}^n \nabla_\theta Q_i(\theta \ | \ \theta)
+\]
+
+and the fisher information
+
+\[
+  \hat{\mathcal{I}}(\hat \theta) = \sum_{i = 1}^n (\nabla_\theta Q_i(\hat \theta \ | \ \hat \theta) - \nabla_\theta \ell(\hat \theta)) 
+  (\nabla_\theta Q_i(\hat \theta \ | \ \hat \theta) - \nabla_\theta \ell(\hat \theta))^T
+\]
+
+
+We check that our implementation of the Fisher information is correct by comparing it to the Fisher information calculated by the `numDeriv` package.
+
+```{r}
+alpha_prime <- alpha_prime_func(nu)
+beta_prime <- beta_prime_func(x, nu, mu_oracle, sigma_oracle)
+
+mu_hat <- mu_hat_func(x = x, beta_prime = beta_prime)
+sigma_hat <- sigma_hat_func(x = x, nu = nu, mu_hat = mu_oracle, alpha_prime = alpha_prime, beta_prime = beta_prime)
+
+numDeriv::jacobian(Qgrad, x = c(mu_hat, sigma_hat), nu = nu, data = x, alpha_prime = alpha_prime, beta_prime = beta_prime)
+fisher_information(x = x, mu = mu_hat, sigma = sigma_hat, nu = nu)
 ```
 
 
 
 
+# Estimating the nu parameter
 
 
+
+
+What remains?
+
+Compare the two algorithms
++ Different starting points
++ Different step-sizes
++ Different values of $\nu$
++ Different values of $\sigma$
++ Different values of $\mu$
++ Finish fisher information section
++ Make presentation
+
+Estimating the nu parameter
 
 
 
