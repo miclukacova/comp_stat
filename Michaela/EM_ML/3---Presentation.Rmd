@@ -1,0 +1,125 @@
+---
+title: "The EM-algorithm for the  t-Distribution"
+author: "Michaela Lukacova (dns525)"
+institute: "University of Copenhagen"
+date: '`r Sys.Date()`'
+output:
+  xaringan::moon_reader:
+    css: themer-new.css
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      highlightSpans: true
+      ratio: 16:9
+      countIncrementalSlides: true
+      navigation:
+        scroll: false
+---
+<style type="text/css">
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content > h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+</style>
+
+```{r, include=FALSE, eval = FALSE}
+rmarkdown::render('presentation.rmd')
+```
+
+```{r xaringan-themer, include = FALSE, warning = FALSE}
+library(xaringanthemer)
+library(CSwR)
+style_mono_accent(
+ base_color = "#4f7942")
+```
+
+```{r packages, echo=FALSE, warning=FALSE, message=FALSE}
+library(microbenchmark)
+library(bench)
+library(tidyverse)
+library(profvis)
+library(bench)
+library(Rcpp)
+library(knitr)
+library(testthat)
+knitr::opts_chunk$set(fig.retina = 2)
+theme_set(
+  theme_bw(base_size = 18) +  # Set base font size and family
+    theme(
+      text = element_text(size = 15),           # Adjust text size
+    )
+)
+```
+
+```{r source, echo = FALSE, warning=FALSE, message=FALSE}
+```
+### Introduction and outline
+
+The joint density of $Y = \left( X, W \right)$ is given by
+
+$$f(x,w) = \frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)}  w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right)$$
+
+- Why is the marginal density of $X$ a $t$-distribution?
+
+- Maximizing the complete data log likelihood for iid. observations
+
+- The EM algorithm for estimating $(\mu, \sigma^2)$
+
+- Comparing with other optimization algorithms based on the marginal log-likelihood
+
+- The Fisher information
+
+---
+### The marginal distribution of $X$ is the $t$-distribution
+
+Let $C = \frac{1}{\sqrt{\pi \nu  \sigma^2} \Gamma(\nu/2)}$
+
+$$f(x) = \int f(x,w) dw =C \int \frac{1}{2^{(\nu+1)/2}} w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) dw  $$
+Let $z = \frac{\nu+1}{2}$, implying that $z-1 = \frac{\nu-1}{2}$. 
+
+$$f(x) =\int \frac{1}{2^{z}} w^{z - 1} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) dw$$
+
+And let $t = \frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)$, implying that $w = 2t\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$ and $dw = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} dt$. Note that the limits of the integral are still the same $(0,\infty )$. 
+
+$$f(x)  =C \int \frac{1}{2^{z}} w^{z-1} \exp\left(-t \right) dw$$
+
+--- 
+### The marginal distribution of $X$ is the $t$-distribution
+
+Substituting $w$ and $dw = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} dt$ we obtain
+
+$$f(x) =C \int \frac{1}{2^{z}} \left(2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right)^{-z}  t^{z-1} \exp\left(-t\right) dt  = C  \left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-z}\int t^{z-1} \exp\left(-t\right) dt$$
+Recognizing the gamma function we finally obtain
+
+$$f(x) = \frac{\Gamma(\frac{\nu+1}{2})}{\sqrt{\pi \nu  \sigma^2} \Gamma(\nu/2)} \left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-\frac{\nu+1}{2}}$$
+
+Which is recognized as the density of the $t$-distribution. 
+
+---
+### Maximizing the complete data log likelihood for iid. observations
+
+
+The complete data log likelihood is
+
+$$\mathcal{l}(Y) = \sum_{i=1}^n \log\left(f\left(f(x_i,w_i\right)\right) \\
+= \sum_{i=1}^n -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)\right) + \frac{\nu -1}{2}\log(w_i) -\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) \\
+\propto \sum_{i=1}^n - \log(\sigma) + \frac{\nu -1}{2}\log(w_i) -\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) = f(\mu,\sigma)$$
+
+Finding the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$
+
+$$\frac{\partial f}{\partial \mu} = \sum_{i=1}^n \frac{w_i(x_i-\mu)}{\nu \sigma^2} \\
+\frac{\partial f}{\partial \sigma} = - \frac{n}{\sigma} + \sum_{i=1}^n \frac{w_i}{2\nu \sigma^3}(x_i-\mu)^2 $$
+
+Setting the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$  equal to zero results in the following estimators:
+
+$$\hat{\mu} = \frac{\sum_{i=1}^n w_i x_i}{\sum_{i=1}^n w_i} \\
+\hat{\sigma}^2 = \frac{\sum_{i=1}^n w_i (x_i - \hat{\mu})^2}{\nu n}$$
+

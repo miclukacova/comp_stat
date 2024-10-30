@@ -172,7 +172,7 @@ profvis::profvis({
 })
 ```
 
-We improve by implementing a vectorized version
+We improve by implementing a vectorized version. Instead of sampling one pair of variables at a time, the vectorized version samples $m$ pairs of variables at a time, until we reach the desired random sample size. The number $m$ is adapted for each iteration, such that the number of proposals is equal to the missing number of samples times the estimated acceptance rate. 
 
 ```{r}
 vec_f_samp <- rng_wrapper(vec_f_random)

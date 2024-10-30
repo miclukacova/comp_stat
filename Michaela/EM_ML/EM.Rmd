@@ -73,7 +73,7 @@ Finding the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^
 
 $$
 \frac{\partial f}{\partial \mu} = \sum_{i=1}^n \frac{w_i(x_i-\mu)}{\nu \sigma^2} \\
-\frac{\partial f}{\partial \sigma^2} = - \frac{n}{\sigma} + \sum_{i=1}^n \frac{w_i}{2\nu \sigma^3}(x_i-\mu)^2 
+\frac{\partial f}{\partial \sigma} = - \frac{n}{\sigma} + \sum_{i=1}^n \frac{w_i}{2\nu \sigma^3}(x_i-\mu)^2 
 $$
 
 Setting the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$  equal to zero results in the following estimators:
