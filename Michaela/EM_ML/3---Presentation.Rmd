@@ -50,6 +50,8 @@ library(bench)
 library(Rcpp)
 library(knitr)
 library(testthat)
+library(gridExtra)
+theme_set(theme_bw())
 knitr::opts_chunk$set(fig.retina = 2)
 theme_set(
   theme_bw(base_size = 18) +  # Set base font size and family
@@ -60,6 +62,12 @@ theme_set(
 ```
 
 ```{r source, echo = FALSE, warning=FALSE, message=FALSE}
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/simulate.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/MLE.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/EM.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/parameters.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/loglik.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/GD.R")
 ```
 ### Introduction and outline
 
@@ -77,49 +85,341 @@ $$f(x,w) = \frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)}  w^{(
 
 - The Fisher information
 
+
 ---
 ### The marginal distribution of $X$ is the $t$-distribution
 
-Let $C = \frac{1}{\sqrt{\pi \nu  \sigma^2} \Gamma(\nu/2)}$
+$$f(x) = \int f(x,w) dw =C \int \frac{1}{2^{(\nu+1)/2}} w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) dw$$
 
-$$f(x) = \int f(x,w) dw =C \int \frac{1}{2^{(\nu+1)/2}} w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) dw  $$
-Let $z = \frac{\nu+1}{2}$, implying that $z-1 = \frac{\nu-1}{2}$. 
+Where $C = \frac{1}{\sqrt{\pi \nu  \sigma^2} \Gamma(\nu/2)}$. Let $z = \frac{\nu+1}{2}$, implying that $z-1 = \frac{\nu-1}{2}$, and $t = \frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)$. 
 
-$$f(x) =\int \frac{1}{2^{z}} w^{z - 1} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) dw$$
+$$f(x) =\int \frac{1}{2^{z}} w^{z - 1} \exp\left(-t \right) dw$$
+Note that $w = 2t\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$ and $dw = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} dt$.
 
-And let $t = \frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)$, implying that $w = 2t\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$ and $dw = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} dt$. Note that the limits of the integral are still the same $(0,\infty )$. 
+$$f(x) =C \int \frac{1}{2^{z}} \left(2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right)^{-z}  t^{z-1}\exp\left(-t\right) dt  = C  \left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-z}\int t^{z-1} \exp\left(-t\right) dt$$
 
-$$f(x)  =C \int \frac{1}{2^{z}} w^{z-1} \exp\left(-t \right) dw$$
-
---- 
-### The marginal distribution of $X$ is the $t$-distribution
-
-Substituting $w$ and $dw = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} dt$ we obtain
-
-$$f(x) =C \int \frac{1}{2^{z}} \left(2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right)^{-z}  t^{z-1} \exp\left(-t\right) dt  = C  \left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-z}\int t^{z-1} \exp\left(-t\right) dt$$
 Recognizing the gamma function we finally obtain
 
-$$f(x) = \frac{\Gamma(\frac{\nu+1}{2})}{\sqrt{\pi \nu  \sigma^2} \Gamma(\nu/2)} \left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-\frac{\nu+1}{2}}$$
+$$f(x) = \frac{\Gamma(\frac{\nu+1}{2})}{\sqrt{\pi \nu  \sigma^2} \Gamma(\nu/2)} \left(1+\frac{(x-\mu)^2}{\nu\sigma^2}\right)^{-\frac{\nu+1}{2}}$$
 
 Which is recognized as the density of the $t$-distribution. 
 
 ---
 ### Maximizing the complete data log likelihood for iid. observations
 
-
 The complete data log likelihood is
 
-$$\mathcal{l}(Y) = \sum_{i=1}^n \log\left(f\left(f(x_i,w_i\right)\right) \\
-= \sum_{i=1}^n -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)\right) + \frac{\nu -1}{2}\log(w_i) -\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) \\
-\propto \sum_{i=1}^n - \log(\sigma) + \frac{\nu -1}{2}\log(w_i) -\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) = f(\mu,\sigma)$$
+$$\mathcal{l}(Y) = \sum_{i=1}^n -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)\right) + \frac{\nu -1}{2}\log(w_i) -\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) \\
+\propto \sum_{i=1}^n - \log(\sigma) + \frac{\nu -1}{2}\log(w_i) -\frac{w_i}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right) = g(\mu,\sigma)$$
 
 Finding the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$
 
-$$\frac{\partial f}{\partial \mu} = \sum_{i=1}^n \frac{w_i(x_i-\mu)}{\nu \sigma^2} \\
-\frac{\partial f}{\partial \sigma} = - \frac{n}{\sigma} + \sum_{i=1}^n \frac{w_i}{2\nu \sigma^3}(x_i-\mu)^2 $$
+$$\frac{\partial g}{\partial \mu} = \sum_{i=1}^n \frac{w_i(x_i-\mu)}{\nu \sigma^2} \\
+\frac{\partial g}{\partial \sigma} = - \frac{n}{\sigma} + \sum_{i=1}^n \frac{w_i}{2\nu \sigma^3}(x_i-\mu)^2$$
 
 Setting the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$  equal to zero results in the following estimators:
 
 $$\hat{\mu} = \frac{\sum_{i=1}^n w_i x_i}{\sum_{i=1}^n w_i} \\
 \hat{\sigma}^2 = \frac{\sum_{i=1}^n w_i (x_i - \hat{\mu})^2}{\nu n}$$
+
+---
+### Data generation
+
+We have created a S3 class `parameters` with a `sim` function that generates data, a `mle` function that computes the full data MLE estimates and a `print` method.  
+
+- Takes as input sample size $n$ and a vector of parameters $(\mu, \sigma^2, \nu)$
+
+- Returns a list with two elements, $x$ and $w$
+
+- The $w$'s are drawn from a $\chi^2$ distribution with $\nu$ degrees of freedom
+
+- The $x$'s are drawn from a normal distribution with mean $\mu$ and variance $\sigma^2 \nu / w$
+
+```{r}
+set.seed(6783)
+par0 <- parameters(1, 2, 1); par0
+data0 <- sim(par0, n = 1000)
+mle0 <- mle(par0, data0); mle0
+```
+
+---
+### Testing the MLE estimators
+
+We have implemented the MLE estimators of the complete data log likelihood as respectively `mle.mu` and `mle.sigma2`. We test them out for three different parameter sets, and different sample sizes. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+set.seed(974)
+true_params <- data.frame(mu = c(1, 5, 0), sigma2 = c(3, 10, 3), nu = c(1,1,3))
+mu_est <- numeric(6*3) # rows are parameter index, columns are sample size
+sigma2_est <- numeric(6*3) # rows are parameter index, columns are sample size
+
+sample_size = rep(c(20, 30, 40, 50, 100, 200), each = 3)
+param_id = rep(1:3, times = 6)
+
+param_labels <- c(
+  "1" = "(1,3,1)",
+  "2" = "(5,10,1)",
+  "3" = "(0,3,3)"
+)
+
+for(i in 1:(6*3)){
+  ss <- sample_size[i]
+  par <- true_params[param_id[i],]
+  data <- simulate(n = ss, par = par) 
+  mu_est[i] <- mle.mu(data$x, data$w)
+  sigma2_est[i] <- mle.sigma2(data$x, data$w, mu_est[i], par$nu)
+}
+
+data <- data.frame(
+  sample_size = sample_size,
+  param_id = param_id,  # 3 parameters, each with 6 sample sizes
+  mu_mle = mu_est - true_params[param_id,1],
+  sigma2_mle = sigma2_est - true_params[param_id,2]
+)
+
+# Reshape data to long format
+data_long <- data %>%
+  pivot_longer(cols = starts_with("mu_") | starts_with("sigma2_"), 
+               names_to = c("Parameter", "Type"), 
+               names_sep = "_", 
+               values_to = "Value")
+
+ggplot(data_long, aes(x = sample_size, y = Value, color = Type)) +
+  geom_line(aes(linetype = Type), size = 1) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", aes(linewidth = 0.5)) +
+  geom_point(size = 2) +
+  facet_grid(Parameter ~ param_id, scales = "free_y", 
+             labeller = labeller(param_id = param_labels)) +  # Separate rows for `mu` and `sigma`
+  scale_color_manual(values = c("mle" = "blue")) +
+  scale_linetype_manual(values = c("mle" = "solid")) +
+  labs(x = "Sample Size", y = "Dist to true val", 
+       title = "MLE for Parameters Across Sample Sizes") +
+  theme_minimal() +
+  theme(legend.position = "top", legend.title = element_blank())
+
+```
+
+---
+### Implementing the EM algorithm
+
+- Suppose we only observe the $X$'s.
+
+- The EM algorithm can then be used to compute maximum likelihood estimates of $\theta = (\mu, \sigma^2)$. 
+
+- The algorithm is generally a descent algorithm for the negative log likelihood. 
+
+- Consists of two steps
+
+  + The E-step: Computing the conditional expectation $Q(\theta | \theta ') = E_{\theta'} \left(\sum_{i=1}^{n}\log \left( f\left(x,w| \theta\right)\right) | X = x\right)$
+  
+  + The M-step: Maximizing the $Q$-function wrt. $\theta$ to obtain the new estimate $\theta'$
+
+
+---
+### Implementing the EM algorithm: The E-step
+
+$$Q(\theta | \theta ') = E_{\theta'} \left(\sum_{i=1}^{n}\log \left( f\left(x,w| \theta\right)\right) | X = x\right) \\
+= \sum_{i=1}^{n} -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)\right) + \frac{\nu -1}{2}E_{\theta'} \left(\log(W_i) | X = x \right) -E_{\theta'} \left(W_i | X = x \right)\frac{1}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right)$$
+
+We need to compute $E_{\theta'} \left(W_i | X = x \right)$ and $E_{\theta'} \left(\log(W_i) | X = x \right)$. Note that
+
+$$f_{w|x = x'} (w) = \frac{f(x',w)}{f(x')} \propto f(x',w)$$
+
+The conditional density of $W$ given $X=x$ is proportional to the joint density with fixed $x$. Note also 
+
+$$f(x,w)  = \frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)}  w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) \\
+     =\frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{k}\Gamma(\nu/2)} w^{k-1} \exp{- \frac{w}{\lambda}}$$
+
+Where we have defined $k = \frac{\nu + 1}{2}$ and $\lambda = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$. 
+
+---
+### Implementing the EM algorithm: The E-step
+
+Rewriting we obtain
+
+$$f(x,w) = \frac{\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-(\frac{\nu + 1}{2})}}{\sqrt{\pi \nu  \sigma^2}\Gamma(\nu/2)} \frac{1}{\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}}$$
+
+Note also that
+
+$$\frac{\Gamma(\frac{\nu}{2})}{\Gamma(\frac{\nu}{2} + \frac{1}{2})} = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Leftrightarrow \\
+    \Gamma(\frac{\nu}{2}) = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Gamma(k)$$
+Substituting we obtain
+
+$$f_{w|x=x'}(w) \propto f(x',w) = K  \frac{1}{\Gamma(k)\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}}$$
+
+Where we have defined $K = \frac{\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-(\frac{\nu + 1}{2})}}{\pi \sqrt{ \nu  \sigma^2} 2^{1-\nu} \Gamma(\nu)}$. We can recognize $f(x,w)$ for fixed $x$ as the gamma density multiplied by the constant $K$. It follows that $W | X = x \sim \Gamma\left(\frac{\nu + 1}{2}, 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}\right)$. 
+
+---
+### Implementing the EM algorithm: The E-step
+
+Thus
+
+$$E_{\theta'} \left(W_i | X = x \right) = (\nu + 1)\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$$
+Using that $E(X) = k \lambda$ for random variable $X \sim \Gamma(k, \lambda)$. Furthermore we have $E(\log(X)) = \psi(k) + \log \lambda$, resulting in
+
+$$E_{\theta'} \left(\log W_i | X = x \right) = \psi\left(\frac{\nu + 1}{2}\right) + \log \left( 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} \right)$$
+
+---
+### Implementing the EM algorithm: The M-step
+
+Finding the first and second derivative of the $Q$ function wrt. $\mu$
+
+$$\frac{d}{d\mu} Q(\theta | \theta ') = \sum_{i=1}^n E_{\theta'} \left(W_i | X = x \right)\frac{(x_i-\mu)}{\nu \sigma^2} \\
+    \frac{d^2}{d\mu^2} Q(\theta | \theta ') = \sum_{i=1}^n -  E_{\theta'} \left(W_i | X = x \right)\frac{1}{\nu \sigma^2} < 0$$
+    
+The second derivative is negative and the function is concave, the optimum can therefore be found by setting the first derivative equal to 0. 
+
+$$\hat{\mu} = \frac{\sum_{i=1}^n  E_{\theta'} \left(W_i | X = x \right) x_i}{\sum_{i=1}^n  E_{\theta'} \left(W_i | X = x \right)}$$
+    
+The first and second derivative wrt. $\sigma$ are found to be
+
+$$\frac{d}{d\sigma} Q(\theta | \theta ') = \sum_{i=1}^n - \frac{1}{\sigma} + E_{\theta'} \left(W_i | X = x \right)\frac{(x_i-\mu)^2}{\nu \sigma^3} \\
+    \frac{d^2}{d\sigma^2} Q(\theta | \theta ') = \sum_{i=1}^n \frac{1}{\sigma^2} \left( 1 - 3 E_{\theta'} \left(W_i | X = x \right)\frac{(x_i-\mu)^2}{\nu \sigma^2} \right)$$
+
+Setting the derivative to $0$:
+
+$$\hat{\sigma}^2 = \frac{\sum_{i=1}^n E_{\theta'}\left(W_i | X = x \right) (x_i - \mu)^2}{n \nu}$$
+
+---
+### The EM algorithm
+
+- The E-step is implemented as the `E.step` function
+
+  + Takes as input the parameters $\theta$, data $X$ and $\nu$
+  + Computes the conditional expectation of $W$ given $X$
+  
+- The M-step is implemented as the `M.step` function 
+
+  + `M.step` takes as input the conditional expectation of $W$ given $X$, the data $X$ and $\nu$
+  + Returns the estimates of $\mu$ and $\sigma^2$ that maximize the Q-function
+  
+- The two steps are combined by the function factory `em_factory` 
+
+  + Takes as input the E-step and M-step functions, $\epsilon$, and $\nu$
+  + Performs the EM algorithm until convergence
+  + With the convergence criterion: $||\theta_n - \theta_{n-1}||^2_2 \leq \epsilon (||\theta ||^2_2 + \epsilon)$
+  
+We perform a naive test of the EM algorithm with start values  $(1,1)$ and the data generated from the parameter set $(0,1,1)$.
+
+```{r, echo = FALSE}
+my_em <- em_factory(E.step, M.step, eps = 1e-6, nu = 1)
+tibble("EM estimates" = my_em(c(1,1), X = data0$x), 
+       "Full data MLE" = mle(par0, data0)) %>% 
+  kable() %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
+---
+### EM: S3 class
+
+We create an S3 class called `My_EM`, that stores the EM estimates, and the convergence path. The class has a `print` method
+
+```{r, echo = FALSE}
+EM0 <- EM(c(2,2), data0$x, par_true = c(0,1,1))
+EM0
+```
+Plot linear convergence as Niels Richard
+---
+### Heatmap of the log-likelihood
+
+```{r}
+# Create a grid of m and s values
+m_values <- seq(-2, 4, length.out = 100)
+s_values <- seq(0.01, 6, length.out = 100)
+
+# Create a dataframe to store the values of m, s, and log_lik
+results <- expand.grid(m = m_values, s = s_values)
+results$log_lik <- apply(results, 1, function(row) loglik(x = data0$x, row, 1))
+EM_param <- my_em(X = data0$x, par = c(1,1))
+theo_param <- mle(par0, data0)
+
+# Plot the heatmap with contours and a point using ggplot2
+ggplot(results, aes(x = m, y = s, fill = log_lik)) +
+  geom_tile() +
+  geom_contour(aes(z = log_lik), color = "darkseagreen4", bins = 50) +
+  scale_fill_gradient2(mid = "darkseagreen1", high = "coral1", low = "seagreen4", midpoint = -3500) +
+  geom_point(aes(x = theo_param[1], y = theo_param[2], colour = "MLE"), size = 2.5) +
+  geom_point(aes(x = EM_param[1], y = EM_param[2], colour = "EM"), size = 2.5) +
+  scale_color_manual(values = c("EM" = "seagreen", "MLE" = "seagreen3")) +
+  labs(x = "mu", y = "sigma", fill = "loglikelihood") +
+  theme_minimal()
+```
+
+---
+### EM: S3 class
+
+And a plot method with different plot options:
+
+
+```{r, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+grid.arrange(
+  plot(EM0, mle_par = mle(par0, data0), plot_no = 2), 
+  plot(EM0, mle_par = mle(par0, data0), W = data0$w, plot_no = 5),
+  nrow = 1)
+```
+
+Plot the path... look at slides
+
+---
+### Profiling
+
+---
+### Benchmarking
+
+---
+### Gradiant Descent
+
+As loss function we will use the negative loglikelihood divided by $\frac{1}{n}$
+
+$$ - \frac{1}{n}\mathcal{l}(\theta) = \frac{1}{n}\sum_{i=1}^n log(\sigma) + \frac{\nu +1 }{2} \log \left( 1 + \frac{(x_i - \mu)^2}{\nu \sigma^2} \right)$$
+The gradient is
+
+$$ \nabla - \mathcal{l}(\theta) =  \begin{pmatrix} \sum_{i=1}^n  \left(\nu +1 \right) \frac{(x_i - \mu)}{(x_i - \mu)^2 + \nu \sigma^2}  \\ \sum_{i=1}^n \frac{1}{\sigma} -  \frac{(\nu +1)}{  \nu \sigma^2 + (x_i - \mu)^2} \frac{(x_i - \mu)^2}{\sigma}  
+ \end{pmatrix}$$
+ 
+We implement the gradient in the function `grad` and check that the gradient is close to $0$ in the MLE estimates...
+
+```{r}
+grad(mu = mle0[1], sigma = sqrt(mle0[2]), nu = par0$nu, x = data0$x)
+```
+
+---
+### Gradient Descent
+
+We implement gradient descent in the function `grad_desc` that takes as input the gradient function, the Hessian function, the data, and the starting values. 
+
+```{r}
+grad_est <- grad_desc(par = c(2,2), grad = grad, H = neg_loglik, x = data0$x, nu = par0$nu)
+grad_est
+```
+
+Below we compare with the MLE estimates and the EM estimates
+
+```{r}
+tibble("EM estimates" = my_em(c(1,1), X = data0$x), 
+       "Full data MLE" = mle(par0, data0),
+       "Gradient Descent" = grad_est,
+       ) %>% 
+  kable() %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
+---
+### Gradient Descent
+
+```{r}
+GD0 <- GD(par = c(2,2), grad = grad, H = neg_loglik, x = data0$x, nu = par0$nu)
+```
+```{r}
+plot(GD0)
+```
+---
+### Comparison
+
+```{r}
+plot(GD0)+
+  geom_line(data = plot_data(EM0), aes(y = neg_loglik, x = .time, color = "EM"))+
+  scale_color_manual(values = c("EM" = "red3", "GD" = "blue3"))
+```
+
 

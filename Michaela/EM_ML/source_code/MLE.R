@@ -1,4 +1,4 @@
-## Complete data MLE estimators ##################################################
+## Complete data MLE estimators 
 
 mle.mu <- function(x, w){
   sum(x*w)/(sum(w))

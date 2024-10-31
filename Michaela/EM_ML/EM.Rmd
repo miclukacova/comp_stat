@@ -171,7 +171,9 @@ $$
 $$
 Note also that
 $$
-    \frac{\Gamma(\frac{\nu}{2})}{\Gamma(\frac{\nu}{2} + \frac{1}{2})} &= 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Leftrightarrow \\
+    \frac{\Gamma(\frac{\nu}{2})}{\Gamma(\frac{\nu}{2} + \frac{1}{2})} = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Leftrightarrow 
+    $$
+    $$
     \Gamma(\frac{\nu}{2}) = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Gamma(k)
 $$
 Substituting we obtain

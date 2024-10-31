@@ -62,7 +62,7 @@ theme_set(
 ```{r source, echo = FALSE, warning=FALSE, message=FALSE}
 source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/f_star.R")
 source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/rejec_sampler.R")
-source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Smoothing_ML/my_sample.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/my_sample.R")
 source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/rejec_samp_vec.R")
 Rcpp::sourceCpp("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/gauss_rejec_cpp.cpp")
 source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Univariate_Simulation_ML/piecewise_linear.R")
@@ -110,7 +110,7 @@ $$g(y) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left( - \frac{(y- \mu)^2}{2\sigma^2}
 
 Plot of $f^*$ 
 
-```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+```{rs, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
 ggplot() +
   geom_function(fun = f_star_vec) +  
   labs(x = expression(y),
