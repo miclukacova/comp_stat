@@ -107,7 +107,7 @@ EM_trace <- summary(EM_tracer)
 EM_trace <- transform(
   EM_trace,
   par_norm_diff = sqrt((mu_old - mu_mark)^2 + (sigma_old - sigma_mark)^2),
-  loglik = log_lik(mu_mark, sigma_mark)
+  loglik = log_lik_mult(mu_mark, sigma_mark)
 )
 EM_trace
 
@@ -153,7 +153,6 @@ ggplot(EM_trace, aes(x = .time, y = log(par_norm_diff))) +
 ```
 That looks comfortingly linear.
 
-
 Now as a function of the iterations:
 ```{r}
 ggplot(EM_trace, aes(x = i, y = log(par_norm_diff))) +
@@ -167,7 +166,22 @@ ggplot(EM_trace, aes(x = i, y = log(par_norm_diff))) +
 ```
 
 
+Testing gradient function:
+```{r}
+```
 
+TEsting EM object and parameter-object:
+```{r}
+param_t <- parameters(1,2,3.)
+samp <- sim(param_t, 1000)
+
+
+
+
+test <- EM(samp$x, param_t, max_iter = 40, eps = 1e-10, cb = EM_tracer)
+test
+summary(test)
+```
 
 
 Jins notes for EM-algorithm

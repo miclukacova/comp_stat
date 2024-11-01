@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>The Expectation Maximization Algorithm</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Dina Gyberg Jensen (vbz248)" />
+    <meta name="date" content="2024-10-18" />
+    <script src="Assigment-3---EM-algorithm_files/header-attrs-2.28/header-attrs.js"></script>
+    <link rel="stylesheet" href="xaringan-themer.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+.title[
+# The Expectation Maximization Algorithm
+]
+.author[
+### Dina Gyberg Jensen (vbz248)
+]
+.institute[
+### University of Copenhagen
+]
+.date[
+### 2024-10-18
+]
+
+---
+
+&lt;style type="text/css"&gt;
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content &gt; h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+&lt;/style&gt;
+
+
+
+
+
+
+
+
+We first derive the marginal distribution and see that it is exactly equal to the distribution function of a t-distribution with parameters $\mu, \sigma^2 $ and `\(\nu\)`.
+
+We then compute the max of the complete loglik analytically. 
+
+We now implement this as a function:
+
+``` r
+theo_par &lt;- function(x, w, param){
+  mu_opt &lt;- sum(w * x) / sum(w)
+  sigma_opt &lt;- 1/(length(x) * param$ny) * sum(w * (x - mu_opt)^2)
+  return(data.frame(mu = mu_opt, sigma = sigma_opt ))
+}
+```
+
+We would like to be able to sample from this fucker. So lets implement a sampler:
+
+``` r
+samp_our_distribution &lt;- function(n, param){
+  w &lt;- rchisq(n, df = param$ny)
+  x &lt;- rnorm(n, mean = param$mu, sd = sqrt((param$ny * param$sigma) / w))
+  y &lt;- cbind(x, w)
+  return(y)
+}
+
+parameters &lt;- data.frame(mu = 1, sigma = 2, ny = 3)
+
+samp &lt;- data.frame(samp_our_distribution(100, parameters))
+```
+So this is looking decent. Now it is time to implement the EM-algorithm.
+
+We first derive analytical expressions for both the E-step and the M-step. We note that we actually do not even need to calculate the Q-function to maximize the parameters, as we have found analytical expressions for them:
+
+
+``` r
+EM_alg &lt;- function(x, param, max_iter = 20, epsilon = 1e-10, cb = NULL){
+  #Defining initial parameters:
+  mu_mark &lt;- param$mu
+  sigma_mark &lt;- param$sigma
+  ny &lt;- param$ny
+  
+  #Defining i and k, which only depends on ny:
+  k &lt;- (ny + 1) / 2
+  i &lt;- 0
+  
+  while (i &lt; max_iter) {
+    mu_old &lt;- mu_mark
+    sigma_old &lt;- sigma_mark
+    t_old &lt;- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))
+    
+    mu_mark &lt;- sum(t_old * x) / sum(t_old)
+    sigma_mark &lt;- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)
+    
+    #Calling the cb
+    if(!is.null(cb)) cb()
+    #Checking convergence
+    if (sum((c(mu_mark, sigma_mark) - c(mu_old, sigma_old))^2) &lt;= epsilon * (sum(c(mu_mark, sigma_mark)^2) + epsilon)) break
+    
+    i &lt;- i + 1
+  }
+  c(mu_mark, sigma_mark)
+}
+```
+
+We now do a simple check to see if the EM-algorithm works:
+
+
+``` r
+samp &lt;- data.frame(samp_our_distribution(1000, parameters))
+
+EM_alg(samp$x,parameters, eps = 1e-10, max_iter = 40, cb = NULL)
+```
+
+```
+## [1] 0.9625473 1.7766348
+```
+
+``` r
+theo_par(samp$x, samp$w, parameters)
+```
+
+```
+##         mu    sigma
+## 1 0.969633 1.916018
+```
+
+It seems to work decently for the optimal parameters as starting points, but it does seem to depend on the parameters, for some it always does the maximal number of iterations. Which is not so neat.
+
+I would now like to implement a good cb-function using the tracer functionality from the CSwR package. 
+
+
+``` r
+library(CSwR)
+
+EM_tracer &lt;- tracer(c("mu_mark", "sigma_mark", "mu_old", "sigma_old", "ny", "i"))
+EM_alg(samp$x, data.frame(mu = 1, sigma = 2, ny = 3), eps = 1e-10, max_iter = 40, cb = EM_tracer$tracer)
+```
+
+```
+## n = 1: mu_mark = 0.9744304; sigma_mark = 1.882285; mu_old = 1; sigma_old = 2; ny = 3; i = 0; 
+## n = 2: mu_mark = 0.9664092; sigma_mark = 1.827844; mu_old = 0.9744304; sigma_old = 1.882285; ny = 3; i = 1; 
+## n = 3: mu_mark = 0.9638137; sigma_mark = 1.801741; mu_old = 0.9664092; sigma_old = 1.827844; ny = 3; i = 2; 
+## n = 4: mu_mark = 0.9629628; sigma_mark = 1.78901; mu_old = 0.9638137; sigma_old = 1.801741; ny = 3; i = 3; 
+## n = 5: mu_mark = 0.9626829; sigma_mark = 1.782749; mu_old = 0.9629628; sigma_old = 1.78901; ny = 3; i = 4; 
+## n = 6: mu_mark = 0.962591; sigma_mark = 1.779657; mu_old = 0.9626829; sigma_old = 1.782749; ny = 3; i = 5; 
+## n = 7: mu_mark = 0.9625611; sigma_mark = 1.778127; mu_old = 0.962591; sigma_old = 1.779657; ny = 3; i = 6; 
+## n = 8: mu_mark = 0.9625515; sigma_mark = 1.777369; mu_old = 0.9625611; sigma_old = 1.778127; ny = 3; i = 7; 
+## n = 9: mu_mark = 0.9625485; sigma_mark = 1.776993; mu_old = 0.9625515; sigma_old = 1.777369; ny = 3; i = 8; 
+## n = 10: mu_mark = 0.9625476; sigma_mark = 1.776807; mu_old = 0.9625485; sigma_old = 1.776993; ny = 3; i = 9; 
+## n = 11: mu_mark = 0.9625474; sigma_mark = 1.776715; mu_old = 0.9625476; sigma_old = 1.776807; ny = 3; i = 10; 
+## n = 12: mu_mark = 0.9625473; sigma_mark = 1.776669; mu_old = 0.9625474; sigma_old = 1.776715; ny = 3; i = 11; 
+## n = 13: mu_mark = 0.9625473; sigma_mark = 1.776646; mu_old = 0.9625473; sigma_old = 1.776669; ny = 3; i = 12; 
+## n = 14: mu_mark = 0.9625473; sigma_mark = 1.776635; mu_old = 0.9625473; sigma_old = 1.776646; ny = 3; i = 13;
+```
+
+```
+## [1] 0.9625473 1.7766348
+```
+
+So we can now trace the parameters. Now I really want to trace both the loglikelihood and the convergence rate of the parameters. But which log-likelihood? The one only dependent on x, or the one dependent on x and w? 
+
+So implement loglikelihood:
+
+``` r
+log_lik &lt;- function(m, s, ny = parameters$ny, x = samp$x){
+  k &lt;- (ny + 1) / 2
+  return( - length(x) * log(sqrt(s)) - sum(k * log(1 + (x - m)^2 / (ny * s))))
+}
+```
+
+Now we can implement this in the tracer along with the convergence criterion: 
+
+``` r
+EM_trace &lt;- summary(EM_tracer)
+
+EM_trace &lt;- transform(
+  EM_trace,
+  par_norm_diff = sqrt((mu_old - mu_mark)^2 + (sigma_old - sigma_mark)^2),
+  loglik = log_lik(mu_mark, sigma_mark)
+)
+```
+
+```
+## Warning in x - m: longer object length is not a multiple of shorter object
+## length
+```
+
+```
+## Warning in (x - m)^2/(ny * s): longer object length is not a multiple of
+## shorter object length
+```
+
+``` r
+EM_trace
+```
+
+```
+##      mu_mark sigma_mark    mu_old sigma_old ny  i        .time par_norm_diff
+## 1  0.9744304   1.882285 1.0000000  2.000000  3  0 0.000000e+00  1.204596e-01
+## 2  0.9664092   1.827844 0.9744304  1.882285  3  1 1.630001e-05  5.502963e-02
+## 3  0.9638137   1.801741 0.9664092  1.827844  3  2 3.090002e-05  2.623088e-02
+## 4  0.9629628   1.789010 0.9638137  1.801741  3  3 5.400002e-05  1.275938e-02
+## 5  0.9626829   1.782749 0.9629628  1.789010  3  4 7.250001e-05  6.267634e-03
+## 6  0.9625910   1.779657 0.9626829  1.782749  3  5 1.009000e-04  3.093524e-03
+## 7  0.9625611   1.778127 0.9625910  1.779657  3  6 1.149000e-04  1.530454e-03
+## 8  0.9625515   1.777369 0.9625611  1.778127  3  7 1.295000e-04  7.580309e-04
+## 9  0.9625485   1.776993 0.9625515  1.777369  3  8 1.440000e-04  3.756644e-04
+## 10 0.9625476   1.776807 0.9625485  1.776993  3  9 1.582000e-04  1.862237e-04
+## 11 0.9625474   1.776715 0.9625476  1.776807  3 10 1.729000e-04  9.232734e-05
+## 12 0.9625473   1.776669 0.9625474  1.776715  3 11 1.870000e-04  4.577790e-05
+## 13 0.9625473   1.776646 0.9625473  1.776669  3 12 2.016000e-04  2.269847e-05
+## 14 0.9625473   1.776635 0.9625473  1.776646  3 13 2.153000e-04  1.125498e-05
+##       loglik
+## 1  -1078.147
+## 2  -1063.472
+## 3  -1056.281
+## 4  -1052.735
+## 5  -1050.982
+## 6  -1050.114
+## 7  -1049.684
+## 8  -1049.471
+## 9  -1049.365
+## 10 -1049.313
+## 11 -1049.287
+## 12 -1049.274
+## 13 -1049.268
+## 14 -1049.264
+```
+
+Just for fun we'll be plotting some heatmaps of the loglikelihood, we can always change the loglikelihood you know
+
+
+``` r
+# Load necessary libraries
+library(ggplot2)
+library(tidyr)
+
+# Create a grid of m and s values
+m_values &lt;- seq(-3, 3, length.out = 100)
+s_values &lt;- seq(0.01, 5, length.out = 100)
+
+# Create a dataframe to store the values of m, s, and log_lik
+results &lt;- expand.grid(m = m_values, s = s_values)
+results$log_lik &lt;- apply(results, 1, function(row) log_lik(row['m'], row['s'], x = samp$x))
+EM_param &lt;- EM_alg(samp$x, parameters, eps = 1e-10, max_iter = 40, cb = NULL)
+theo_param &lt;- theo_par(samp$x, samp$w, parameters)
+
+# Plot the heatmap with contours and a point using ggplot2
+ggplot(results, aes(x = m, y = s, fill = log_lik)) +
+  geom_tile() +
+  geom_contour(aes(z = log_lik), color = "darkseagreen4", bins = 50) +
+  scale_fill_gradient2(mid = "darkseagreen1", high = "coral1", low = "seagreen4", midpoint = -3500) +
+  geom_point(aes(x = theo_param$mu, y = theo_param$sigma), colour = "coral1", size = 2.5) +
+  geom_point(aes(x = EM_param[1], y = EM_param[2]), colour = "seagreen", size = 2.5) +
+  labs(x = "mu", y = "sigma", fill = "loglikelihood") +
+  theme_minimal()
+```
+
+```
+## Warning: The following aesthetics were dropped during statistical transformation: fill.
+## ℹ This can happen when ggplot fails to infer the correct grouping structure in
+##   the data.
+## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
+##   variable into a factor?
+```
+
+![](Assigment-3---EM-algorithm_files/figure-html/unnamed-chunk-10-1.png)&lt;!-- --&gt;
+
+
+
+Lets see if we can plot the convergence rate:
+
+``` r
+ggplot(EM_trace, aes(x = .time, y = log(par_norm_diff))) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Time", y = "log(Convergence rate)", title = "Convergence rate of mu and sigma") +
+  theme_bw()
+```
+
+![](Assigment-3---EM-algorithm_files/figure-html/unnamed-chunk-11-1.png)&lt;!-- --&gt;
+That looks comfortingly linear.
+
+
+Now as a function of the iterations:
+
+``` r
+ggplot(EM_trace, aes(x = i, y = log(par_norm_diff))) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Iterations", y = "log(Convergence rate)", title = "Convergence rate of mu and sigma") +
+  scale_x_continuous(breaks = seq(min(EM_trace$i), max(EM_trace$i), by = 1)) +
+  theme_bw() +
+  theme(panel.grid.major.x = element_line(),  # Major gridlines at integer positions
+        panel.grid.minor.x = element_blank())  # Remove minor gridlines
+```
+
+![](Assigment-3---EM-algorithm_files/figure-html/unnamed-chunk-12-1.png)&lt;!-- --&gt;
+
+
+
+
+
+Jins notes for EM-algorithm
+
+-marginal likelihood calculations
+
+- W | X = x is a gamma distribution
+
+- plot heatmaps over your loglikelihood
+
+- callbacks in while loops are real nice - save value for each iteration. 
+
+- convergence rate is just an lm taken on the convergence values that you plot on the log-notlog scale.
+
+- If vectorized rcpp is not faster, then turn all of your vector operation into a loop. Or use the armadillo package.
+
+- If you are using gradient descent you can do gradient clipping. 
+
+ - Plot convergence rate of mu and sigma for both gradient descent and the EM-algorithm
+ - Also for convergence of log-likelihood.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"slideNumberFormat": "%current%",
+"highlightStyle": "github",
+"highlightLines": true,
+"highlightSpans": true,
+"ratio": "16:9",
+"countIncrementalSlides": true,
+"navigation": {
+"scroll": false
+}
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+// add `data-at-shortcutkeys` attribute to <body> to resolve conflicts with JAWS
+// screen reader (see PR #262)
+(function(d) {
+  let res = {};
+  d.querySelectorAll('.remark-help-content table tr').forEach(tr => {
+    const t = tr.querySelector('td:nth-child(2)').innerText;
+    tr.querySelectorAll('td:first-child .key').forEach(key => {
+      const k = key.innerText;
+      if (/^[a-z]$/.test(k)) res[k] = t;  // must be a single letter (key)
+    });
+  });
+  d.body.setAttribute('data-at-shortcutkeys', JSON.stringify(res));
+})(document);
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
