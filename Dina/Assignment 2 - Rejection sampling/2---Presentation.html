@@ -210,7 +210,7 @@ y1 &lt;- rej_sample_slow(100000, mu_opt, sigma_opt, alpha_s, tar_dens)
 ```
 
 ```
-## [1] 0.9889827
+## [1] 0.9897266
 ```
 
 And visualize how a sample from our rejection sampler compares to the target density:
@@ -270,7 +270,7 @@ c(y2$alpha, y3$alpha)
 ```
 
 ```
-## [1] 0.7882118 0.9710290
+## [1] 0.7762238 0.9790210
 ```
 
 &lt;img src="2---Presentation_files/figure-html/unnamed-chunk-17-1.png" width="1152" style="display: block; margin: auto;" /&gt;
@@ -278,17 +278,55 @@ c(y2$alpha, y3$alpha)
 
 ---
 ###Structuring
-
- - Computationally expensive to sample `\(U_n\)` every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time.
+Computationally expensive to sample `\(U_n\)` every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time.
  
- - Implement S3-sampler for each sampler.
+Furthermore we implement S3-object for each sampler.
 
  - Chooses the Gaussian envelope numerically every time - employing the same method we did.
  
- - The breakpoints for the log-affine envelope are chosen as an equidistant grid between 0 and 0.35, the number is set to 10 by default.
+ - The breakpoints for the log-affine envelope are chosen as an equidistant grid on a user specified range, the number is set to 10 by default, but can also be changed.
  
  - Implemented `print` and `plot` method for easy comparison
- 
+
+
+``` r
+sampler_gauss(1000, tar_dens)
+sampler_laffine(1000, tar_dens, range = c(0, 0.35), bp = 10)
+```
+
+.pull-left[
+
+```
+## Gaussian envelope sampler
+## Parameters for envelope:
+## mu = 0.24, sigma = 0.06, alpha = 8.68e+40 
+## 
+## Rejection rate:
+## [1] 0.987013
+## 
+## Samples:
+## [1] 0.35 0.20 0.21 0.23 0.14 0.14
+```
+
+]
+
+
+.pull-right[
+
+```
+## Log-affine envelope sampler
+## Breakpoints for envelope:
+## 0, 0.04, 0.08, ... 
+## 
+## Rejection rate:
+## [1] 0.98
+## 
+## Samples:
+## [1] 0.32 0.21 0.22 0.26 0.23 0.26
+```
+
+]
+
 ---
 ###Breakpoints
 
@@ -297,99 +335,47 @@ We saw earlier, that the log-affine envelope did not seem to perform that well. 
 &lt;br&gt;
 We will test this by sampling 1000 values from the target density using the affine envelope, with breakpoints between 0 and 0.35 and the number of breakpoints ranging from 1 to 30.
 &lt;br&gt;
-&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-18-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-21-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
 ---
 ###Comparison
 We can now compare the two samplers against eachother using `bench::press`.
 
-&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-19-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-22-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
 
 |expression |     min|  median|   itr.sec| mem_alloc|   gc.sec| n_itr| n_gc| total_time|
 |:----------|-------:|-------:|---------:|---------:|--------:|-----:|----:|----------:|
-|Gaussian   |  5.16ms|  5.48ms| 179.87671|  943.51KB| 3.670953|    98|    2|   544.82ms|
-|log_affine | 22.85ms| 24.25ms|  41.06507|    1.44MB| 6.685012|    86|   14|      2.09s|
+|Gaussian   |  5.13ms|  5.57ms| 177.74366|  945.12KB| 3.627422|    98|    2|   551.36ms|
+|log_affine | 22.21ms| 23.73ms|  42.22631|    1.49MB| 8.648761|    83|   17|      1.97s|
 
 
 ---
 ###Optimization
 Most interesting for log-affine. We will start out by profiling to identify any bottlenecks.
 
-
-``` r
-profvis({
-  # Slopes
-a_i &lt;- function(x_i) tar_dens_log_difference(x_i) 
-
-# Intercepts
-b_i &lt;- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i
-
-# Interval points
-z_i &lt;- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)
-
-# R_i's
-r_i &lt;- function(as, bs, zs, n) {
-  1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
-}
-
-piece_lin_rejec_samp &lt;- function(N, ys) {
-  
-  # Calculating a's, b's, z's
-  as &lt;- sapply(ys, a_i, simplify = TRUE)
-  bs &lt;- mapply(FUN = b_i, ys, as)
-  n &lt;- length(bs)
-  zs &lt;- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)
-  
-  # Bookkeeping
-  # I_i integrals
-  R &lt;- r_i(as, bs, zs, n)
-  
-  # Distribution function (ish)
-  Q &lt;- c(0, cumsum(R))
-  
-  # Drawing from piecewise linear density and uniform
-  u0 &lt;- Q[n + 1] * runif(N)
-  u &lt;- runif(N)
-  
-  # Determine the interval that each point belongs to
-  geq_z &lt;-outer(u0, Q[1:n], FUN = function(y1, y2) y1 &gt; y2)
-  leq_z &lt;-outer(u0, Q[2:(n+1)], FUN = function(y1, y2) y1 &lt;= y2)
-  I &lt;- geq_z &amp; leq_z
-  
-  
-  x &lt;- numeric(N)
-  accept &lt;- logical(N)
-  for(i in 1:N){
-    # Finding the interval x_i belongs to
-    int &lt;- which(I[i,] == 1)
-    
-    # Taking the inverse cdf
-    x[i] &lt;- log((u0[i] - Q[int]) * as[int] * exp(- bs[int]) + exp(as[int] * zs[int])) / as[int]
-    
-    # Acceptance step
-    accept[i] &lt;- u[i] &lt;=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])
-  }
-  
-  return(x[accept])
-}
-  piece_lin_rejec_samp(10000, seq(0, 0.35, length.out = 10))
-})
-```
-
-<div class="profvis html-widget html-fill-item" id="htmlwidget-5d7361a095569a1d23ae" style="width:100%;height:600px;"></div>
-<script type="application/json" data-for="htmlwidget-5d7361a095569a1d23ae">{"x":{"message":{"prof":{"time":[1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,4,5,5,5,5,5,6,6,6,6,6,6,7,7,7,8,8,8,8,8,8,9,9,9,9,9,10,10,10,11,11,11,11,11,12,12,12,12,13,13,13,13,13,14,14,14,15,15,15,15,15,15,16,16,16,16,16,16,17,17,17,17,17,18,18,18,18,18],"depth":[2,1,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,52,51,50,49,48,47,46,45,44,43,42,41,40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,4,3,2,1,5,4,3,2,1,6,5,4,3,2,1,3,2,1,6,5,4,3,2,1,5,4,3,2,1,3,2,1,5,4,3,2,1,4,3,2,1,5,4,3,2,1,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1],"label":["piece_lin_rejec_samp(10000, seq(0, 0.35, length.out = 10))","piece_lin_rejec_samp","%in%","checkCall","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","cmp","cmpIndices","cmpSubsetDispatch","h","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpComplexAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpForBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","simplify2array","sapply","tar_dens","piece_lin_rejec_samp","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","isTRUE","which","piece_lin_rejec_samp","$.tbl_df","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","accept[i] <- u[i] <=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])","lapply","sapply","tar_dens","piece_lin_rejec_samp","int <- which(I[i,] == 1)","which","piece_lin_rejec_samp","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","simplify2array","sapply","tar_dens","piece_lin_rejec_samp","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","sapply","tar_dens","piece_lin_rejec_samp","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp"],"filenum":[1,1,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,1,1,null,null,null,1,1,null,null,null,null,1,1,null,1,1,null,null,null,null,1,1,1,null,null,1,1,1,1,1,null,null,null,1,1,null,null,1,1,null,null,null,1,1,null,1,1,null,null,null,null,1,1,null,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1],"linenum":[56,56,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,56,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,56,null,null,51,56,null,null,null,51,56,null,null,null,null,51,56,null,45,56,null,null,null,null,51,56,51,null,null,51,56,45,45,56,null,null,null,51,56,null,null,51,56,null,null,null,51,56,null,51,56,null,null,null,null,51,56,null,null,null,null,51,56,null,null,null,51,56,null,null,null,51,56],"memalloc":[105.7256851196289,105.7256851196289,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,111.1842346191406,111.1842346191406,111.1842346191406,111.1842346191406,112.1866302490234,112.1866302490234,112.1866302490234,112.1866302490234,112.1866302490234,113.1703796386719,113.1703796386719,113.1703796386719,113.1703796386719,113.1703796386719,113.1703796386719,113.76025390625,113.76025390625,113.76025390625,114.75732421875,114.75732421875,114.75732421875,114.75732421875,114.75732421875,114.75732421875,115.681770324707,115.681770324707,115.681770324707,115.681770324707,115.681770324707,116.5625228881836,116.5625228881836,116.5625228881836,117.4107513427734,117.4107513427734,117.4107513427734,117.4107513427734,117.4107513427734,118.2502212524414,118.2502212524414,118.2502212524414,118.2502212524414,119.0836868286133,119.0836868286133,119.0836868286133,119.0836868286133,119.0836868286133,107.3489761352539,107.3489761352539,107.3489761352539,108.388313293457,108.388313293457,108.388313293457,108.388313293457,108.388313293457,108.388313293457,109.3866577148438,109.3866577148438,109.3866577148438,109.3866577148438,109.3866577148438,109.3866577148438,110.4422607421875,110.4422607421875,110.4422607421875,110.4422607421875,110.4422607421875,111.4564819335938,111.4564819335938,111.4564819335938,111.4564819335938,111.4564819335938],"meminc":[0,0,0.335052490234375,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.289642333984375,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4.833854675292969,0,0,0,1.002395629882812,0,0,0,0,0.9837493896484375,0,0,0,0,0,0.589874267578125,0,0,0.9970703125,0,0,0,0,0,0.9244461059570312,0,0,0,0,0.8807525634765625,0,0,0.8482284545898438,0,0,0,0,0.8394699096679688,0,0,0,0.833465576171875,0,0,0,0,-11.73471069335938,0,0,1.039337158203125,0,0,0,0,0,0.9983444213867188,0,0,0,0,0,1.05560302734375,0,0,0,0,1.01422119140625,0,0,0,0],"filename":["<expr>","<expr>",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>","<expr>",null,null,"<expr>","<expr>","<expr>","<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"profvis({\n  # Slopes\na_i <- function(x_i) tar_dens_log_difference(x_i) \n\n# Intercepts\nb_i <- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i\n\n# Interval points\nz_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)\n\n# R_i's\nr_i <- function(as, bs, zs, n) {\n  1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))\n}\n\npiece_lin_rejec_samp <- function(N, ys) {\n  \n  # Calculating a's, b's, z's\n  as <- sapply(ys, a_i, simplify = TRUE)\n  bs <- mapply(FUN = b_i, ys, as)\n  n <- length(bs)\n  zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)\n  \n  # Bookkeeping\n  # I_i integrals\n  R <- r_i(as, bs, zs, n)\n  \n  # Distribution function (ish)\n  Q <- c(0, cumsum(R))\n  \n  # Drawing from piecewise linear density and uniform\n  u0 <- Q[n + 1] * runif(N)\n  u <- runif(N)\n  \n  # Determine the interval that each point belongs to\n  geq_z <-outer(u0, Q[1:n], FUN = function(y1, y2) y1 > y2)\n  leq_z <-outer(u0, Q[2:(n+1)], FUN = function(y1, y2) y1 <= y2)\n  I <- geq_z & leq_z\n  \n  \n  x <- numeric(N)\n  accept <- logical(N)\n  for(i in 1:N){\n    # Finding the interval x_i belongs to\n    int <- which(I[i,] == 1)\n    \n    # Taking the inverse cdf\n    x[i] <- log((u0[i] - Q[int]) * as[int] * exp(- bs[int]) + exp(as[int] * zs[int])) / as[int]\n    \n    # Acceptance step\n    accept[i] <- u[i] <=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])\n  }\n  \n  return(x[accept])\n}\n  piece_lin_rejec_samp(10000, seq(0, 0.35, length.out = 10))\n})","normpath":"<expr>"}],"prof_output":"C:\\Users\\birgi\\AppData\\Local\\Temp\\RtmpOAqvfk\\file72dc1fdc7a17.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+<div class="profvis html-widget html-fill-item" id="htmlwidget-6857488e883cf993cf6a" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-6857488e883cf993cf6a">{"x":{"message":{"prof":{"time":[1,1,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,5,5,5,5,5,6,6,6,6,6,7,7,7,7,7,8,8,8,9,9,9,9,10,10,10,10,11,11,11,11,11,11,12,12,12,13,13,13,13,14,14,14,14,14,15,15,15,15,15,16,16,16,16,17,17,17,18,18,18,18,18,18],"depth":[2,1,1,45,44,43,42,41,40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,2,1,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,3,2,1,4,3,2,1,4,3,2,1,6,5,4,3,2,1,3,2,1,4,3,2,1,5,4,3,2,1,5,4,3,2,1,4,3,2,1,3,2,1,6,5,4,3,2,1],"label":["Rprof","profvis","list","$","findCenvVar","getInlineInfo","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpPrim1","h","tryInline","cmpCall","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpForBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","I[i, j] <- (u0[i] > Q[j]) && (u0[i] <= Q[j + 1])","piece_lin_rejec_samp_s","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","sapply","tar_dens","piece_lin_rejec_samp_s","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","sapply","tar_dens","piece_lin_rejec_samp_s","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","sapply","tar_dens","piece_lin_rejec_samp_s","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s"],"filenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,1,1,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,1,1,null,null,1,1,null,null,1,1,null,null,null,null,1,1,null,1,1,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,null,1,1,null,1,1,null,null,null,null,1,1],"linenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,67,40,67,null,null,null,56,67,null,null,null,56,67,null,null,null,56,67,null,56,67,null,null,56,67,null,null,56,67,null,null,null,null,56,67,null,56,67,null,null,56,67,null,null,null,56,67,null,null,null,56,67,null,null,56,67,null,56,67,null,null,null,null,56,67],"memalloc":[105.5465240478516,105.5465240478516,105.938606262207,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,107.2832489013672,107.2832489013672,108.0545043945312,108.0545043945312,108.0545043945312,108.0545043945312,108.0545043945312,109.1510467529297,109.1510467529297,109.1510467529297,109.1510467529297,109.1510467529297,110.2367477416992,110.2367477416992,110.2367477416992,110.2367477416992,110.2367477416992,111.2054901123047,111.2054901123047,111.2054901123047,112.0453872680664,112.0453872680664,112.0453872680664,112.0453872680664,113.0186538696289,113.0186538696289,113.0186538696289,113.0186538696289,106.4337768554688,106.4337768554688,106.4337768554688,106.4337768554688,106.4337768554688,106.4337768554688,107.4633636474609,107.4633636474609,107.4633636474609,108.4790802001953,108.4790802001953,108.4790802001953,108.4790802001953,109.5829925537109,109.5829925537109,109.5829925537109,109.5829925537109,109.5829925537109,110.5826034545898,110.5826034545898,110.5826034545898,110.5826034545898,110.5826034545898,111.6832733154297,111.6832733154297,111.6832733154297,111.6832733154297,112.715705871582,112.715705871582,112.715705871582,113.6676864624023,113.6676864624023,113.6676864624023,113.6676864624023,113.6676864624023,113.6676864624023],"meminc":[0,0,0.3920822143554688,0.3960189819335938,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.9486236572265625,0,0.7712554931640625,0,0,0,0,1.096542358398438,0,0,0,0,1.085700988769531,0,0,0,0,0.9687423706054688,0,0,0.8398971557617188,0,0,0,0.9732666015625,0,0,0,-6.584877014160156,0,0,0,0,0,1.029586791992188,0,0,1.015716552734375,0,0,0,1.103912353515625,0,0,0,0,0.9996109008789062,0,0,0,0,1.100669860839844,0,0,0,1.032432556152344,0,0,0.9519805908203125,0,0,0,0,0],"filename":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>","<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"profvis({\n  # Slopes\na_i <- function(x_i) tar_dens_log_difference(x_i) \n\n# Intercepts\nb_i <- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i\n\n# Interval points\nz_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)\n\n# R_i's\nr_i <- function(as, bs, zs, n) {\n  1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))\n}\n\npiece_lin_rejec_samp_s <- function(N, ys) {\n  \n  # Calculating a's, b's, z's\n  as <- sapply(ys, a_i, simplify = TRUE)\n  bs <- mapply(FUN = b_i, ys, as)\n  n <- length(bs)\n  zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)\n  \n  # Bookkeeping\n  # I_i integrals\n  R <- r_i(as, bs, zs, n)\n  \n  # Distribution function (ish)\n  Q <- c(0, cumsum(R))\n  \n  # Drawing from piecewise linear density and uniform\n  u0 <- Q[n + 1] * runif(N)\n  u <- runif(N)\n  \n  # Determine the interval that each point belongs to\n  I <- matrix(FALSE, nrow = N, ncol = n)\n  \n  for (i in 1:N) {\n    for (j in 1:n) {\n      I[i, j] <- (u0[i] > Q[j]) && (u0[i] <= Q[j + 1])\n    }\n  }\n  \n  x <- numeric(N)\n  accept <- logical(N)\n  \n  for (i in 1:N) {\n    # Finding the interval x_i belongs to\n    int <- which(I[i,] == TRUE)\n    \n    # Taking the inverse cdf\n    if (length(int) > 0) {  # Check if the interval is found\n      x[i] <- log((u0[i] - Q[int]) * as[int] * exp(-bs[int]) + exp(as[int] * zs[int])) / as[int]\n      \n      # Acceptance step\n      tar_dens_x <- tar_dens(x[i])\n      div_term <- exp(as[int] * x[i] + bs[int])\n      accept[i] <- u[i] <= tar_dens_x / div_term\n    } else {\n      x[i] <- NA  # Set to NA if no interval found\n      accept[i] <- FALSE\n    }\n  }\n  \n  return(x[accept])\n}\n  piece_lin_rejec_samp_s(10000, seq(0, 0.35, length.out = 10))\n})","normpath":"<expr>"}],"prof_output":"C:\\Users\\birgi\\AppData\\Local\\Temp\\RtmpwJtUe0\\file1f2c5f974f00.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
 
 
 ---
 ###Optimization
-Based on the profiling, we can see that we spend some time in the loop. We have investigated two approaches:
+Based on the profiling, we can see that we spend some time on finding the correct interval and in the loop N - here the calculation of the target density appears to be one of the heavier places. Three different approaches:
+
+- Vectorization
+First of all, it is possible to use vectorize the double for loop, that places each sample in the correct interval. This can be done by using `outer` to create a matrix of logicals, which we can then use to find the correct interval for each sample.
 
 - Parallelization
-Seeing as we are performing independent operations, one approach is to parallelize the code. We will use `foreach` and `doParallel` to do this.
+Seeing as we are performing independent operations, another is to parallelize the for loop over N. We will use `foreach` and `doParallel` to do this.
 
 - Implementing in `Rcpp`
-Another approach is to implement the code in `Rcpp`.
+Seeing as the calculation of the target density is fairly heavy, another approach is to optimize this operation. I have done that by implementing it in `Rcpp`.
+
+---
+###Optimization
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-25-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+
 
 
     </textarea>

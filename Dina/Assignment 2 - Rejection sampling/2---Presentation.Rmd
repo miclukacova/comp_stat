@@ -264,7 +264,7 @@ rej_sample_slow <- function(n, mu, sigma, alpha, dens) {
       reject <- u > 1/(sqrt(2*pi*sigma)) * alpha * dens(y0) / 
         dnorm(y0, mean = mu, sd = sigma)
       
-      #Counting no of rejections 
+#Counting no of rejections 
       if (reject) {
         rejection_count <- rejection_count + 1  
         total <- total + 1
@@ -435,18 +435,41 @@ grid.arrange(c1, c2, ncol = 2)
 
 
 ---
-###Structuring
+class: reduce-spacing
 
- - Computationally expensive to sample $U_n$ every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time.
+###Structuring
+Computationally expensive to sample $U_n$ every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time.
  
- - Implement S3-sampler for each sampler.
+Furthermore we implement S3-object for each sampler.
 
  - Chooses the Gaussian envelope numerically every time - employing the same method we did.
  
- - The breakpoints for the log-affine envelope are chosen as an equidistant grid between 0 and 0.35, the number is set to 10 by default.
+ - The breakpoints for the log-affine envelope are chosen as an equidistant grid on a user specified range, the number is set to 10 by default, but can also be changed.
  
  - Implemented `print` and `plot` method for easy comparison
- 
+
+```{r, results = "hide"}
+sampler_gauss(1000, tar_dens)
+sampler_laffine(1000, tar_dens, range = c(0, 0.35), bp = 10)
+```
+
+.pull-left[
+```{r, echo =F}
+k1 <- sampler_gauss(1000, tar_dens)
+k1 
+```
+
+]
+
+
+.pull-right[
+```{r, echo=F}
+k2 <- sampler_laffine(1000, tar_dens)
+k2
+```
+
+]
+
 ---
 ###Breakpoints
 
@@ -509,13 +532,20 @@ bm_l <- bench::press(
   n = n_samples,
   {
     bench::mark(
-      Gaussian = gaus_rej_f(n, mu_opt, sigma_opt, alpha_s, tar_dens),
-      log_affine = aff_rej_n(n, n_breakpoints),
+      Gaussian = {
+        set.seed(01112021)
+        gaus_rej_f(n, mu_opt, sigma_opt, alpha_s, tar_dens)
+      },
+      log_affine = {
+        set.seed(01112021)
+        aff_rej_n(n, n_breakpoints)
+      },
       iterations = 10,
       check = FALSE
     )
   }
 )
+
 
 bm <- bench::mark(
       Gaussian = gaus_rej_f(1000, mu_opt, sigma_opt, alpha_s, tar_dens),
@@ -574,7 +604,7 @@ r_i <- function(as, bs, zs, n) {
   1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
 }
 
-piece_lin_rejec_samp <- function(N, ys) {
+piece_lin_rejec_samp_s <- function(N, ys) {
   
   # Calculating a's, b's, z's
   as <- sapply(ys, a_i, simplify = TRUE)
@@ -594,22 +624,33 @@ piece_lin_rejec_samp <- function(N, ys) {
   u <- runif(N)
   
   # Determine the interval that each point belongs to
-  geq_z <-outer(u0, Q[1:n], FUN = function(y1, y2) y1 > y2)
-  leq_z <-outer(u0, Q[2:(n+1)], FUN = function(y1, y2) y1 <= y2)
-  I <- geq_z & leq_z
+  I <- matrix(FALSE, nrow = N, ncol = n)
   
+  for (i in 1:N) {
+    for (j in 1:n) {
+      I[i, j] <- (u0[i] > Q[j]) && (u0[i] <= Q[j + 1])
+    }
+  }
   
   x <- numeric(N)
   accept <- logical(N)
-  for(i in 1:N){
+  
+  for (i in 1:N) {
     # Finding the interval x_i belongs to
-    int <- which(I[i,] == 1)
+    int <- which(I[i,] == TRUE)
     
     # Taking the inverse cdf
-    x[i] <- log((u0[i] - Q[int]) * as[int] * exp(- bs[int]) + exp(as[int] * zs[int])) / as[int]
-    
-    # Acceptance step
-    accept[i] <- u[i] <=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])
+    if (length(int) > 0) {  # Check if the interval is found
+      x[i] <- log((u0[i] - Q[int]) * as[int] * exp(-bs[int]) + exp(as[int] * zs[int])) / as[int]
+      
+      # Acceptance step
+      tar_dens_x <- tar_dens(x[i])
+      div_term <- exp(as[int] * x[i] + bs[int])
+      accept[i] <- u[i] <= tar_dens_x / div_term
+    } else {
+      x[i] <- NA  # Set to NA if no interval found
+      accept[i] <- FALSE
+    }
   }
   
   return(x[accept])
@@ -621,19 +662,25 @@ piece_lin_rejec_samp <- function(N, ys) {
 
 ---
 ###Optimization
-Based on the profiling, we can see that we spend some time in the loop. We have investigated two approaches:
+Based on the profiling, we can see that we spend some time on finding the correct interval and in the loop N - here the calculation of the target density appears to be one of the heavier places. Three different approaches:
+
+- Vectorization
+First of all, it is possible to use vectorize the double for loop, that places each sample in the correct interval. This can be done by using `outer` to create a matrix of logicals, which we can then use to find the correct interval for each sample.
 
 - Parallelization
-Seeing as we are performing independent operations, one approach is to parallelize the code. We will use `foreach` and `doParallel` to do this.
+Seeing as we are performing independent operations, another is to parallelize the for loop over N. We will use `foreach` and `doParallel` to do this.
 
 - Implementing in `Rcpp`
-Another approach is to implement the code in `Rcpp`.
+Seeing as the calculation of the target density is fairly heavy, another approach is to optimize this operation. I have done that by implementing it in `Rcpp`.
 
-```{r,echo=F, warning=FALSE, message=FALSE}
+---
+###Optimization
+Implementing the target density in `Rcpp` seems to have had a decent effect. The overhead from parallelization is quite large.
+```{r,echo=F, warning=FALSE, message=FALSE, fig.align='center', fig.width= 16, fig.height=7.5}
 source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment 2 - Rejection sampling/Soure_code.R")
 
 # Define the number of samples
-n_samples <- 10^seq(1,3)
+n_samples <- 10^seq(1,5)
 
 # Define the number of breakpoints
 n_breakpoints <- seq(0, 0.35, length.out = 10)
@@ -642,14 +689,38 @@ bm_l <- bench::press(
   n = n_samples,
   {
     bench::mark(
-      parallelized = aff_rej_par(n, n_breakpoints),
-      log_affine = aff_rej_s(n, n_breakpoints),
-      vectorized = aff_rej_n(n, n_breakpoints),
-      iterations = 10,
+      parallelized = {
+        set.seed(01112021)  # Ensure consistent sampling for parallelized
+        aff_rej_par(n, n_breakpoints)
+      },
+      cpp_tar_dens = {
+        set.seed(01112021)  # Ensure consistent sampling for cpp_tar_dens
+        aff_rej_cpp(n, n_breakpoints)
+      },
+      log_affine = {
+        set.seed(01112021)  # Ensure consistent sampling for log_affine
+        aff_rej_s(n, n_breakpoints)
+      },
+      vectorized = {
+        set.seed(01112021)  # Ensure consistent sampling for vectorized
+        aff_rej_n(n, n_breakpoints)
+      },
+      iterations = 5,
       check = FALSE
     )
   }
 )
+
+
+# First, filter bm_l to remove rows with the smallest sample size
+bm_l_filtered <- bm_l %>%
+  dplyr::filter(n != 10)  # Exclude rows with the lowest value of n
+
+# Now, plot with the filtered data
+plot_bm <- plot(bm_l_filtered) +
+  scale_color_manual(values = c("none" = "#4f7942", "level0" = "coral2", 
+                                "level1" = "steelblue", "level2" = "hotpink3")) +
+  my_theme 
 
 
 # Convert to a usable format for ggplot2
@@ -661,18 +732,17 @@ plot_data <- bm_l %>%
   )
 
 # Create the plot
-ggplot(plot_data, aes(x = n, y = median, color = expr)) +
+plot_d <- ggplot(plot_data, aes(x = n, y = median, color = expr)) +
   geom_point(size = 2.5) +
   geom_line(size  = 1.2) +
   scale_y_log10() +  # Log scale for better readability
   scale_color_manual(
-    values = c("parallelized" = "#4f7942", "log_affine" = "coral3")
+    values = c("parallelized" = "#4f7942", "log_affine" = "coral3", "cpp_tar_dens"= "hotpink3", "vectorized" = "steelblue")
   ) +
   labs(x = "number of samples", y = "Time (ms) - logscale", color = "Method") +
-  theme_bw() +
-  ggtitle("Development for no. of samples") + my_theme
+  theme_bw() + my_theme
 
-
+grid.arrange(plot_bm, plot_d, ncol = 2)
 ```
 
 

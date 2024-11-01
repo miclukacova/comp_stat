@@ -4,8 +4,18 @@
     <title>The Expectation-Maximization Algorithm</title>
     <meta charset="utf-8" />
     <meta name="author" content="Dina Gyberg Jensen (vbz248)" />
-    <meta name="date" content="2024-10-30" />
-    <script src="3---Presentation_files/header-attrs/header-attrs.js"></script>
+    <meta name="date" content="2024-11-01" />
+    <script src="3---Presentation_files/header-attrs-2.28/header-attrs.js"></script>
+    <link href="3---Presentation_files/htmltools-fill-0.5.8.1/fill.css" rel="stylesheet" />
+    <script src="3---Presentation_files/htmlwidgets-1.6.4/htmlwidgets.js"></script>
+    <script src="3---Presentation_files/jquery-1.12.4/jquery.min.js"></script>
+    <script src="3---Presentation_files/d3-3.5.6/d3.min.js"></script>
+    <link href="3---Presentation_files/profvis-0.3.6.9000/profvis.css" rel="stylesheet" />
+    <script src="3---Presentation_files/profvis-0.3.6.9000/profvis.js"></script>
+    <script src="3---Presentation_files/profvis-0.3.6.9000/scroll.js"></script>
+    <link href="3---Presentation_files/highlight-6.2.0/textmate.css" rel="stylesheet" />
+    <script src="3---Presentation_files/highlight-6.2.0/highlight.js"></script>
+    <script src="3---Presentation_files/profvis-binding-0.3.8/profvis.js"></script>
     <link rel="stylesheet" href="themer-new.css" type="text/css" />
   </head>
   <body>
@@ -22,7 +32,7 @@ class: center, middle, inverse, title-slide
 ### University of Copenhagen
 ]
 .date[
-### 2024-10-30
+### 2024-11-01
 ]
 
 ---
@@ -48,8 +58,13 @@ class: center, middle, inverse, title-slide
 
 
 
-
-
+###Introduction
+Let `\(Y=(X,W) \in \mathbb{R}\times [0,\infty)\)` have density:
+$$f(x,w)=\frac{1}{\sqrt{\pi\nu\sigma^2}2^{(\nu+1)/2}\Gamma(\nu/2)}w^{\frac{\nu-1}{2}}e^{\frac{w}{2}\left( \frac{(x-\mu)^2}{\nu\sigma^2} \right)} $$
+Our goal is to implement an Expectation Maximization algorithm to estimate `\(\mu\)` and `\(\sigma^2\)` given that we observe `\(X\)` but not `\(W\)` and to compute the observed Fisher information.
+&lt;br&gt;
+Furthermore we wish to compare our implementation to a standard Gradient Descent algorithm.
+---
 ###Marginal Density of X
 
 `\(Y = (X,W)\in\mathbb{R}\times(0,\infty)\)` has joint density:
@@ -124,10 +139,10 @@ class: reduce-spacing
 ###Implementation
 
 ``` r
-EM_alg &lt;- function(x, param, max_iter = 20, epsilon = 1e-10, cb = NULL){
+EM_alg &lt;- function(x, param, ny , max_iter = 20, epsilon = 1e-10, cb = NULL){
   mu_mark &lt;- param$mu #Getting initial parameters
   sigma_mark &lt;- param$sigma
-  ny &lt;- param$ny
+  ny &lt;- ny
   k &lt;- (ny + 1) / 2   #Defining i and k, which only depends on ny:
   i &lt;- 0
   
@@ -148,6 +163,167 @@ EM_alg &lt;- function(x, param, max_iter = 20, epsilon = 1e-10, cb = NULL){
   c(mu_mark, sigma_mark)
 }
 ```
+
+---
+###Implementation
+
+
+S3 object for both simulation and the EM algorithm
+
+- `parameters`-class for `\(\mu\)`, `\(\sigma^2\)` and `\(\nu\)` - and a `sim` function that simulates `\(W\)` from a `\(\mathcal{X}_\nu^2\)`-distribution and then simulates `\(X\)` from a normal distribution with mean `\(\mu\)` and variance `\(\frac{\nu\sigma^2}{w}\)` for `\(W =w\)`.
+
+- `EM`-class for the EM algorithm, with corresponding `summary`, `print` and a `plot`-method. The `plot`-method can both plot the loglikelihood-convergence but also the suboptimality to the true MLE-estimates. We have the true MLE estimates as we simulate data ourselves.
+
+
+``` r
+EM(sim1$x, parameters(1, 2, 3), 20, 1e-10, par_true = parameters(1, 1, 1))
+```
+
+```
+## EM algorithm:
+## True parameters:
+## [1] 1 1 1
+## 
+## Optimal parameters:
+## [1] 0.9863002 1.0591104
+## 
+## Number of iterations:
+## [1] 19
+## 
+## Total time:
+## [1] 0.0007110997
+```
+
+
+---
+class: reduce-spacing
+
+###Testing
+Testing stability. Simulating 4 different datasets, runnning for different starting points and compare to true MLE.
+
+
+.pull-left[
+
+Table: Simulated data with c(1,1,1)
+
+|Starting_point   |   mu| sigma|
+|:----------------|----:|-----:|
+|c(-2, 5)         | 0.99|  1.06|
+|c(0.64, 0.247)   | 0.99|  1.06|
+|Started in  true | 0.99|  1.06|
+|True             | 0.97|  1.04|
+
+
+
+Table: Simulated data with c(5,2,1)
+
+|Starting_point   |   mu| sigma|
+|:----------------|----:|-----:|
+|c(-2, 5)         | 4.96|  1.90|
+|c(0.64, 0.247)   | 4.96|  1.90|
+|Started in  true | 4.96|  1.90|
+|True             | 5.01|  1.87|
+]
+
+
+.pull-right[
+
+Table: Random parameters c(0.59, 0.36, 5.79)
+
+|Starting_point   |   mu| sigma|
+|:----------------|----:|-----:|
+|c(-2, 5)         | 0.59|  0.38|
+|c(0.64, 0.247)   | 0.59|  0.38|
+|Started in  true | 0.59|  0.38|
+|True             | 0.59|  0.38|
+
+
+
+Table: Random parameters c(6.46, 2.47, 1.75)
+
+|Starting_point   |   mu| sigma|
+|:----------------|----:|-----:|
+|c(-2, 5)         | 6.51|  2.54|
+|c(0.64, 0.247)   | 6.51|  2.54|
+|Started in  true | 6.51|  2.54|
+|True             | 6.48|  2.46|
+]
+
+
+---
+###Convergence
+Looking at the convergence of the absolute distance to the true parameters:
+&lt;img src="3---Presentation_files/figure-html/unnamed-chunk-10-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+
+
+
+``` r
+log_lm &lt;- lm(log(par_norm_diff) ~ i, data = EM1$trace)
+exp(coefficients(log_lm)["i"])
+```
+
+```
+##         i 
+## 0.6914975
+```
+
+
+---
+###Heatmaps
+We now want to visualize the convergence furter.
+
+``` r
+p1 &lt;- heatmap.My_EM(EM1, theo_par(sim1$x, sim1$w, 1), path = T) #S3-call
+p2 &lt;- heatmap.My_EM(EM1, theo_par(sim1$x, sim1$w, 1), gradient = T) #S3-call
+grid.arrange(p1, p2, ncol = 2)
+```
+
+&lt;img src="3---Presentation_files/figure-html/unnamed-chunk-12-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+
+---
+###Convergence
+Looking at the convergence of the negative loglikelihood and of the parameters:
+&lt;img src="3---Presentation_files/figure-html/unnamed-chunk-13-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+
+---
+###Gradient Descent
+Now implementing Gradient Descent to compare it to our EM. The GD is implemented for a normalized negative loglikelihood and with backtracking linesearch and initial stepsize `\(1\)`. We first look at the convergence of GD. Done for data simulated from `\(parameters = (1,1,1)\)` and with starting points `\((-2,5)\)` - same as for EM. 
+
+
+&lt;img src="3---Presentation_files/figure-html/unnamed-chunk-15-1.png" width="1152" /&gt;
+
+---
+###Comparison
+Plotting the convergence-rate of EM in the same plot as GD
+&lt;img src="3---Presentation_files/figure-html/unnamed-chunk-16-1.png" width="1152" /&gt;
+
+
+---
+###Fischer Information
+
+---
+###Optimizing the EM Algorithm
+Even though our EM is fast - we want to see if we can optimize it further. 
+<div class="profvis html-widget html-fill-item" id="htmlwidget-b4c81958a9ef8ea937b9" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-b4c81958a9ef8ea937b9">{"x":{"message":{"prof":{"time":[1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,4,4,5,5,5,6,6,7,7,7,8,8,9,9,10,10,11,12,12,13,13,14,14,14,15,15,16,16,17,18,18,19,19,19,20,20,20,21,21,21,22,22,22,23,23,23,24,24,24,25,25,26,26,27,27,28,28,29,29,30,30,31,31,32,32,33,33,34,34,35,35,36,36,37,38,38,38,39,39,40,40,41,41,41,42,42,43,43,44,44,45,45,46,46,47,47,47,48,48,49,49,50,50,51,52,52,53,54,54,55,55,56,56,57,57,58,59,59,60,60,61,61,62,62,62],"depth":[2,1,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,2,1,2,1,3,2,1,2,1,3,2,1,2,1,2,1,2,1,1,2,1,2,1,3,2,1,2,1,2,1,1,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,2,1,1,3,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,2,1,2,1,3,2,1,2,1,2,1,2,1,1,2,1,1,2,1,2,1,2,1,2,1,1,2,1,2,1,2,1,3,2,1],"label":["Rprof","profvis","exists","findCenvVar","getInlineInfo","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpWhileBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","<GC>","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","<GC>","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","sum","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","<GC>","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sum","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","<GC>","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","<GC>","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","<GC>","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","<GC>","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","<GC>","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","<GC>","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","sum","<GC>","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","<GC>","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","<GC>","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","sum","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sum","mu_mark <- sum(t_old * x) / sum(t_old)","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","sum","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))","EM_alg","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg","<GC>","sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)","EM_alg"],"filenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,1,1,1,1,null,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,null,1,1,null,1,1,null,1,1,null,1,1,null,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,null,1,1],"linenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,26,13,26,13,26,null,16,26,15,26,null,13,26,16,26,13,26,16,26,15,13,26,16,26,null,16,26,15,26,13,26,15,13,26,null,15,26,null,15,26,null,15,26,null,15,26,null,15,26,null,15,26,13,26,16,26,13,26,15,26,13,26,16,26,13,26,16,26,16,26,13,26,16,26,15,26,16,null,16,26,15,26,13,26,null,16,26,13,26,13,26,15,26,13,26,16,26,null,16,26,13,26,13,26,16,26,15,13,26,15,15,26,13,26,16,26,16,26,15,13,26,13,26,16,26,null,16,26],"memalloc":[49.86504364013672,49.86504364013672,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,50.22788238525391,58.09181976318359,58.09181976318359,80.98017120361328,80.98017120361328,88.60962677001953,88.60962677001953,88.60962677001953,80.38140106201172,80.38140106201172,72.75218200683594,72.75218200683594,72.75218200683594,88.01068878173828,88.01068878173828,80.38126373291016,80.38126373291016,65.12242889404297,65.12242889404297,80.38139343261719,72.7518310546875,72.7518310546875,88.01068115234375,88.01068115234375,88.01068878173828,88.01068878173828,88.01068878173828,88.01078796386719,88.01078796386719,88.01076507568359,88.01076507568359,72.75181579589844,88.01080322265625,88.01080322265625,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,88.01081085205078,57.48867034912109,57.48867034912109,57.48867034912109,80.37702941894531,80.37702941894531,95.63587951660156,95.63587951660156,103.2654190063477,103.2654190063477,110.8948440551758,110.8948440551758,80.37700653076172,80.37700653076172,95.6358642578125,95.6358642578125,103.2654266357422,103.2654266357422,80.37686920166016,80.37686920166016,95.6358642578125,95.6358642578125,110.8947982788086,110.8947982788086,95.63568878173828,95.63568878173828,110.8946533203125,110.8946533203125,95.63567352294922,103.265266418457,103.265266418457,103.265266418457,88.00643157958984,88.00643157958984,103.2653961181641,103.2653961181641,110.8948516845703,110.8948516845703,110.8948516845703,88.00643920898438,88.00643920898438,110.8947982788086,110.8947982788086,88.00626373291016,88.00626373291016,103.2652435302734,103.2652435302734,95.63567352294922,95.63567352294922,110.894660949707,110.894660949707,110.894660949707,80.37702941894531,80.37702941894531,103.2653961181641,103.2653961181641,80.37686920166016,80.37686920166016,95.63583374023438,110.8947982788086,110.8947982788086,88.00627136230469,110.8946533203125,110.8946533203125,103.2652206420898,103.2652206420898,72.74747467041016,72.74747467041016,95.63585662841797,95.63585662841797,110.8948211669922,88.00643920898438,88.00643920898438,110.8947982788086,110.8947982788086,95.63569641113281,95.63569641113281,110.8946838378906,110.8946838378906,110.8946838378906],"meminc":[0,0,0.3628387451171875,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7.863937377929688,0,22.88835144042969,0,7.62945556640625,0,0,-8.228225708007812,0,-7.629219055175781,0,0,15.25850677490234,0,-7.629425048828125,0,-15.25883483886719,0,15.25896453857422,-7.629562377929688,0,15.25885009765625,0,7.62939453125e-06,0,0,9.918212890625e-05,0,-2.288818359375e-05,0,-15.25894927978516,15.25898742675781,0,7.62939453125e-06,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-30.52214050292969,0,0,22.88835906982422,0,15.25885009765625,0,7.629539489746094,0,7.629425048828125,0,-30.51783752441406,0,15.25885772705078,0,7.629562377929688,0,-22.88855743408203,0,15.25899505615234,0,15.25893402099609,0,-15.25910949707031,0,15.25896453857422,0,-15.25897979736328,7.629592895507812,0,0,-15.25883483886719,0,15.25896453857422,0,7.62945556640625,0,0,-22.88841247558594,0,22.88835906982422,0,-22.88853454589844,0,15.25897979736328,0,-7.629570007324219,0,15.25898742675781,0,0,-30.51763153076172,0,22.88836669921875,0,-22.88852691650391,0,15.25896453857422,15.25896453857422,0,-22.88852691650391,22.88838195800781,0,-7.629432678222656,0,-30.51774597167969,0,22.88838195800781,0,15.25896453857422,-22.88838195800781,0,22.88835906982422,0,-15.25910186767578,0,15.25898742675781,0,0],"filename":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,"<expr>","<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"sim1_large <- sim(parameters(1,1,1), 1000000)\nprofvis({\n  EM_alg <- function(x, param, ny , max_iter = 20, epsilon = 1e-10, cb = NULL){\n  mu_mark <- param$mu #Getting initial parameters\n  sigma_mark <- param$sigma\n  ny <- ny\n  k <- (ny + 1) / 2   #Defining i and k, which only depends on ny:\n  i <- 0\n  \n  while (i < max_iter) {\n    mu_old <- mu_mark\n    sigma_old <- sigma_mark\n    t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))\n    \n    mu_mark <- sum(t_old * x) / sum(t_old)\n    sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)\n    #Calling  cb\n    if(!is.null(cb)) cb()\n    #Checking convergence\n    if (sum((c(mu_mark, sigma_mark) - c(mu_old, sigma_old))^2) \n        <= epsilon * (sum(c(mu_mark, sigma_mark)^2) + epsilon)) break\n    i <- i + 1\n  }\n  c(mu_mark, sigma_mark)\n}\n  EM_alg(sim1_large$x, parameters(-2,5,1), ny = 1, 100, 1e-10)\n})","normpath":"<expr>"}],"prof_output":"C:\\Users\\birgi\\AppData\\Local\\Temp\\RtmpeAwOvK\\file40f826c21267.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+
+---
+###Optimizing the EM Algorithm
+Implementing in `Rcpp` and in `RcppArmadillo` to see if it is possible to optimize.
+
+
+
+```
+## Warning: Some expressions had a GC in every iteration; so filtering is
+## disabled.
+```
+
+```
+## Warning in get_plot_component(plot, "guide-box"): Multiple components found;
+## returning the first one. To return all, use `return_all = TRUE`.
+```
+
+&lt;img src="3---Presentation_files/figure-html/unnamed-chunk-19-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
 
 

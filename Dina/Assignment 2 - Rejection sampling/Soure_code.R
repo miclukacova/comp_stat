@@ -26,19 +26,21 @@ tar_dens <- function(y){
 
 
 ## Function for optimal mu and sigma for gauss envelope ###################
-optim_s_alpha <- function(mu){
+optim_s_alpha <- function(dens){
+  mu_opt <- optimize(function(y) - dens(y), interval = c(0, 1))$minimum
   y_seq <- seq(0,1, 0.001)
   sigma <- function(s){
     alpha_star <- min(dnorm(y_seq, mu_opt, s)/tar_dens(y_seq))
     return(-alpha_star)
   }
-  
+
     sigma_opt <- optimize(sigma, c(0,1))$minimum
     alpha_s <- -optimize(sigma, c(0,1))$objective
     
-    return(list(sigma = sigma_opt, alpha = alpha_s))
+    return(list(mu = mu_opt, sigma = sigma_opt, alpha = alpha_s))
   }
  
+
 ## log of target density ###################
 
 tar_dens_log <- function(y){
@@ -82,6 +84,103 @@ new_rejection_sampler <- function(generator) {
 ## Fast samplers ############################
 
 gaus_rej_f <- new_rejection_sampler(gauss_rej)
+
+
+## S3 gauss rejection sampler ###########################################
+
+
+#  class
+sampler_gauss <- function(n, dens) {
+  parameters <- optim_s_alpha(dens)  # Properly assign the result of optim_s_alpha to parameters
+  
+  samples <- gaus_rej_f(n, mu = parameters$mu, sigma = parameters$sigma, alpha = parameters$alpha, dens)
+  
+  structure(
+    list(
+      parameters = parameters,
+      samples = samples,
+      alpha = samples$alpha,
+      density = dens
+    ),
+    class = "sampler_gauss"
+  )
+}
+
+# Summary method
+summary.sampler_gauss <- function(object) {
+  return(head(data.frame(samples = object$samples$x)))
+}
+
+test <- sampler_gauss(10000, tar_dens)
+summary(test)
+
+# Print method for objects of class "sampler_gauss"
+# Print method for objects of class "sampler_gauss"
+# Print method for objects of class "sampler_gauss"
+print.sampler_gauss <- function(object) {
+  cat("Gaussian envelope sampler\n")
+  
+  # Unlist parameters and round them, handling non-numeric types
+  rounded_parameters <- unlist(object$parameters)
+  
+  # Round numeric parameters to 2 decimal places
+  rounded_parameters <- sapply(rounded_parameters, function(x) {
+    if (is.numeric(x)) {
+      round(x, 2)  # Round if numeric
+    } else {
+      x  # Leave as is if not numeric
+    }
+  })
+  
+  # Format the alpha parameter to scientific notation
+  if ("alpha" %in% names(rounded_parameters)) {
+    rounded_parameters["alpha"] <- formatC(rounded_parameters["alpha"], format = "e", digits = 2)
+  }
+  
+  cat("Parameters for envelope:\n")
+  cat(paste(names(rounded_parameters), "=", rounded_parameters, collapse = ", "), "\n")
+  
+  # Print rejection rate
+  cat("\nRejection rate:\n")
+  print(object$alpha)  # Assuming alpha is printed as-is
+  
+  cat("\nSamples:\n")
+  # Print samples, rounded to 2 decimals, as a vector instead of a data frame
+  print(round(head(object$samples$x), 2))
+}
+
+
+
+
+
+
+# Plot method for objects of class "kernel_density"
+plot.sampler_gauss <- function(object, bins = 70, color_hist = "coral", color_line = "#4f7942") {
+  # Convert samples to a data frame
+  samp <- data.frame(y = object$samples$x)
+  
+  # Generate a range of values for the density plot
+  y_vals <- seq(min(samp$y), max(samp$y), length.out = 100)
+  
+  # Calculate target density values using the density function from the object
+  tar_density <- sapply(y_vals, object$density) * object$parameters$alpha
+  density_data <- data.frame(y = y_vals, tar_density = tar_density)
+  
+  # Generate the plot
+  ggplot() +
+    geom_histogram(aes(x = samp$y, y = ..density..), 
+                   bins = bins, fill = color_hist, alpha = 0.2, color = adjustcolor(color_hist, 0.5)) +
+    geom_line(data = density_data, aes(x = y, y = tar_density), 
+              color = color_line, size = 1.2) +
+    labs(
+      title = "Rejection Sampling vs Target Density",
+      x = "Values",
+      y = "Density"
+    ) +
+    my_theme
+}
+
+
 
 
 
@@ -273,6 +372,105 @@ piece_lin_rejec_samp <- function(N, ys) {
 }
 
 aff_rej_n <- new_rejection_sampler(piece_lin_rejec_samp)
+
+
+## S3 gauss rejection sampler ###########################################
+
+
+#  class
+# Sampler function
+sampler_laffine <- function(n, dens, range = c(0, 0.35), bp = 10) {
+  breakpoints <- seq(range[1], range[2], length.out = bp)
+  samples <- aff_rej_n(n, breakpoints)
+  
+  structure(
+    list(
+      breakpoints = breakpoints,
+      samples = samples,
+      alpha = samples$alpha,
+      density = dens
+    ),
+    class = "sampler_laffine"
+  )
+}
+
+# Summary method
+summary.sampler_laffine <- function(object) {
+  return(head(data.frame(samples = object$samples$x)))
+}
+
+# Print method
+# Print method for objects of class "sampler_laffine"
+print.sampler_laffine <- function(object) {
+  cat("Log-affine envelope sampler\n")
+  
+  # Print only the first 3 breakpoints, then "..." if there are more, rounded to 2 decimals
+  cat("Breakpoints for envelope:\n")
+  rounded_breakpoints <- round(object$breakpoints, 2)  # Round breakpoints to 2 decimals
+  breakpoint_display <- if (length(rounded_breakpoints) > 3) {
+    paste(c(rounded_breakpoints[1:3], "..."), collapse = ", ")
+  } else {
+    paste(rounded_breakpoints, collapse = ", ")
+  }
+  cat(breakpoint_display, "\n")
+  
+  # Print rejection rate, rounded to 2 decimals
+  cat("\nRejection rate:\n")
+  print(round(object$alpha, 2))
+  
+  # Print first few samples directly, rounded to 2 decimals
+  cat("\nSamples:\n")
+  print(round(head(object$samples$x), 2))  # Print samples as a vector instead of a data frame
+}
+
+
+
+# Plot method
+plot.sampler_laffine <- function(object, bins = 70, color_hist = "coral", color_line = "steelblue4", base = "blue", alpha_s = 1) {
+  # Extract samples and density function
+  samp <- data.frame(y = object$samples$x)
+  breakpoints <- object$breakpoints
+  dens <- object$density
+  
+  # Calculate affine parameters
+  affine_params <- affine_var(breakpoints)
+  a <- affine_params$a
+  b <- affine_params$b
+  z <- affine_params$z  # Assuming z has segment boundaries
+  
+  # Define range for y values
+  y_vals <- seq(min(samp$y), max(samp$y), length.out = 500)
+  
+  # Calculate target density values
+  tar_density <- sapply(y_vals, dens) * alpha_s
+  density_data <- data.frame(y = y_vals, tar_density = tar_density)
+  
+  # Calculate the affine envelope
+  affine_envelope <- numeric(length(y_vals))
+  for (i in seq_along(z)[-length(z)]) {
+    segment_indices <- which(y_vals >= z[i] & y_vals < z[i + 1])
+    affine_envelope[segment_indices] <- exp(a[i] * y_vals[segment_indices] + b[i]) * alpha_s
+  }
+  
+  affine_data <- data.frame(y = y_vals, affine_envelope = affine_envelope)
+  
+  # Generate the plot
+  ggplot() +
+    geom_histogram(aes(x = samp$y, y = ..density..), 
+                   bins = bins, fill = color_hist, alpha = 0.2, color = adjustcolor(color_hist, 0.5)) +
+    geom_line(data = density_data, aes(x = y, y = tar_density, color = "Target dens"), size = 1.2) +
+    geom_line(data = affine_data, aes(x = y, y = affine_envelope, color = "Envelope"), size = 1, linetype = "dashed") +
+    labs(
+      title = "Rejection Sampling vs Target Density",
+      x = "Values",
+      y = "Density"
+    ) +
+    scale_color_manual(values = c("Target dens" = base, "Envelope" = color_line)) +
+    theme_bw()
+}
+
+ test <- sampler_laffine(100, tar_dens)
+plot(test)
 
 
 ## Slow envelope: ###########################################
@@ -572,10 +770,7 @@ aff_rej_par <- new_rejection_sampler(piece_lin_rejec_samp_par)
 
 sourceCpp("~/comp_stat/Dina/Assignment 2 - Rejection sampling/Rcpp_loop.cpp")
 
-tar_dens(seq(0, 0.35, length.out = 10))
-tar_den_cpp(seq(0, 0.35, length.out = 10), )
 
-tar_dens_cpp(seq(0, 0.35, length.out = 10), poisson_data$x, zx)
 tar_dens_log_difference <- function(y){
   diff <- sapply(y, function(y) zx - sum(poisson_data$x * exp(y * poisson_data$x)))
   diff
@@ -595,7 +790,7 @@ r_i <- function(as, bs, zs, n) {
   1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
 }
 
-piece_lin_rejec_samp <- function(N, ys) {
+piece_lin_rejec_samp_cpp <- function(N, ys) {
   
   # Calculating a's, b's, z's
   as <- sapply(ys, a_i, simplify = TRUE)
@@ -630,8 +825,12 @@ piece_lin_rejec_samp <- function(N, ys) {
     x[i] <- log((u0[i] - Q[int]) * as[int] * exp(- bs[int]) + exp(as[int] * zs[int])) / as[int]
     
     # Acceptance step
-    accept[i] <- u[i] <=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])
+    accept[i] <- u[i] <=  tar_dens_cpp(x[i], poisson_data$x, zx) / exp(as[int] * x[i] + bs[int])
   }
+  
+  return(x[accept])
 }
 
+
+aff_rej_cpp <- new_rejection_sampler(piece_lin_rejec_samp_cpp)
 

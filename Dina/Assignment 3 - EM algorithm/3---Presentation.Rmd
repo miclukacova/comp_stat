@@ -42,28 +42,57 @@ style_mono_accent(
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 library(microbenchmark)
+library(testthat)
 library(bench)
 library(tidyverse)
 library(profvis)
 library(bench)
-theme_set(theme_bw() + theme(text = element_text(size = 13)))
-```
-
-```{r setup, include=FALSE}
-options(htmltools.dir.version = FALSE)
-knitr::opts_chunk$set(
-  fig.width=9, fig.height=3.5, fig.retina=3,
-  out.width = "100%",
-  cache = FALSE,
-  echo = TRUE,
-  message = FALSE, 
-  warning = FALSE,
-  hiline = TRUE
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+library(CSwR)
+library(parallel)
+library(foreach)
+library(doParallel)
+library(Rcpp)
+library(RcppArmadillo)
+knitr::opts_chunk$set(fig.retina = 2)
+theme_set(
+  theme_bw(base_size = 18) +  # Set base font size and family
+    theme(
+      text = element_text(size = 15),           # Adjust text size
+      axis.line = element_line(size = 4),       # Set axis line thickness (use `size` not `linewidth`)
+      panel.grid = element_line(size = 0.5)     # Set grid line thickness
+    )
 )
 ```
 
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Themes and colors:
+my_color_scale <- scale_color_manual(
+   name = "Density estimator",
+  values = c("R_density" = "coral4", "bin_kern_dens" = "#4f7942", "AMISE" = "hotpink4", "CV" = "#4f7942")
+)
 
+my_theme <-   theme(
+    text = element_text(size = 16),  # Change the base text size
+    plot.title = element_text(size = 18),  # Title size
+    axis.title = element_text(size = 16),  # Axis titles size
+    axis.text = element_text(size = 14),  # Axis text size
+    legend.title = element_text(size = 18),  # Legend title size
+    legend.text = element_text(size = 16),  # Legend text size
+     line = element_line(linewidth = 4) +
+      theme_bw()
+  )
+```
 
+###Introduction
+Let $Y=(X,W) \in \mathbb{R}\times [0,\infty)$ have density:
+$$f(x,w)=\frac{1}{\sqrt{\pi\nu\sigma^2}2^{(\nu+1)/2}\Gamma(\nu/2)}w^{\frac{\nu-1}{2}}e^{\frac{w}{2}\left( \frac{(x-\mu)^2}{\nu\sigma^2} \right)} $$
+Our goal is to implement an Expectation Maximization algorithm to estimate $\mu$ and $\sigma^2$ given that we observe $X$ but not $W$ and to compute the observed Fisher information.
+<br>
+Furthermore we wish to compare our implementation to a standard Gradient Descent algorithm.
+---
 ###Marginal Density of X
 
 $Y = (X,W)\in\mathbb{R}\times(0,\infty)$ has joint density:
@@ -137,10 +166,302 @@ class: reduce-spacing
 
 ###Implementation
 ```{r}
-EM_alg <- function(x, param, max_iter = 20, epsilon = 1e-10, cb = NULL){
+EM_alg <- function(x, param, ny , max_iter = 20, epsilon = 1e-10, cb = NULL){
+  #Getting initial parameters
+  mu_mark <- param$mu 
+  sigma_mark <- param$sigma
+  #Defining i and k, which only depends on ny:
+  ny <- ny
+  k <- (ny + 1) / 2   
+  i <- 0
+  
+  while (i < max_iter) {
+    mu_old <- mu_mark
+    sigma_old <- sigma_mark
+    t_old <- 2 / (1 + (x - mu_old)^2 / (ny * sigma_old))
+    
+    mu_mark <- sum(t_old * x) / sum(t_old)
+    sigma_mark <- 1 / (length(x) * ny) * k * sum(t_old * (x - mu_mark)^2)
+    #Calling  cb
+    if(!is.null(cb)) cb()
+    #Checking convergence
+    if (sum((c(mu_mark, sigma_mark) - c(mu_old, sigma_old))^2) 
+        <= epsilon * (sum(c(mu_mark, sigma_mark)^2) + epsilon)) break
+    i <- i + 1
+  }
+  c(mu_mark, sigma_mark)
+}
+```
+
+---
+###Implementation
+```{r, echo=FALSE}
+source("~/comp_stat/Dina/Assignment 3 - EM Algorithm/SO_source.R", local = FALSE)
+set.seed(123)
+par1 <- c(1,1,1)
+sim1 <- sim(parameters(1,1,1), 1000)
+```
+
+S3 object for both simulation and the EM algorithm
+
+- `parameters`-class for $\mu$, $\sigma^2$ and $\nu$ - and a `sim` function that simulates $W$ from a $\mathcal{X}_\nu^2$-distribution and then simulates $X$ from a normal distribution with mean $\mu$ and variance $\frac{\nu\sigma^2}{w}$ for $W =w$.
+
+- `EM`-class for the EM algorithm, with corresponding `summary`, `print` and a `plot`-method. The `plot`-method can both plot the loglikelihood-convergence but also the suboptimality to the true MLE-estimates. We have the true MLE estimates as we simulate data ourselves.
+
+```{r}
+EM(sim1$x, parameters(1, 2, 3), 20, 1e-10, par_true = parameters(1, 1, 1))
+```
+
+
+---
+class: reduce-spacing
+
+###Testing
+Testing stability. Simulating 4 different datasets, runnning for different starting points and compare to true MLE.
+```{r, echo = FALSE}
+set.seed(123)
+par1 <- c(1,1,1)
+sim1 <- sim(parameters(1,1,1), 1000)
+par2 <- c(5,2,1)
+sim2 <- sim(parameters(5, 2, 1), 1000)
+par3 <- c(rexp(1),rexp(1),rexp(1))
+sim3 <- sim(parameters(par3[1], par3[2], par3[3]), 1000)
+par4 <- c(rexp(1,0.1),rexp(1,0.1),rexp(1,0.1))
+sim4 <- sim(parameters(par4[1], par4[2], par4[3]), 1000)
+
+start_values1 <- c(-2,5,1)
+start_values2 <- c(rexp(1), rexp(1), rexp(1))
+
+EM1_p1 <- EM_alg(sim1$x, parameters(start_values1[1], start_values1[2], start_values1[3]), ny = par1[3], max_iter = 1000, epsilon = 1e-10)
+EM2_p1 <- EM_alg(sim2$x, parameters(start_values1[1], start_values1[2], start_values1[3]), ny = par2[3], max_iter = 1000, epsilon = 1e-10)
+EM3_p1 <- EM_alg(sim3$x, parameters(start_values1[1], start_values1[2], start_values1[3]), ny = par3[3], max_iter = 1000, epsilon = 1e-10)
+EM4_p1 <- EM_alg(sim4$x, parameters(start_values1[1], start_values1[2], start_values1[3]), ny = par4[3], max_iter = 1000, epsilon = 1e-10)
+EM1_p2 <- EM_alg(sim1$x, parameters(start_values2[1], start_values2[2], start_values2[3]), ny = par1[3], max_iter = 1000, epsilon = 1e-10)
+EM2_p2 <- EM_alg(sim2$x, parameters(start_values2[1], start_values2[2], start_values2[3]), ny = par2[3], max_iter = 1000, epsilon = 1e-10)
+EM3_p2 <- EM_alg(sim3$x, parameters(start_values2[1], start_values2[2], start_values2[3]), ny = par3[3], max_iter = 1000, epsilon = 1e-10)
+EM4_p2 <- EM_alg(sim4$x, parameters(start_values2[1], start_values2[2], start_values2[3]), ny = par4[3], max_iter = 1000, epsilon = 1e-10)
+EM1_true <- EM_alg(sim1$x, parameters(par1[1], par1[2], par1[3]), ny = par1[3], max_iter = 1000, epsilon = 1e-10)
+EM2_true <- EM_alg(sim2$x, parameters(par2[1], par2[2], par2[3]), ny = par2[3], max_iter = 1000, epsilon = 1e-10)
+EM3_true <- EM_alg(sim3$x, parameters(par3[1], par3[2], par3[3]), ny = par3[3], max_iter = 1000, epsilon = 1e-10)
+EM4_true <- EM_alg(sim4$x, parameters(par4[1], par4[2], par4[3]), ny = par4[3], max_iter = 1000, epsilon = 1e-10)
+
+true1 <- theo_par(sim1$x, sim1$w, 1)
+true2 <- theo_par(sim2$x, sim2$w, 1)
+true3 <- theo_par(sim3$x, sim3$w, par3[3])
+true4 <- theo_par(sim4$x, sim4$w, par4[3])
+
+library(knitr)
+
+# Function to create a table for each parameter set
+create_table <- function(mu_values, sigma_values, title) {
+  # Create data frame with parameter names and their corresponding values
+  df <- data.frame(
+    Starting_point = c("c(-2, 5)", "c(0.64, 0.247)", "Started in  true", "True"),
+    mu = round(c(mu_values), 2),
+    sigma = round(c(sigma_values), 2)
+  )
+}
+
+# Create tables
+table1 <- create_table(c(EM1_p1[1], EM1_p2[1], EM1_true[1], true1$mu[1]), c(EM1_p1[2], EM1_p2[2], EM1_true[2], true1$sigma[1]), "mu = 1, sigma = 1, nu = 1")
+
+table2 <- create_table(c(EM2_p1[1], EM2_p2[1], EM2_true[1], true2$mu[1]), c(EM2_p1[2], EM2_p2[2], EM2_true[2], true2$sigma[1]), "mu = 1, sigma = 2, nu = 1")
+
+table3 <- create_table(c(EM3_p1[1], EM3_p2[1], EM3_true[1], true3$mu[1]), c(EM3_p1[2], EM3_p2[2], EM3_true[2], true3$sigma[1]), "mu = 0.59, sigma = 0.36, nu = 5.79")
+
+table4 <- create_table(c(EM4_p1[1], EM4_p2[1], EM4_true[1], true4$mu[1]), c(EM4_p1[2], EM4_p2[2], EM4_true[2], true4$sigma[1]), "mu = 6.46, sigma = 2.47, nu = 1.75")
+
+
+tab1 <- knitr::kable(table1, caption = "Simulated data with c(1,1,1)")
+tab2 <- knitr::kable(table2, caption = "Simulated data with c(5,2,1)")
+tab3 <- knitr::kable(table3, caption = "Random parameters c(0.59, 0.36, 5.79)")
+tab4 <- knitr::kable(table4, caption = "Random parameters c(6.46, 2.47, 1.75)")
+```
+
+.pull-left[
+```{r,echo = FALSE}
+tab1
+tab2
+```
+]
+
+
+.pull-right[
+```{r,echo = FALSE}
+tab3
+tab4 
+```
+]
+
+
+---
+###Convergence
+Looking at the convergence of the absolute distance to the true parameters:
+<br>
+<br>
+```{r, echo=FALSE, warning = FALSE, fig.align='center', fig.width= 16, fig.height= 5}
+EM1 <- EM(sim1$x, parameters(-2,5,1), 20, 1e-10, par_true = parameters(1, 1,1))
+p1 <- plot(EM1, 1); p2 <- plot(EM1, 4)
+grid.arrange(p1, p2, ncol = 2)
+```
+
+
+```{r, warning = FALSE, fig.align='center', fig.width= 16, fig.height= 5}
+log_lm <- lm(log(par_norm_diff) ~ i, data = EM1$trace)
+exp(coefficients(log_lm)["i"])
+```
+
+
+---
+###Heatmaps
+We now want to visualize the convergence furter.
+```{r, warning=FALSE, fig.align='center', fig.width= 16, fig.height= 6, message = FALSE}
+p1 <- heatmap.My_EM(EM1, theo_par(sim1$x, sim1$w, 1), path = T)
+p2 <- heatmap.My_EM(EM1, theo_par(sim1$x, sim1$w, 1), gradient = T)
+grid.arrange(p1, p2, ncol = 2)
+```
+
+---
+###Convergence
+Looking at the convergence of the negative loglikelihood and of the parameters:
+<br>
+<br>
+```{r, echo=FALSE, warning=FALSE, fig.align='center', fig.width= 16, fig.height= 6}
+p1 <- plot(EM1, 2) #S3-call
+p2 <- plot(EM1, plot_no = 3, mle_est = theo_par(sim1$x, sim1$w, 1)) 
+grid.arrange(p1, p2, ncol = 2)
+```
+
+---
+###Gradient Descent
+Now implementing Gradient Descent to compare it to our EM. The GD is implemented for a normalized negative loglikelihood and with backtracking linesearch and initial stepsize $1$. We first look at the convergence of GD. Done for data simulated from $parameters = (1,1,1)$ and with starting points $(-2,5)$ - same as for EM. 
+<br>
+```{r, echo=FALSE}
+source("~/comp_stat/Dina/Assignment 3 - EM Algorithm/GD.R", local = FALSE)
+```
+
+```{r, echo = FALSE, fig.width = 16, fig.height = 5}
+mle_est1 <- c(theo_par(sim1$x, sim1$w, 1)$mu, theo_par(sim1$x, sim1$w, 1)$sigma)
+GD1 <- GD(par = c(-2, 5), x = sim1$x, nu = 1)
+p1 <- plot(GD1, 1) + my_theme
+p2 <- plot(GD1, 2) + my_theme
+p3 <- plot(GD1, 3, mle_est1) + my_theme
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+---
+###Comparison
+Plotting the convergence-rate of EM in the same plot as GD
+<br>
+<br>
+```{r, echo=FALSE, fig.width = 16, fig.height = 6}
+#Plotting EM and GD in the same plot
+p1 <- ggplot() +
+  geom_line(data = GD1$trace, aes(x = .time, y = log(par_norm_diff), color = "GD"), size = 1.2) +
+  geom_point(data = GD1$trace, aes(x = .time, y = log(par_norm_diff)), color = base, size = 2.5) +
+  geom_line(data = EM1$trace, aes(x = .time, y = log(par_norm_diff), color = "EM"), size = 1.2) +
+  geom_point(data = EM1$trace, aes(x = .time, y = log(par_norm_diff)), color = "coral4", size = 2.5) +
+  my_theme +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4")) +
+        labs(
+        x = "Time",
+        y = expression(log(bgroup("||", theta^{(n-1)} - theta^n, "||")))
+        )
+
+GD1$trace$abs_dist_from_par <- apply(GD1$trace[,1:2], 1, FUN = function(par_est) sum(abs(par_est - mle_est1)))
+EM1$trace$abs_dist_from_par <- apply(EM1$trace[,1:2], 1, FUN = function(par_est) sum(abs(par_est - mle_est1)))
+
+p2 <- ggplot() +
+  geom_line(data = GD1$trace, aes(x = .time, y = abs_dist_from_par, color = "GD"), size = 1.2) +
+  geom_point(data = GD1$trace, aes(x = .time, y = abs_dist_from_par), color = base, size = 2.5) +
+  geom_line(data = EM1$trace, aes(x = .time, y = abs_dist_from_par, color = "EM"), size = 1.2) +
+  geom_point(data = EM1$trace, aes(x = .time, y = abs_dist_from_par), color = "coral4", size = 2.5) +
+  my_theme +
+  labs(
+    x = "Time",
+    y = "Suboptimality - logscale"
+  ) +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4")) +
+  scale_y_log10()
+grid.arrange(p1, p2, ncol = 2)
+```
+
+
+---
+###Fischer Information
+The Fischer information matrix can be calculated as the empirical variance of the gradient of our $Q$ function. We can calculate the gradient of $Q$ wrt. $\mu$ and $\sigma^2$ and the Fischer information:
+.pull.left[
+$$\frac{\partial }{\partial\mu}Q(\theta|\theta')=-\sum_{i=0}^n\frac{(x_i-\mu)}{\nu\sigma^2}kt_i\\
+\frac{\partial }{\partial\sigma}Q(\theta|\theta')=\frac{n}{\sigma}-3\sum_{i=1}^n\frac{(x_i-\mu)^2}{\nu\sigma^2}kt_i$$
+]
+.pull.right[
+$$I(\theta) = \begin{pmatrix}
+\sum_{i=1}^n\frac{kt_i}{\sigma^2} & -\sum_{i=1}^n\frac{(x_i-\mu)kt_i}{\nu\sigma^3} \\
+-\sum_{i=1}^n\frac{(x_i-\mu)kt_i}{\nu\sigma^3} & \frac{n}{\sigma^2}-3\sum_{i=1}^n\frac{(x_i-\mu)^2kt_i}{\nu\sigma^4}
+\end{pmatrix}$$
+]
+We can then implement it, so that we can calculate it:
+```{r, echo=FALSE}
+Fisher_info <- function(x, param, ny){
+  mu_mark <- param$mu 
+  sigma_mark <- param$sigma
+  ny <- ny
+  k <- (ny + 1) / 2   
+  t <- 2 / (1 + (x - mu_mark)^2 / (ny * sigma_mark))
+  I <- matrix(0, 2, 2)
+  I[1,1] <- sum(k * t / sigma_mark^2)
+  I[1,2] <- -sum((x - mu_mark) * k * t / (ny * sigma_mark^3))
+  I[2,1] <- I[1,2]
+  I[2,2] <- n / sigma_mark^2 - 3 * sum((x - mu_mark)^2 * k * t / (ny * sigma_mark^4))
+  I
+}
+```
+
+---
+###Fischer information
+
+We can also calculate the empirical Fischer information using the `numDeriv`-package on our gradient function.
+```{r, echo=FALSE}
+library(numDeriv)
+# Define the gradient function
+grad_negloglik <- function(mu, sigma, nu, x) {
+  n <- length(x)
+  d_mu <-  (nu + 1) * sum((x - mu) / (nu * sigma^2 + (x - mu)^2))
+  d_sigma <- - n / sigma - (nu + 1) / sigma * sum((x - mu)^2 / (nu * sigma^2 + (x - mu)^2))
+  return(c(d_mu, d_sigma))
+}
+```
+<br>
+<br>
+Comparing the two:
+```{r}
+ihat <- -jacobian(grad_negloglik, mu = EM1$est[1], sigma = EM1$est[2], nu = 1 , x = sim1$x)
+I <- Fisher_info(sim1$x, parameters(EM1$est[1], EM1$est[2], 1), 1)
+```
+.pull-left[
+Gradient of the $Q$.function
+```{r, echo = F}
+I
+```
+]
+.pull-right[
+Calculated numerically using `numDev`
+```{r, echo = F}
+ihat
+```
+
+]
+
+---
+###Optimizing the EM Algorithm
+Even though our EM is fast - we want to see if we can optimize it further. 
+```{r, echo = FALSE}
+sim1_large <- sim(parameters(1,1,1), 1000000)
+profvis({
+  EM_alg <- function(x, param, ny , max_iter = 20, epsilon = 1e-10, cb = NULL){
   mu_mark <- param$mu #Getting initial parameters
   sigma_mark <- param$sigma
-  ny <- param$ny
+  ny <- ny
   k <- (ny + 1) / 2   #Defining i and k, which only depends on ny:
   i <- 0
   
@@ -160,6 +481,51 @@ EM_alg <- function(x, param, max_iter = 20, epsilon = 1e-10, cb = NULL){
   }
   c(mu_mark, sigma_mark)
 }
+  EM_alg(sim1_large$x, parameters(-2,5,1), ny = 1, 100, 1e-10)
+})
+```
+
+---
+###Optimizing the EM Algorithm
+Implementing in `Rcpp` and in `RcppArmadillo` to see if it is possible to optimize.
+
+```{r, echo=FALSE, warning=FALSE}
+sourceCpp("~/comp_stat/Dina/Assignment 3 - EM Algorithm/EM_cpp.cpp")
+sourceCpp("~/comp_stat/Dina/Assignment 3 - EM Algorithm/EM_arma.cpp")
+```
+```{r, echo=FALSE, fig.align='center', fig.width = 16, fig.height = 6}
+#Another simple one just using bench::mark
+bm_s <- bench::mark(
+  Original = EM_alg(sim1$x, parameters(-2,5,1), ny = 1, 100, 1e-10),
+  Rcpp = EM_alg_cpp(sim1$x, parameters(-2,5,1), ny = 1, 100, 1e-10),
+  Armadillo = EM_alg_arma(sim1$x, parameters(-2,5,1), ny = 1, 100, 1e-10)
+  , iterations = 50
+  ,check = FALSE
+)
+
+bm_l <- bench::mark(
+  Original = EM_alg(sim1_large$x, parameters(-2,5,1), ny = 1, 100, 1e-10),
+  Rcpp = EM_alg_cpp(sim1_large$x, parameters(-2,5,1), ny = 1, 100, 1e-10),
+  Armadillo = EM_alg_arma(sim1_large$x, parameters(-2,5,1), ny = 1, 100, 1e-10)
+  , iterations = 50
+  ,check = FALSE
+)
+
+p1 <- plot(bm_l) + scale_color_manual(values = c("none" = "#4f7942", "level0" = "coral2", 
+                                "level1" = "steelblue", "level2" = "hotpink3")) +
+  my_theme + ggtitle("n = 1e6") + theme(legend.position = "none")
+
+p3 <- plot(bm_l) + scale_color_manual(values = c("none" = "#4f7942", "level0" = "coral2", 
+                                "level1" = "steelblue", "level2" = "hotpink3")) +
+  my_theme + ggtitle("n = 1000")
+
+legend_l <- cowplot::get_legend(p3)
+
+p2 <- plot(bm_s) + scale_color_manual(values = c("none" = "#4f7942", "level0" = "coral2", 
+                                "level1" = "steelblue", "level2" = "hotpink3")) +
+  my_theme + ggtitle("n = 1000") + theme(legend.position = "none")
+
+grid.arrange(p2, p1, legend_l, ncol = 3, widths = c(2,2,1))
 ```
 
 
