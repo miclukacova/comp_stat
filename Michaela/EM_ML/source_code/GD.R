@@ -1,8 +1,8 @@
 # Gradient of negative log likelihood
-grad <- function(mu, sigma, nu, x){
+grad_negloglik <- function(mu, sigma, nu, x){
   n <- length(x)
-  d_sigma <- n/sigma - (nu + 1) / sigma * sum((x - mu)^2 / (nu * sigma^2 + (x - mu)^2))
   d_mu <- - (nu + 1) * sum((x - mu) / (nu * sigma^2 + (x - mu)^2))
+  d_sigma <- n/sigma - (nu + 1) / sigma * sum((x - mu)^2 / (nu * sigma^2 + (x - mu)^2))
   return(c(d_mu, d_sigma))
 }
 
@@ -15,8 +15,8 @@ neg_loglik <- function(par, x, nu) {
 # Gradient descent algorithm 
 grad_desc <- function(
     par,
-    grad,
-    H,
+    grad = grad_negloglik,
+    H = neg_loglik,
     t0 = 1,
     maxit = 1200,
     cb = NULL,
@@ -71,7 +71,7 @@ GD_tracer <- tracer(c("par_new", "par", "value", "gr", "grad_norm", "i"), Delta 
 ###### GD class ###########################################
 
 GD <- function(par,
-               grad = grad,
+               grad = grad_negloglik,
                H = neg_loglik,
                t0 = 1,
                maxit = 1200,
@@ -81,27 +81,38 @@ GD <- function(par,
                alpha = 0.1,
                nu = NULL,
                ...) {
-  output = structure(
+  
+  est <- grad_desc(par = par, 
+                  grad = grad, 
+                  t0 = t0,
+                  maxit = maxit,
+                  cb = cb$tracer,
+                  epsilon = epsilon,
+                  H = H,
+                  beta = beta,
+                  alpha = alpha,
+                  nu = nu,
+                  ...)
+  
+  GD_trace = summary(GD_tracer)
+  
+  GD_trace <- transform(
+    GD_trace,
+    n = seq_len(nrow(GD_trace)),
+    par_norm_diff = sqrt((par.1 - par_new.1)^2 + (par.2 - par_new.2)^2)
+  )
+  
+  GD_tracer$clear()
+  
+  structure(
     list(
-      est = grad_desc(par = par, 
-                      grad = grad, 
-                      t0 = t0,
-                      maxit = maxit,
-                      cb = cb$tracer,
-                      epsilon = epsilon,
-                      H = H,
-                      beta = beta,
-                      alpha = alpha,
-                      nu = nu,
-                      ...),
-      trace = summary(GD_tracer),
+      est = est,
+      trace = GD_trace,
       start_par = par,
       nu = nu,
       additional_args = list(...)),
     class = "My_GD"
   )
-  GD_tracer$clear()
-  return(output)
 }
 
 
@@ -167,5 +178,38 @@ plot_data.My_GD <- function(object) {
   GD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
   
   return(GD_plot_df)
+}
+
+
+# Heatmap method
+
+heat_map.My_GD <- function(obj, mle, log_lik = loglik, x, grid_vals_m = c(0,3), grid_vals_s = c(1, 4)){
+  
+  # Create a grid of m and s values
+  m_values <- seq(grid_vals_m[1], grid_vals_m[2], length.out = 100)
+  s_values <- seq(grid_vals_s[1], grid_vals_s[2], length.out = 100)
+  
+  # Create a dataframe to store the values of m, s, and loglik
+  results <- expand.grid(m = m_values, s = s_values)
+  results$log_lik <- apply(results, 1, function(row) log_lik(x = x, row, 1))
+  
+  # Path of GD
+  gd_path <- obj$trace %>% select(c(par.1,par.2)) %>% rename(mu = par.1, sigma = par.2)
+  gd_path$log_lik <- apply(gd_path, 1, function(row) log_lik(x = x, row, 1))
+  
+  
+  
+  # Plot the heatmap with contours and a point using ggplot2
+  ggplot(results, aes(x = m, y = s, fill = log_lik)) +
+    geom_tile() +
+    geom_contour(aes(z = log_lik), color = "darkseagreen4", bins = 50) +
+    scale_fill_gradient2(mid = "darkseagreen1", high = "coral1", low = "seagreen4", midpoint = -3500) +
+    geom_point(aes(x = mle[1], y = mle[2], colour = "Full data MLE"), size = 2.5) +
+    geom_point(aes(x = obj$est[1], y = obj$est[2], colour = "GD"), size = 2.5) +
+    geom_path(data = gd_path, aes(x = mu, y = sigma), color = "seagreen", size = 1) +
+    geom_point(data = gd_path, aes(x = mu, y = sigma), color = "seagreen", size = 1) +
+    scale_color_manual(values = c("GD" = "seagreen", "Full data MLE" = "seagreen3")) +
+    labs(x = "mu", y = "sigma", fill = "loglikelihood") +
+    theme_minimal()
 }
 

@@ -31,7 +31,7 @@ output:
 </style>
 
 ```{r, include=FALSE, eval = FALSE}
-rmarkdown::render('presentation.rmd')
+#rmarkdown::render('presentation.rmd')
 ```
 
 ```{r xaringan-themer, include = FALSE, warning = FALSE}
@@ -68,7 +68,10 @@ source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/EM.R")
 source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/parameters.R")
 source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/loglik.R")
 source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/GD.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/fischer_info.R")
+Rcpp::sourceCpp("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/EM_ML/source_code/e_step_m_step_cpp.cpp")
 ```
+
 ### Introduction and outline
 
 The joint density of $Y = \left( X, W \right)$ is given by
@@ -81,7 +84,7 @@ $$f(x,w) = \frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)}  w^{(
 
 - The EM algorithm for estimating $(\mu, \sigma^2)$
 
-- Comparing with other optimization algorithms based on the marginal log-likelihood
+- Comparing with other optimization algorithm based on the marginal log-likelihood
 
 - The Fisher information
 
@@ -115,7 +118,8 @@ $$\mathcal{l}(Y) = \sum_{i=1}^n -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/
 Finding the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$
 
 $$\frac{\partial g}{\partial \mu} = \sum_{i=1}^n \frac{w_i(x_i-\mu)}{\nu \sigma^2} \\
-\frac{\partial g}{\partial \sigma} = - \frac{n}{\sigma} + \sum_{i=1}^n \frac{w_i}{2\nu \sigma^3}(x_i-\mu)^2$$
+\frac{\partial g}{\partial \sigma} = - \frac{n}{\sigma} + \sum_{i=1}^n \frac{w_i}{\nu \sigma^3}(x_i-\mu)^2$$
+
 
 Setting the derivatives of the log-likelihood with respect to $\mu$ and $\sigma^2$  equal to zero results in the following estimators:
 
@@ -221,33 +225,13 @@ ggplot(data_long, aes(x = sample_size, y = Value, color = Type)) +
 $$Q(\theta | \theta ') = E_{\theta'} \left(\sum_{i=1}^{n}\log \left( f\left(x,w| \theta\right)\right) | X = x\right) \\
 = \sum_{i=1}^{n} -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)\right) + \frac{\nu -1}{2}E_{\theta'} \left(\log(W_i) | X = x \right) -E_{\theta'} \left(W_i | X = x \right)\frac{1}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right)$$
 
-We need to compute $E_{\theta'} \left(W_i | X = x \right)$ and $E_{\theta'} \left(\log(W_i) | X = x \right)$. Note that
+We need to compute $E_{\theta'} \left(W_i | X = x \right)$ and $E_{\theta'} \left(\log(W_i) | X = x \right)$. 
 
+By using various tricks we can write
+$$f(x,w) = P  \frac{1}{\Gamma(k)\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}}$$
+Where $k = \frac{\nu + 1}{2}$ and $\lambda = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$. We can recognize $f(x,w)$ for fixed $x$ as the gamma density multiplied by the constant $P$. Note that
 $$f_{w|x = x'} (w) = \frac{f(x',w)}{f(x')} \propto f(x',w)$$
-
-The conditional density of $W$ given $X=x$ is proportional to the joint density with fixed $x$. Note also 
-
-$$f(x,w)  = \frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)}  w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) \\
-     =\frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{k}\Gamma(\nu/2)} w^{k-1} \exp{- \frac{w}{\lambda}}$$
-
-Where we have defined $k = \frac{\nu + 1}{2}$ and $\lambda = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$. 
-
----
-### Implementing the EM algorithm: The E-step
-
-Rewriting we obtain
-
-$$f(x,w) = \frac{\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-(\frac{\nu + 1}{2})}}{\sqrt{\pi \nu  \sigma^2}\Gamma(\nu/2)} \frac{1}{\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}}$$
-
-Note also that
-
-$$\frac{\Gamma(\frac{\nu}{2})}{\Gamma(\frac{\nu}{2} + \frac{1}{2})} = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Leftrightarrow \\
-    \Gamma(\frac{\nu}{2}) = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Gamma(k)$$
-Substituting we obtain
-
-$$f_{w|x=x'}(w) \propto f(x',w) = K  \frac{1}{\Gamma(k)\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}}$$
-
-Where we have defined $K = \frac{\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-(\frac{\nu + 1}{2})}}{\pi \sqrt{ \nu  \sigma^2} 2^{1-\nu} \Gamma(\nu)}$. We can recognize $f(x,w)$ for fixed $x$ as the gamma density multiplied by the constant $K$. It follows that $W | X = x \sim \Gamma\left(\frac{\nu + 1}{2}, 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}\right)$. 
+It follows that $W | X = x \sim \Gamma\left(\frac{\nu + 1}{2}, 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}\right)$
 
 ---
 ### Implementing the EM algorithm: The E-step
@@ -279,7 +263,6 @@ $$\frac{d}{d\sigma} Q(\theta | \theta ') = \sum_{i=1}^n - \frac{1}{\sigma} + E_{
 Setting the derivative to $0$:
 
 $$\hat{\sigma}^2 = \frac{\sum_{i=1}^n E_{\theta'}\left(W_i | X = x \right) (x_i - \mu)^2}{n \nu}$$
-
 ---
 ### The EM algorithm
 
@@ -299,7 +282,7 @@ $$\hat{\sigma}^2 = \frac{\sum_{i=1}^n E_{\theta'}\left(W_i | X = x \right) (x_i 
   + Performs the EM algorithm until convergence
   + With the convergence criterion: $||\theta_n - \theta_{n-1}||^2_2 \leq \epsilon (||\theta ||^2_2 + \epsilon)$
   
-We perform a naive test of the EM algorithm with start values  $(1,1)$ and the data generated from the parameter set $(0,1,1)$.
+We perform a naive test of the EM algorithm with start values $(1,1)$ and the data generated from the parameter set $(1,2,1)$.
 
 ```{r, echo = FALSE}
 my_em <- em_factory(E.step, M.step, eps = 1e-6, nu = 1)
@@ -312,75 +295,169 @@ tibble("EM estimates" = my_em(c(1,1), X = data0$x),
 ---
 ### EM: S3 class
 
-We create an S3 class called `My_EM`, that stores the EM estimates, and the convergence path. The class has a `print` method
+We create an S3 class called `My_EM`, that stores the EM estimates, the tracer obejct, true parameters and other usefull quantities. The class has a `print` method
 
-```{r, echo = FALSE}
-EM0 <- EM(c(2,2), data0$x, par_true = c(0,1,1))
+```{r, echo = TRUE}
+EM0 <- EM(c(2,2), data0$x, par_true = par0$pars)
 EM0
 ```
-Plot linear convergence as Niels Richard
+
+---
+### EM: Rate of convergence
+
+We can plot the convergence of the EM algorithm as a function of the number of iterations, and find the rate of convergence
+
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+ggplot(EM0$trace, aes(n, par_norm_diff)) +
+  geom_point() +
+  scale_y_log10()
+
+log_rate_fit <- lm(log(par_norm_diff) ~ n,  data = EM0$trace)
+exp(coefficients(log_rate_fit)["n"]) %>%
+  kable(col.names = "log-rate of convergence", row.names = FALSE) %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
 ---
 ### Heatmap of the log-likelihood
 
-```{r}
-# Create a grid of m and s values
-m_values <- seq(-2, 4, length.out = 100)
-s_values <- seq(0.01, 6, length.out = 100)
-
-# Create a dataframe to store the values of m, s, and log_lik
-results <- expand.grid(m = m_values, s = s_values)
-results$log_lik <- apply(results, 1, function(row) loglik(x = data0$x, row, 1))
-EM_param <- my_em(X = data0$x, par = c(1,1))
-theo_param <- mle(par0, data0)
-
-# Plot the heatmap with contours and a point using ggplot2
-ggplot(results, aes(x = m, y = s, fill = log_lik)) +
-  geom_tile() +
-  geom_contour(aes(z = log_lik), color = "darkseagreen4", bins = 50) +
-  scale_fill_gradient2(mid = "darkseagreen1", high = "coral1", low = "seagreen4", midpoint = -3500) +
-  geom_point(aes(x = theo_param[1], y = theo_param[2], colour = "MLE"), size = 2.5) +
-  geom_point(aes(x = EM_param[1], y = EM_param[2], colour = "EM"), size = 2.5) +
-  scale_color_manual(values = c("EM" = "seagreen", "MLE" = "seagreen3")) +
-  labs(x = "mu", y = "sigma", fill = "loglikelihood") +
-  theme_minimal()
+```{r, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+heat_map(obj = EM0, mle = mle0, x = data0$x)
 ```
 
 ---
-### EM: S3 class
+### Different starting points
+
+We try out different starting points for the EM algorithm:
+
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+tibble("c(1,1)" = my_em(c(1,1), X = data0$x), 
+       "c(5,5)" = my_em(c(5,5), X = data0$x), 
+       "c(-3,10)" = my_em(c(-3,10), X = data0$x), 
+       "c(-20,200)" = my_em(c(-20,200), X = data0$x), 
+       "Full data MLE" = mle(par0, data0)) %>% 
+  kable(caption = "Different starting values",) %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
+
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+EM1 <- EM(c(-20,50), data0$x, par_true = par0$pars)
+heat_map(obj = EM1, mle = mle0, x = data0$x, grid_vals_m = c(-20,4), grid_vals_s = c(50,0.01))
+```
+
+---
+### More convergence plots
 
 And a plot method with different plot options:
 
-
-```{r, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+```{r, message=FALSE, echo = TRUE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
 grid.arrange(
   plot(EM0, mle_par = mle(par0, data0), plot_no = 2), 
   plot(EM0, mle_par = mle(par0, data0), W = data0$w, plot_no = 5),
   nrow = 1)
 ```
 
-Plot the path... look at slides
-
 ---
 ### Profiling
 
+```{r, echo = FALSE}
+data1 <- simulate(10^6, c(1,2,3))
+
+profvis({
+  
+  E.step <- function(X, par, nu){
+    (nu + 1) / (1 + (X - par[1])^2 / (nu * par[2]))
+  }
+  
+  ## M step
+  
+  M.step <- function(E_W, X, nu) {
+    mu_k <- sum(E_W * X) / sum(E_W)
+    sigma2_k <- sum(E_W * (X - mu_k)^2) / (length(X) * nu)
+    return(c(mu_k, sigma2_k))
+  }
+  
+  
+  ## EM algorithm
+  
+  em_factory <- function(e_step, m_step, eps = 1e-6, nu) {
+    force(e_step); force(m_step); force(eps); force(nu)
+    function(par, X, epsilon = eps, cb = NULL, ...) {
+      k <- 1
+      repeat {
+        if (!is.null(cb)) cb()
+        k <- k + 1
+        par0 <- par
+        E_W <- e_step(X = X, par = par, nu = nu)
+        par <- m_step(E_W = E_W, X = X, nu = nu)
+        if (sum((par - par0)^2) <= epsilon * (sum(par^2) + epsilon))
+          break
+      }
+      par  # Returns the parameter estimate
+    }
+  }
+  
+  my_em <- em_factory(E.step, M.step, eps = 1e-6, nu = 1)
+  my_em(c(2,2), X = data1$x)
+})
+
+```
+
+
+---
+### Rcpp implementation
+
+We have implemented the E-step and M-step in C++ using Rcpp. The functions are called `E_step_cpp` and `M_step_cpp`. 
+
+Sanity check
+```{r}
+my_em_cpp <- em_factory(e_step = E_step_cpp, m_step = M_step_cpp, nu = 1)
+my_em_cpp(c(2,2), X = data0$x) - my_em(c(2,2), X = data0$x) 
+```
+
 ---
 ### Benchmarking
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+data <- simulate(10^6, c(1,2,1))
+
+em_bench <- bench::press(
+  k = 10^(3:6),
+  {
+    bench::mark(
+      "Rcpp" =  my_em_cpp(c(2,2), X = data$x[1:k]),
+      "R" = my_em(c(2,2), X = data$x[1:k]),
+      check = FALSE
+    )
+  }
+)
+
+em_bench %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+```
+
+- R code is already fast and vectorized
+- The Rcpp implementation uses loops
+- To increase speed one could try to use Rcpp Armadillo
+
 
 ---
 ### Gradiant Descent
 
 As loss function we will use the negative loglikelihood divided by $\frac{1}{n}$
 
-$$ - \frac{1}{n}\mathcal{l}(\theta) = \frac{1}{n}\sum_{i=1}^n log(\sigma) + \frac{\nu +1 }{2} \log \left( 1 + \frac{(x_i - \mu)^2}{\nu \sigma^2} \right)$$
+$$-\frac{1}{n}\mathcal{l}(\theta) = \frac{1}{n}\sum_{i=1}^n \log(\sigma) + \frac{\nu +1 }{2} \log \left( 1 + \frac{(x_i - \mu)^2}{\nu \sigma^2} \right)$$
 The gradient is
 
-$$ \nabla - \mathcal{l}(\theta) =  \begin{pmatrix} \sum_{i=1}^n  \left(\nu +1 \right) \frac{(x_i - \mu)}{(x_i - \mu)^2 + \nu \sigma^2}  \\ \sum_{i=1}^n \frac{1}{\sigma} -  \frac{(\nu +1)}{  \nu \sigma^2 + (x_i - \mu)^2} \frac{(x_i - \mu)^2}{\sigma}  
- \end{pmatrix}$$
+$$\nabla - \mathcal{l}(\theta) =  \begin{pmatrix} \sum_{i=1}^n  \left(\nu +1 \right) \frac{(x_i - \mu)}{(x_i - \mu)^2 + \nu \sigma^2}  \\ \sum_{i=1}^n \frac{1}{\sigma} -  \frac{(\nu +1)}{  \nu \sigma^2 + (x_i - \mu)^2} \frac{(x_i - \mu)^2}{\sigma} \end{pmatrix}$$
  
-We implement the gradient in the function `grad` and check that the gradient is close to $0$ in the MLE estimates...
+We implement the gradient in the function `grad` and check that the gradient is close to $0$ in the full data MLE estimates.
 
-```{r}
-grad(mu = mle0[1], sigma = sqrt(mle0[2]), nu = par0$nu, x = data0$x)
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+grad_negloglik(mu = mle0[1], sigma = sqrt(mle0[2]), nu = par0$nu, x = data0$x) * 1 / length(data0$x)
 ```
 
 ---
@@ -388,14 +465,14 @@ grad(mu = mle0[1], sigma = sqrt(mle0[2]), nu = par0$nu, x = data0$x)
 
 We implement gradient descent in the function `grad_desc` that takes as input the gradient function, the Hessian function, the data, and the starting values. 
 
-```{r}
-grad_est <- grad_desc(par = c(2,2), grad = grad, H = neg_loglik, x = data0$x, nu = par0$nu)
+```{r, message=FALSE, echo = TRUE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+grad_est <- grad_desc(par = c(2,2), x = data0$x, nu = par0$nu)
 grad_est
 ```
 
 Below we compare with the MLE estimates and the EM estimates
 
-```{r}
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
 tibble("EM estimates" = my_em(c(1,1), X = data0$x), 
        "Full data MLE" = mle(par0, data0),
        "Gradient Descent" = grad_est,
@@ -407,19 +484,190 @@ tibble("EM estimates" = my_em(c(1,1), X = data0$x),
 ---
 ### Gradient Descent
 
-```{r}
-GD0 <- GD(par = c(2,2), grad = grad, H = neg_loglik, x = data0$x, nu = par0$nu)
-```
-```{r}
-plot(GD0)
-```
----
-### Comparison
+We once again create an S3 object `GD` that stores the gradient descent estimates, the tracer object, true parameters and other useful quantities. The class has a `print` method
 
-```{r}
+```{r, message=FALSE, echo = TRUE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+GD0 <- GD(par = c(2,2), x = data0$x, nu = par0$nu)
+GD0
+```
+
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+grid.arrange(plot(GD0),
+             ggplot(GD0$trace, aes(n, par_norm_diff)) +
+                geom_point() +
+                scale_y_log10(),
+             nrow = 1)
+```
+
+---
+### GD heat map
+
+```{r, message=FALSE, echo = TRUE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+heat_map(obj = GD0, mle = mle0, x = data0$x)
+```
+
+---
+### Comparison: Convergence plots
+
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
 plot(GD0)+
   geom_line(data = plot_data(EM0), aes(y = neg_loglik, x = .time, color = "EM"))+
   scale_color_manual(values = c("EM" = "red3", "GD" = "blue3"))
 ```
 
+---
+### GD: Different starting points 
+
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+tibble("c(1,1)" = grad_desc(par = c(1,1), grad = grad_negloglik, H = neg_loglik, x = data0$x, nu = par0$nu), 
+       "c(5,5)" = grad_desc(par = c(5,5), grad = grad_negloglik, H = neg_loglik, x = data0$x, nu = par0$nu), 
+       "c(-3,10)" = grad_desc(par = c(-3,10), grad = grad_negloglik, H = neg_loglik, x = data0$x, nu = par0$nu), 
+       "c(-20,200)" = grad_desc(par = c(-20,200), grad = grad_negloglik, H = neg_loglik, x = data0$x, nu = par0$nu), 
+       "Full data MLE" = mle(par0, data0))   %>% 
+  kable(caption = "Different starting values",) %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
+```{r}
+tibble("Grad in (-20, 200)" = grad_negloglik(-20, 200, 1, data0$x), "Grad in (1,1)" = grad_negloglik(1, 1, 1, data0$x)) %>% 
+  kable(caption = "Gradient at different starting points",) %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
+```{r, message=FALSE, echo = TRUE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+GD2 <- GD(par = c(-20,10), x = data0$x, nu = par0$nu)
+heat_map(obj = GD2, mle = mle0, x = data0$x, grid_vals_m = c(-20,4), grid_vals_s = c(0,32))
+```
+
+---
+### Comparison: Benchmarking
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+data <- sim(obj = par0, n = 10^6)
+
+em_bench <- bench::press(
+  k = 10^(3:6),
+  {
+    bench::mark(
+      "GD" =  grad_desc(par = c(2,2), grad = grad_negloglik, H = neg_loglik, x = data$x[1:k], nu = par0$nu),
+      "EM" = my_em(c(2,2), X = data$x[1:k]),
+      check = FALSE
+    )
+  }
+)
+
+em_bench %>% 
+  mutate(expr = as.character(expression), median = as.numeric(median)) %>% 
+  ggplot(aes(k, median, color = expr)) + geom_point() + scale_y_log10() +
+  geom_line() + labs(y = "time (ms)")
+```
+
+---
+### Empirical Fischer information: 
+
+An estimate of the empirical Fischer information is computed as
+
+$$\hat{\mathcal{I}} = \sum_{i = 1}^N \left(\nabla_{\theta} Q_i(\hat{\theta}| \hat{\theta}) - N^{-1} \nabla_{\theta} \mathcal{l}(\hat{\theta})  \right)\left(\nabla_{\theta} Q_i(\hat{\theta}| \hat{\theta}) - N^{-1} \nabla_{\theta} \mathcal{l}(\hat{\theta})  \right)^T$$
+
+Where $\mathcal{l}(\hat{\theta}) = \sum_{i=1}^N \mathcal{l}_i(\hat{\theta})$.
+
+```{r, echo = FALSE}
+#sanity check
+sum(abs(grad_Q(par0$mu, sqrt(par0$sigma2), par0$nu, data0$x) - 
+          grad_loglik(par0$mu, sqrt(par0$sigma2), par0$nu, data0$x))) <= 10^-13 
+
+```
+This is implemented in the function `fis_inf`. 
+
+```{r}
+fisher <- fis_inf(EM0$est[1], sqrt(EM0$est[2]), par0$nu, data0$x)
+fisher
+```
+
+This empirical Fisher Information paves way for the confidence interval
+
+$$ \hat{\theta}_i \pm 1.96 \sqrt{\hat{\mathcal{I}}^{-1}_{ii}}$$
+
+```{r}
+ci_mu <-EM0$est[1] + c(-1,1) * 1.96 * sqrt(solve(fisher)[1,1])
+ci_sigma <- EM0$est[2] + c(-1,1) * 1.96 * sqrt(solve(fisher)[2,2])
+
+tibble("Parameter" = c("mu", "sigma^2"), 
+       "Lower" = c(ci_mu[1], ci_sigma[1]), 
+       "Upper" = c(ci_mu[2], ci_sigma[2])) %>% 
+  kable(caption = "Confidence intervals",) %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+
+```
+
+---
+### Numerical Fischer information: 
+
+```{r}
+loglik2 <- function(par) loglik(mu = par[1], sigma = sqrt(par[2]), nu = par0$nu, x = data0$x)
+grad2 <- function(par) grad_loglik(mu = par[1], sigma = sqrt(par[2]), nu = par0$nu, x = data0$x)
+fisher2 <- -optimHess(EM0$est, loglik, grad2)
+
+library(numDeriv)
+ihat <- -jacobian(grad2, EM0$est)
+```
+
+```{r}
+ci_mu2 <-EM0$est[1] + c(-1,1) * 1.96 * sqrt(solve(fisher2)[1,1])
+ci_sigma2 <- EM0$est[2] + c(-1,1) * 1.96 * sqrt(solve(fisher2)[2,2])
+
+ci_mu3 <-EM0$est[1] + c(-1,1) * 1.96 * sqrt(solve(ihat)[1,1])
+ci_sigma3 <- EM0$est[2] + c(-1,1) * 1.96 * sqrt(solve(ihat)[2,2])
+
+tibble("Parameter" = c("Hessian mu", "Hessian sigma^2", "Jacobian mu", "Jacobian sigma^2"), 
+       "Lower" = c(ci_mu2[1], ci_sigma2[1], ci_mu3[1], ci_sigma3[1]), 
+       "Upper" = c(ci_mu2[2], ci_sigma2[2], ci_mu3[2], ci_sigma3[2])) %>% 
+  kable(caption = "Confidence intervals",) %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+```
+
+
+---
+### Appendix
+
+$$Q(\theta | \theta ') = E_{\theta'} \left(\sum_{i=1}^{n}\log \left( f\left(x,w| \theta\right)\right) | X = x\right) \\
+= \sum_{i=1}^{n} -\log\left(\sqrt{\pi \nu \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)\right) + \frac{\nu -1}{2}E_{\theta'} \left(\log(W_i) | X = x \right) -E_{\theta'} \left(W_i | X = x \right)\frac{1}{2}\left(1+\frac{(x_i-\mu)^2}{\nu \sigma^2}\right)$$
+
+We need to compute $E_{\theta'} \left(W_i | X = x \right)$ and $E_{\theta'} \left(\log(W_i) | X = x \right)$. Note that
+
+$$f_{w|x = x'} (w) = \frac{f(x',w)}{f(x')} \propto f(x',w)$$
+
+Note also 
+
+$$f(x,w)  = \frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{(\nu +1)/2}\Gamma(\nu/2)}  w^{(\nu -1)/2} \exp\left(-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)\right) \\
+     =\frac{1}{\sqrt{\pi \nu  \sigma^2} 2 ^{k}\Gamma(\nu/2)} w^{k-1} \exp{- \frac{w}{\lambda}}$$
+
+Where we have defined $k = \frac{\nu + 1}{2}$ and $\lambda = 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$. 
+
+---
+### Appendix
+
+Rewriting we obtain
+
+$$f(x,w) = \frac{\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-(\frac{\nu + 1}{2})}}{\sqrt{\pi \nu  \sigma^2}\Gamma(\nu/2)} \frac{1}{\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}}$$
+
+Note also that
+
+$$\frac{\Gamma(\frac{\nu}{2})}{\Gamma(\frac{\nu}{2} + \frac{1}{2})} = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Leftrightarrow \\
+    \Gamma(\frac{\nu}{2}) = 2^{1-\nu} \sqrt{\pi} \Gamma(\nu) \Gamma(k)$$
+Substituting we obtain
+
+$$f_{w|x=x'}(w) \propto f(x',w) = K  \frac{1}{\Gamma(k)\lambda^{k}} w^{k-1} \exp{- \frac{w}{\lambda}}$$
+
+Where we have defined $K = \frac{\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-(\frac{\nu + 1}{2})}}{\pi \sqrt{ \nu  \sigma^2} 2^{1-\nu} \Gamma(\nu)}$. We can recognize $f(x,w)$ for fixed $x$ as the gamma density multiplied by the constant $K$. It follows that $W | X = x \sim \Gamma\left(\frac{\nu + 1}{2}, 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}\right)$. 
+
+---
+### Appendix
+
+Thus
+
+$$E_{\theta'} \left(W_i | X = x \right) = (\nu + 1)\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1}$$
+Using that $E(X) = k \lambda$ for random variable $X \sim \Gamma(k, \lambda)$. Furthermore we have $E(\log(X)) = \psi(k) + \log \lambda$, resulting in
+
+$$E_{\theta'} \left(\log W_i | X = x \right) = \psi\left(\frac{\nu + 1}{2}\right) + \log \left( 2\left(1+\frac{(x-\mu)^2}{\nu \sigma^2}\right)^{-1} \right)$$
 
