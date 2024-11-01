@@ -80,6 +80,7 @@ print.My_EM <- function(x) {
   cat("Estimated parameters: \n")
   cat("mu: ", x$est[1], "\n")
   cat("sigma2: ", x$est[2], "\n")
+  cat("Iterations: ", nrow(x$trace), "\n")
   cat("True parameters: \n")
   cat("mu: ", x$par_true[1], "\n")
   cat("sigma2: ", x$par_true[2], "\n")
@@ -95,14 +96,15 @@ plot.My_EM <- function(object, plot_no = 1, mle_par = NULL,...) {
   
   plot_data <- object$trace %>%
     mutate("Dist_mu" = abs(par.1 - object$par_true[1]),
-           "Dist_sigma2" = abs(par.2 - object$par_true[2])) 
+           "Dist_sigma2" = abs(par.2 - object$par_true[2]))
   
   plot_data$loglikelihood <- apply(cbind(plot_data$par.1, plot_data$par.2), 1, function(params) {
     loglik(x = object$X, params, nu = object$par_true[3])})
   
-  plot_data$dist_loglik <- abs(plot_data$loglikelihood - loglik(x = object$X, mle_par, nu = object$par_true[3]))
   
   if(!is.null(mle_par)) {
+    plot_data$dist_loglik <- abs(plot_data$loglikelihood - loglik(x = object$X, mle_par, nu = object$par_true[3]))
+    
     plot_data <- plot_data %>%
       mutate("Dist_mle_mu" = abs(par.1 - mle_par[1]),
              "Dist_mle_sigma2" = abs(par.2 - mle_par[2]))

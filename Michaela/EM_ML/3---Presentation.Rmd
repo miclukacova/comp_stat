@@ -362,6 +362,7 @@ grid.arrange(
 ### Profiling
 
 ```{r, echo = FALSE}
+set.seed(4027)
 data1 <- simulate(10^6, c(1,2,3))
 
 profvis({
@@ -420,10 +421,11 @@ my_em_cpp(c(2,2), X = data0$x) - my_em(c(2,2), X = data0$x)
 ### Benchmarking
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
-data <- simulate(10^6, c(1,2,1))
+set.seed(4027)
+data <- simulate(10^7, c(1,2,1))
 
 em_bench <- bench::press(
-  k = 10^(3:6),
+  k = 10^(3:7),
   {
     bench::mark(
       "Rcpp" =  my_em_cpp(c(2,2), X = data$x[1:k]),
@@ -463,7 +465,7 @@ grad_negloglik(mu = mle0[1], sigma = sqrt(mle0[2]), nu = par0$nu, x = data0$x) *
 ---
 ### Gradient Descent
 
-We implement gradient descent in the function `grad_desc` that takes as input the gradient function, the Hessian function, the data, and the starting values. 
+We implement gradient descent in the function `grad_desc` that takes as input the gradient function, the Hessian function, the data, and the starting values. The GD algorithm performs backtracking linesearch, and the learning rate is set to $1$.
 
 ```{r, message=FALSE, echo = TRUE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
 grad_est <- grad_desc(par = c(2,2), x = data0$x, nu = par0$nu)
@@ -473,9 +475,9 @@ grad_est
 Below we compare with the MLE estimates and the EM estimates
 
 ```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
-tibble("EM estimates" = my_em(c(1,1), X = data0$x), 
+tibble("EM est" = my_em(c(1,1), X = data0$x), 
        "Full data MLE" = mle(par0, data0),
-       "Gradient Descent" = grad_est,
+       "GD est" = grad_est,
        ) %>% 
   kable() %>% 
   kableExtra::kable_styling(full_width = FALSE, position = "center")
@@ -516,7 +518,35 @@ plot(GD0)+
 ```
 
 ---
-### GD: Different starting points 
+### Different parameter values
+
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+set.seed(4027)
+par1 <- parameters(4,5,6); data1 <- sim(obj = par1, n = 10^5)
+par2 <- parameters(-4,0.3,3); data2 <- sim(obj = par2, n = 200)
+EM1 <- EM(c(1,1), data1$x, par_true = par1$pars); EM2 <- EM(c(1,1), data2$x, par_true = par2$pars)
+GD1 <- GD(par = c(1,1), x = data1$x, nu = par1$nu); GD2 <- GD(par = c(1,1), x = data2$x, nu = par2$nu)
+
+tibble("Parameter" = rep(c("mu", "sigma2"), 2),
+       "MLE est" = c(mle(par1, data1), mle(par2, data2)), 
+       "EM est" = c(EM1$est, EM2$est), 
+       "GD est" = c(GD1$est, GD2$est)) %>% 
+  kable() %>% 
+  kableExtra::kable_styling(full_width = FALSE, position = "center")
+
+grid.arrange(
+  plot(GD1) +
+  geom_line(data = plot_data(EM1), aes(y = neg_loglik, x = .time, color = "EM"))+
+  scale_color_manual(values = c("EM" = "red3", "GD" = "blue3"))+
+  labs(title = "n = 10^5, True par = c(4,5,6)"), 
+  plot(GD2) +
+  geom_line(data = plot_data(EM2), aes(y = neg_loglik, x = .time, color = "EM"))+
+  scale_color_manual(values = c("EM" = "red3", "GD" = "blue3"))+
+    labs(title = "n = 200, True par = c(-4,0.3,3)"), nrow = 1)
+```
+
+---
+### GD: Different starting values 
 
 ```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
 tibble("c(1,1)" = grad_desc(par = c(1,1), grad = grad_negloglik, H = neg_loglik, x = data0$x, nu = par0$nu), 
@@ -528,29 +558,46 @@ tibble("c(1,1)" = grad_desc(par = c(1,1), grad = grad_negloglik, H = neg_loglik,
   kableExtra::kable_styling(full_width = FALSE, position = "center")
 ```
 
-```{r}
+
+
+```{r, echo = FALSE}
 tibble("Grad in (-20, 200)" = grad_negloglik(-20, 200, 1, data0$x), "Grad in (1,1)" = grad_negloglik(1, 1, 1, data0$x)) %>% 
-  kable(caption = "Gradient at different starting points",) %>% 
+  kable(caption = "Grad. at diff. start vals",) %>% 
   kableExtra::kable_styling(full_width = FALSE, position = "center")
 ```
 
-```{r, message=FALSE, echo = TRUE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
 GD2 <- GD(par = c(-20,10), x = data0$x, nu = par0$nu)
 heat_map(obj = GD2, mle = mle0, x = data0$x, grid_vals_m = c(-20,4), grid_vals_s = c(0,32))
 ```
 
 ---
+### Optimizing: Implementing momentum
+
+We implement Gradient Descent with Polyak Momentum. This amounts to altering the update rule to
+
+$$\theta_{n+1} = \theta_n - \gamma \nabla \mathcal{l}(\theta_n) + \mu (\theta_n - \theta_{n-1})$$
+We use $\beta = 0.9$. We create a new object to sanity check the algorithm
+
+```{r}
+GD_mom <- GD(par = c(1,1), x = data0$x, nu = par0$nu, alg = grad_desc_mom)
+GD_mom
+```
+Looks promising! The number of iterations decreased from 28 to 11. 
+---
 ### Comparison: Benchmarking
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+set.seed(4027)
 data <- sim(obj = par0, n = 10^6)
 
 em_bench <- bench::press(
   k = 10^(3:6),
   {
     bench::mark(
-      "GD" =  grad_desc(par = c(2,2), grad = grad_negloglik, H = neg_loglik, x = data$x[1:k], nu = par0$nu),
+      "GD" =  grad_desc(par = c(2,2), x = data$x[1:k], nu = par0$nu),
       "EM" = my_em(c(2,2), X = data$x[1:k]),
+      "GD Momentum" = grad_desc_mom(c(2,2), x = data$x[1:k], nu = par0$nu),
       check = FALSE
     )
   }
@@ -563,39 +610,38 @@ em_bench %>%
 ```
 
 ---
-### Empirical Fischer information: 
+### Empirical Fischer information
 
 An estimate of the empirical Fischer information is computed as
 
 $$\hat{\mathcal{I}} = \sum_{i = 1}^N \left(\nabla_{\theta} Q_i(\hat{\theta}| \hat{\theta}) - N^{-1} \nabla_{\theta} \mathcal{l}(\hat{\theta})  \right)\left(\nabla_{\theta} Q_i(\hat{\theta}| \hat{\theta}) - N^{-1} \nabla_{\theta} \mathcal{l}(\hat{\theta})  \right)^T$$
 
-Where $\mathcal{l}(\hat{\theta}) = \sum_{i=1}^N \mathcal{l}_i(\hat{\theta})$.
+Where $\mathcal{l}(\hat{\theta}) = \sum_{i=1}^N \mathcal{l}_i(\hat{\theta})$. This is implemented in the function `fis_inf`. 
 
-```{r, echo = FALSE}
-#sanity check
+```{r, include = FALSE}
+# sanity check
 sum(abs(grad_Q(par0$mu, sqrt(par0$sigma2), par0$nu, data0$x) - 
           grad_loglik(par0$mu, sqrt(par0$sigma2), par0$nu, data0$x))) <= 10^-13 
 
 ```
-This is implemented in the function `fis_inf`. 
 
-```{r}
+```{r, echo = FALSE}
 fisher <- fis_inf(EM0$est[1], sqrt(EM0$est[2]), par0$nu, data0$x)
 fisher
 ```
 
-This empirical Fisher Information paves way for the confidence interval
+The empirical Fisher Information paves way for the confidence interval
 
-$$ \hat{\theta}_i \pm 1.96 \sqrt{\hat{\mathcal{I}}^{-1}_{ii}}$$
+$$\hat{\theta}_i \pm 1.96 \sqrt{\hat{\mathcal{I}}^{-1}_{ii}}$$
 
-```{r}
+```{r, echo = FALSE}
 ci_mu <-EM0$est[1] + c(-1,1) * 1.96 * sqrt(solve(fisher)[1,1])
 ci_sigma <- EM0$est[2] + c(-1,1) * 1.96 * sqrt(solve(fisher)[2,2])
 
-tibble("Parameter" = c("mu", "sigma^2"), 
+tibble("Parameter" = c(expression(mu), expression(sigma ^2)), 
        "Lower" = c(ci_mu[1], ci_sigma[1]), 
        "Upper" = c(ci_mu[2], ci_sigma[2])) %>% 
-  kable(caption = "Confidence intervals",) %>% 
+  kable(caption = "Confidence interval",) %>% 
   kableExtra::kable_styling(full_width = FALSE, position = "center")
 
 ```
@@ -603,16 +649,26 @@ tibble("Parameter" = c("mu", "sigma^2"),
 ---
 ### Numerical Fischer information: 
 
-```{r}
+By usinng `optimHess` we can compute the Hessian of the log-likelihood function and use this as an estimate of the Fisher information. 
+
+```{r, echo = FALSE}
 loglik2 <- function(par) loglik(mu = par[1], sigma = sqrt(par[2]), nu = par0$nu, x = data0$x)
 grad2 <- function(par) grad_loglik(mu = par[1], sigma = sqrt(par[2]), nu = par0$nu, x = data0$x)
 fisher2 <- -optimHess(EM0$est, loglik, grad2)
-
-library(numDeriv)
-ihat <- -jacobian(grad2, EM0$est)
+fisher2
 ```
 
-```{r}
+Similarly we can use the function `jacobian` from the `numDeriv` package to compute the Jacobian of the gradient function, and use this as an estimate of the Fisher information. 
+
+```{r, echo = FALSE}
+library(numDeriv)
+ihat <- -jacobian(grad2, EM0$est)
+ihat
+```
+
+Leading to the confidence intervals
+
+```{r, echo = FALSE}
 ci_mu2 <-EM0$est[1] + c(-1,1) * 1.96 * sqrt(solve(fisher2)[1,1])
 ci_sigma2 <- EM0$est[2] + c(-1,1) * 1.96 * sqrt(solve(fisher2)[2,2])
 
@@ -626,6 +682,18 @@ tibble("Parameter" = c("Hessian mu", "Hessian sigma^2", "Jacobian mu", "Jacobian
   kableExtra::kable_styling(full_width = FALSE, position = "center")
 ```
 
+---
+### Conclusion
+
+- The implementation of the EM algorithm is quite fast and efficient.
+
+- The EM and GD algorithm are quite robust in terms of starting values and true parameter values (for this problem at least).
+
+- The EM algorithm outperforms the gradient descent algorithm in terms of speed and convergence.
+
+- The GD algorithm can be optimized by using Polyak momentum, but is still not able to compete with the EM algorithm. 
+
+- The confidence intervals computed using the Fisher information cover the true parameter values.
 
 ---
 ### Appendix

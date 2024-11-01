@@ -40,6 +40,7 @@ grad_desc <- function(
     grad_norm <- sum(gr^2)
     
     t <- t0
+    
     # Proposed descent step
     par_new <- par - t * gr
     
@@ -63,6 +64,64 @@ grad_desc <- function(
   par
 }
 
+
+# Gradient descent algorithm 
+grad_desc_mom <- function(
+    par,
+    grad = grad_negloglik,
+    H = neg_loglik,
+    t0 = 1,
+    maxit = 1200,
+    cb = NULL,
+    epsilon = 1e-6,
+    beta = 0.8,
+    alpha = 0.1,
+    x,
+    nu,
+    mu = 0.9,
+    ...) {
+  
+  n <- length(x)
+  par_old <- par
+  
+  for (i in 1:maxit) {
+    
+    #browser()
+    
+    # Calculations of objective and gradient
+    value <- 1 / n * H(x = x, par = par, nu = nu)
+    gr <- 1/n * grad(mu = par[1], sigma = sqrt(par[2]), nu = nu, x = x)
+    
+    grad_norm <- sum(gr^2)
+    
+    t <- t0
+    
+    # Proposed descent step
+    par_new <- par - t * gr + mu * (par - par_old)
+    
+    # Backtracking line search
+    while (1 / n * H(x = x, par = par_new, nu = nu) > value - alpha * t * grad_norm) {
+      t <- beta * t
+      par_new <- par - t * gr
+    }
+    
+    # Callback
+    if (!is.null(cb)) cb()
+    
+    # Convergence criterion 
+    if (sum((par_new - par)^2) <= epsilon * (sum(par_new^2) + epsilon)) break
+    
+    par_old <- par
+    par <- par_new
+  }
+  
+  if (i == maxit)  warning("Maximal number, ", maxit, ", of iterations reached")
+  
+  par
+}
+
+
+
 ##### Tracer #####################################
 
 GD_tracer <- tracer(c("par_new", "par", "value", "gr", "grad_norm", "i"), Delta = 0) 
@@ -71,6 +130,7 @@ GD_tracer <- tracer(c("par_new", "par", "value", "gr", "grad_norm", "i"), Delta 
 ###### GD class ###########################################
 
 GD <- function(par,
+               alg = grad_desc,
                grad = grad_negloglik,
                H = neg_loglik,
                t0 = 1,
@@ -82,7 +142,7 @@ GD <- function(par,
                nu = NULL,
                ...) {
   
-  est <- grad_desc(par = par, 
+  est <- alg(par = par, 
                   grad = grad, 
                   t0 = t0,
                   maxit = maxit,
