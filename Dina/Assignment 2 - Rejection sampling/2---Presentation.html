@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>Rejection Sampling - Topic 2</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Dina Gyberg Jensen (vbz248)" />
+    <script src="2---Presentation_files/header-attrs-2.28/header-attrs.js"></script>
+    <link href="2---Presentation_files/htmltools-fill-0.5.8.1/fill.css" rel="stylesheet" />
+    <script src="2---Presentation_files/htmlwidgets-1.6.4/htmlwidgets.js"></script>
+    <script src="2---Presentation_files/jquery-1.12.4/jquery.min.js"></script>
+    <script src="2---Presentation_files/d3-3.5.6/d3.min.js"></script>
+    <link href="2---Presentation_files/profvis-0.3.6.9000/profvis.css" rel="stylesheet" />
+    <script src="2---Presentation_files/profvis-0.3.6.9000/profvis.js"></script>
+    <script src="2---Presentation_files/profvis-0.3.6.9000/scroll.js"></script>
+    <link href="2---Presentation_files/highlight-6.2.0/textmate.css" rel="stylesheet" />
+    <script src="2---Presentation_files/highlight-6.2.0/highlight.js"></script>
+    <script src="2---Presentation_files/profvis-binding-0.3.8/profvis.js"></script>
+    <link rel="stylesheet" href="themer-new.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+.title[
+# Rejection Sampling - Topic 2
+]
+.author[
+### Dina Gyberg Jensen (vbz248)
+]
+.institute[
+### University of Copenhagen
+]
+.date[
+### 07-09-2024
+]
+
+---
+
+&lt;style type="text/css"&gt;
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content &gt; h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+&lt;/style&gt;
+
+
+
+
+
+
+
+
+###Introduction
+
+Obejctive is to sample from the density 
+`$$f(y)\propto\prod_{i=1}^{100}\exp(yz_ix_i-\exp(yx_i)), \quad y\geq0$$`
+Where `\((x_i,z_i)\)` are pairs from the Poisson dataset. 
+&lt;br&gt;
+This will be done using rejection sampling for two different kinds of envelopes:
+
+ - Gaussian envelope 
+ - log-affine envelope.
+
+
+---
+###The Density
+Note that we can rewrite the density, and this is how we will implement it.
+`$$f(y) = \exp(\sum_{i=1}^{100}yx_iz_i - \exp(yx_i)) = \exp (y\sum_{i=1}^{100} x_i z_i - \sum_{i=1}^{100}e^{yx_i})+1$$`
+
+The unscaled density looks as follows. Note that it visually appears to be fairly symmetric.
+&lt;br&gt;
+&lt;br&gt;
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-4-1.png" width="540" style="display: block; margin: auto;" /&gt;
+
+---
+###Rejection Sampling
+We have target density `\(f(y)\)` and want to sample from it using a proposal density `\(g(y)\)`, which is easier to sample from.
+&lt;br&gt;
+Let `\(Y_1,Y_2,...\)` be iid samples from the proposal density and let `\(U_1,U_2,...\)` be iid uniformly distributed on `\((0,1)\)` and independent of the `\(Y_n\)`'s. Define:
+&lt;br&gt;
+`$$\sigma = \inf\{ n\geq 1|U_n\leq \alpha f(X_n)/g(X_n) \} \quad  \alpha \in (0,1]$$`
+It can be shown that the distribution of `\(Y_\sigma\)` has density `\(f(y)\)`, which is why rejections sampling works.
+&lt;br&gt;
+&lt;br&gt;
+It is in practice carried out by sampling independent pairs `\((Y_n,U_n)\)` and then rejecting them whenever 
+&lt;br&gt;
+`$$U_n&gt;\alpha f(Y_n)/g(Y_n)$$`
+The trick is to find a good proposal distribution.
+
+---
+###Gaussian Envelope
+We need to find `\((\mu,\sigma)\)` such that `\(\mathcal{N}(\mu,\sigma)\)` approximates `\(f(y)\)` as well as possible.
+&lt;br&gt;
+&lt;br&gt;
+As we saw that `\(f(y)\)` appears to be fairly symmetrical, we will choose the mean of the Gaussian envelope to be `\(\mu = \max_y f(y)\)`. We find it using `optim`.
+&lt;br&gt;
+
+
+``` r
+mu_opt &lt;- optimize(function(y) - tar_dens(y), interval = c(0, 1))$minimum
+mu_opt
+```
+
+```
+## [1] 0.2423883
+```
+
+
+
+---
+class: reduce-spacing
+
+###Gaussian Envelope
+We now want to find `\(\alpha'\)` so that `\(\alpha' \leq f(y)/g(y)\)`. This ensures that our envelope fulfills its requirements. We do not need to take normalizing constants into account - these are simply included in `\(\alpha'\)`. 
+&lt;br&gt;
+&lt;br&gt;
+The optimal value for `\(\alpha'\)` can be found by minimizing over the ratio between our target and our proposal density. Since we want to optimize `\(\sigma^2\)` over these values we find `\(\sigma^2\)` by:
+`$$\arg\max_{\sigma^2}(\min_{y} \log f(y)/g(y))$$`
+&lt;br&gt;
+We find `\(\sigma^2\)` as follows:
+&lt;br&gt;
+&lt;br&gt;
+
+``` r
+y_seq &lt;- seq(0,1, 0.001)
+sigma &lt;- function(s){
+  alpha_star &lt;- min(dnorm(y_seq, mu_opt, s)/tar_dens(y_seq))
+  return(-alpha_star)
+}
+sigma_opt &lt;- optimize(sigma, c(0,1))$minimum
+sigma_opt 
+```
+&lt;br&gt;
+
+```
+## [1] 0.06221936
+```
+
+
+
+---
+###Visualizing
+Sanity check - is `\(\alpha'f(y)\leq g(y)\)`?
+&lt;br&gt;
+
+
+
+``` r
+values &lt;- data.frame(y = test_y, 
+              values = dnorm(test_y, mean = mu_opt, sd = sigma_opt)- tar_dens(test_y) * alpha_s)
+values$values[values$values &lt; 0][1:5]
+```
+
+```
+## [1] -1.030931e-05 -2.654067e-05 -3.592862e-05 -3.845880e-05 -3.411709e-05
+```
+
+
+This is because we find `\(\alpha '\)` by taking the minimum over a finite sequence of y's.
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-11-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+
+---
+class: reduce-spacing
+
+###Implementation
+
+``` r
+rej_sample_slow &lt;- function(n, mu, sigma, alpha, dens) {
+  y &lt;- numeric(n)
+  rejection_count &lt;- 0
+  total &lt;- 0
+  
+  for (i in seq_len(n)) {
+    reject &lt;- TRUE
+    while (reject) {
+      y0 &lt;- rnorm(1, mean = mu, sd = sigma)
+      u &lt;- runif(1)
+      reject &lt;- u &gt; 1/(sqrt(2*pi*sigma)) * alpha * dens(y0) / 
+        dnorm(y0, mean = mu, sd = sigma)
+      
+      #Counting no of rejections 
+      if (reject) {
+        rejection_count &lt;- rejection_count + 1  
+        total &lt;- total + 1
+      } else {
+        total &lt;- total + 1
+      }
+    }
+    y[i] &lt;- y0
+  }
+  return(list(y = y, total_iter = total, rejections = rejection_count))
+}
+```
+
+---
+###Visualization
+We can now calculate an estimate of our true `\(\alpha\)`
+
+``` r
+y1 &lt;- rej_sample_slow(100000, mu_opt, sigma_opt, alpha_s, tar_dens)
+1 - y1$rejections/y1$total_iter
+```
+
+```
+## [1] 0.9889827
+```
+
+And visualize how a sample from our rejection sampler compares to the target density:
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-14-1.png" width="576" style="display: block; margin: auto;" /&gt;
+
+---
+###Log-affine Envelope
+Based on using the tangents on log-scale to bound the density. Works particularly well if the target density is either log-concave or log-convex.
+
+The log-affine proposal distribution is defined on an open interval `\(I \subset \mathbb{R}\)` partioned into disjoint sets `\(I_n = (z_{n-1}, z_n]\)` for `\(n = 1,...,m\)`. For suitable `\(a_i\)` and `\(b_i\)` define the piecewise affine function
+
+`$$V(y) = \sum_{i = 1}^m (a_iy + b_i) \mathbb{1}_{I_i}(y)$$`
+Now if the density on normal scale is finite `\(d = \int_{z_0}^{z_m} \exp (V(y)) dy &lt; \infty\)` we can use it to construct our proposal distribution:
+
+`$$g(x) = \frac{1}{d} \exp(V(x))$$`
+
+The distribution function for `\(g\)` is given by
+
+`$$G(x) = \int_{z_0}^x g(y) dy = \frac{1}{d} \int_{z_0}^x \exp(V(y)) dy$$`
+We can sample from this distribution by inverting it and evaluate the inverse in a uniform random variable `\(u \sim U(0,1)\)`. Computing the inverse of `\(G(x)\)` is not that hard, but requires us to keep our wits about.
+
+---
+###Implementation
+We have that
+`$$\log f(y)  \propto \log \prod_{i=1}^{100} \exp(yx_iz_i - \exp(yx_i))=y\sum_{i=1}^{100} x_i z_i-\sum_{i=1}^{100}\exp(yx_i)$$`
+We can then differentiate to see:
+.pull-left[
+`$$\frac{d \log f(y)}{d y} = \sum_{i=1}^{100} x_i z_i-\sum_{i=1}^{100}x_i\exp(yx_i)$$`
+]
+
+.pull-right[
+`$$\frac{d^2 \log f(y)}{d y^2} = -\sum_{i=1}^{100}x_i\exp(yx_i)$$`
+]
+
+As the `\(x_i\)` values are all positive and `\(\exp(yx_i)\geq 0\)` for all `\(y\)`, we see that the second derivative is negative for all `\(y\)`. This means that our target density is log concave. 
+
+---
+###Implementation
+Four our target density we see that
+`$$\frac{d f(y)}{dy} =\exp\left( \sum_{i=1}^{100}(x_iz_iy-\exp(x_iy))\right)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right) =f(y)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right)$$`
+This means that we simply get `\(a_j =  \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy_j))\)`.
+
+And `\(b\)` is simply defined to be `\(b_j = \log f(y_j) - a\cdot y_j\)`. 
+
+We implement these alongside functions for `\(z_j\)` and `\(H_j's\)` and use those to construct our rejection sampler.
+
+---
+###Visualization
+We calculate our rejection rate, and plot the density of our sample against the target density and the envelope.
+
+
+
+``` r
+y2 &lt;- aff_rej_n(1000, c( 0.2, 0.25, 0.3))
+y3 &lt;- aff_rej_n(1000, seq(0,0.35, length.out = 10))
+c(y2$alpha, y3$alpha)
+```
+
+```
+## [1] 0.7882118 0.9710290
+```
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-17-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+
+
+---
+###Structuring
+
+ - Computationally expensive to sample `\(U_n\)` every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time.
+ 
+ - Implement S3-sampler for each sampler.
+
+ - Chooses the Gaussian envelope numerically every time - employing the same method we did.
+ 
+ - The breakpoints for the log-affine envelope are chosen as an equidistant grid between 0 and 0.35, the number is set to 10 by default.
+ 
+ - Implemented `print` and `plot` method for easy comparison
+ 
+---
+###Breakpoints
+
+We saw earlier, that the log-affine envelope did not seem to perform that well. Idea is to increase the number of breakpoints, so that it can better approximate the target density. However, there will most likely be a tradeoff between rejection rate and how fast the sampler is. 
+&lt;br&gt;
+&lt;br&gt;
+We will test this by sampling 1000 values from the target density using the affine envelope, with breakpoints between 0 and 0.35 and the number of breakpoints ranging from 1 to 30.
+&lt;br&gt;
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-18-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+
+---
+###Comparison
+We can now compare the two samplers against eachother using `bench::press`.
+
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-19-1.png" width="1152" style="display: block; margin: auto;" /&gt;
+
+
+|expression |     min|  median|   itr.sec| mem_alloc|   gc.sec| n_itr| n_gc| total_time|
+|:----------|-------:|-------:|---------:|---------:|--------:|-----:|----:|----------:|
+|Gaussian   |  5.16ms|  5.48ms| 179.87671|  943.51KB| 3.670953|    98|    2|   544.82ms|
+|log_affine | 22.85ms| 24.25ms|  41.06507|    1.44MB| 6.685012|    86|   14|      2.09s|
+
+
+---
+###Optimization
+Most interesting for log-affine. We will start out by profiling to identify any bottlenecks.
+
+
+``` r
+profvis({
+  # Slopes
+a_i &lt;- function(x_i) tar_dens_log_difference(x_i) 
+
+# Intercepts
+b_i &lt;- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i
+
+# Interval points
+z_i &lt;- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)
+
+# R_i's
+r_i &lt;- function(as, bs, zs, n) {
+  1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
+}
+
+piece_lin_rejec_samp &lt;- function(N, ys) {
+  
+  # Calculating a's, b's, z's
+  as &lt;- sapply(ys, a_i, simplify = TRUE)
+  bs &lt;- mapply(FUN = b_i, ys, as)
+  n &lt;- length(bs)
+  zs &lt;- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)
+  
+  # Bookkeeping
+  # I_i integrals
+  R &lt;- r_i(as, bs, zs, n)
+  
+  # Distribution function (ish)
+  Q &lt;- c(0, cumsum(R))
+  
+  # Drawing from piecewise linear density and uniform
+  u0 &lt;- Q[n + 1] * runif(N)
+  u &lt;- runif(N)
+  
+  # Determine the interval that each point belongs to
+  geq_z &lt;-outer(u0, Q[1:n], FUN = function(y1, y2) y1 &gt; y2)
+  leq_z &lt;-outer(u0, Q[2:(n+1)], FUN = function(y1, y2) y1 &lt;= y2)
+  I &lt;- geq_z &amp; leq_z
+  
+  
+  x &lt;- numeric(N)
+  accept &lt;- logical(N)
+  for(i in 1:N){
+    # Finding the interval x_i belongs to
+    int &lt;- which(I[i,] == 1)
+    
+    # Taking the inverse cdf
+    x[i] &lt;- log((u0[i] - Q[int]) * as[int] * exp(- bs[int]) + exp(as[int] * zs[int])) / as[int]
+    
+    # Acceptance step
+    accept[i] &lt;- u[i] &lt;=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])
+  }
+  
+  return(x[accept])
+}
+  piece_lin_rejec_samp(10000, seq(0, 0.35, length.out = 10))
+})
+```
+
+<div class="profvis html-widget html-fill-item" id="htmlwidget-5d7361a095569a1d23ae" style="width:100%;height:600px;"></div>
+<script type="application/json" data-for="htmlwidget-5d7361a095569a1d23ae">{"x":{"message":{"prof":{"time":[1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,4,5,5,5,5,5,6,6,6,6,6,6,7,7,7,8,8,8,8,8,8,9,9,9,9,9,10,10,10,11,11,11,11,11,12,12,12,12,13,13,13,13,13,14,14,14,15,15,15,15,15,15,16,16,16,16,16,16,17,17,17,17,17,18,18,18,18,18],"depth":[2,1,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,52,51,50,49,48,47,46,45,44,43,42,41,40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,4,3,2,1,5,4,3,2,1,6,5,4,3,2,1,3,2,1,6,5,4,3,2,1,5,4,3,2,1,3,2,1,5,4,3,2,1,4,3,2,1,5,4,3,2,1,3,2,1,6,5,4,3,2,1,6,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1],"label":["piece_lin_rejec_samp(10000, seq(0, 0.35, length.out = 10))","piece_lin_rejec_samp","%in%","checkCall","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","cmp","cmpIndices","cmpSubsetDispatch","h","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpComplexAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpForBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","simplify2array","sapply","tar_dens","piece_lin_rejec_samp","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","isTRUE","which","piece_lin_rejec_samp","$.tbl_df","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","accept[i] <- u[i] <=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])","lapply","sapply","tar_dens","piece_lin_rejec_samp","int <- which(I[i,] == 1)","which","piece_lin_rejec_samp","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","simplify2array","sapply","tar_dens","piece_lin_rejec_samp","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","sapply","tar_dens","piece_lin_rejec_samp","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp"],"filenum":[1,1,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,1,1,null,null,null,1,1,null,null,null,null,1,1,null,1,1,null,null,null,null,1,1,1,null,null,1,1,1,1,1,null,null,null,1,1,null,null,1,1,null,null,null,1,1,null,1,1,null,null,null,null,1,1,null,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1],"linenum":[56,56,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,56,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,56,null,null,51,56,null,null,null,51,56,null,null,null,null,51,56,null,45,56,null,null,null,null,51,56,51,null,null,51,56,45,45,56,null,null,null,51,56,null,null,51,56,null,null,null,51,56,null,51,56,null,null,null,null,51,56,null,null,null,null,51,56,null,null,null,51,56,null,null,null,51,56],"memalloc":[105.7256851196289,105.7256851196289,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.0607376098633,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,106.3503799438477,111.1842346191406,111.1842346191406,111.1842346191406,111.1842346191406,112.1866302490234,112.1866302490234,112.1866302490234,112.1866302490234,112.1866302490234,113.1703796386719,113.1703796386719,113.1703796386719,113.1703796386719,113.1703796386719,113.1703796386719,113.76025390625,113.76025390625,113.76025390625,114.75732421875,114.75732421875,114.75732421875,114.75732421875,114.75732421875,114.75732421875,115.681770324707,115.681770324707,115.681770324707,115.681770324707,115.681770324707,116.5625228881836,116.5625228881836,116.5625228881836,117.4107513427734,117.4107513427734,117.4107513427734,117.4107513427734,117.4107513427734,118.2502212524414,118.2502212524414,118.2502212524414,118.2502212524414,119.0836868286133,119.0836868286133,119.0836868286133,119.0836868286133,119.0836868286133,107.3489761352539,107.3489761352539,107.3489761352539,108.388313293457,108.388313293457,108.388313293457,108.388313293457,108.388313293457,108.388313293457,109.3866577148438,109.3866577148438,109.3866577148438,109.3866577148438,109.3866577148438,109.3866577148438,110.4422607421875,110.4422607421875,110.4422607421875,110.4422607421875,110.4422607421875,111.4564819335938,111.4564819335938,111.4564819335938,111.4564819335938,111.4564819335938],"meminc":[0,0,0.335052490234375,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.289642333984375,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4.833854675292969,0,0,0,1.002395629882812,0,0,0,0,0.9837493896484375,0,0,0,0,0,0.589874267578125,0,0,0.9970703125,0,0,0,0,0,0.9244461059570312,0,0,0,0,0.8807525634765625,0,0,0.8482284545898438,0,0,0,0,0.8394699096679688,0,0,0,0.833465576171875,0,0,0,0,-11.73471069335938,0,0,1.039337158203125,0,0,0,0,0,0.9983444213867188,0,0,0,0,0,1.05560302734375,0,0,0,0,1.01422119140625,0,0,0,0],"filename":["<expr>","<expr>",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>","<expr>",null,null,"<expr>","<expr>","<expr>","<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"profvis({\n  # Slopes\na_i <- function(x_i) tar_dens_log_difference(x_i) \n\n# Intercepts\nb_i <- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i\n\n# Interval points\nz_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)\n\n# R_i's\nr_i <- function(as, bs, zs, n) {\n  1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))\n}\n\npiece_lin_rejec_samp <- function(N, ys) {\n  \n  # Calculating a's, b's, z's\n  as <- sapply(ys, a_i, simplify = TRUE)\n  bs <- mapply(FUN = b_i, ys, as)\n  n <- length(bs)\n  zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)\n  \n  # Bookkeeping\n  # I_i integrals\n  R <- r_i(as, bs, zs, n)\n  \n  # Distribution function (ish)\n  Q <- c(0, cumsum(R))\n  \n  # Drawing from piecewise linear density and uniform\n  u0 <- Q[n + 1] * runif(N)\n  u <- runif(N)\n  \n  # Determine the interval that each point belongs to\n  geq_z <-outer(u0, Q[1:n], FUN = function(y1, y2) y1 > y2)\n  leq_z <-outer(u0, Q[2:(n+1)], FUN = function(y1, y2) y1 <= y2)\n  I <- geq_z & leq_z\n  \n  \n  x <- numeric(N)\n  accept <- logical(N)\n  for(i in 1:N){\n    # Finding the interval x_i belongs to\n    int <- which(I[i,] == 1)\n    \n    # Taking the inverse cdf\n    x[i] <- log((u0[i] - Q[int]) * as[int] * exp(- bs[int]) + exp(as[int] * zs[int])) / as[int]\n    \n    # Acceptance step\n    accept[i] <- u[i] <=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])\n  }\n  \n  return(x[accept])\n}\n  piece_lin_rejec_samp(10000, seq(0, 0.35, length.out = 10))\n})","normpath":"<expr>"}],"prof_output":"C:\\Users\\birgi\\AppData\\Local\\Temp\\RtmpOAqvfk\\file72dc1fdc7a17.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+
+
+---
+###Optimization
+Based on the profiling, we can see that we spend some time in the loop. We have investigated two approaches:
+
+- Parallelization
+Seeing as we are performing independent operations, one approach is to parallelize the code. We will use `foreach` and `doParallel` to do this.
+
+- Implementing in `Rcpp`
+Another approach is to implement the code in `Rcpp`.
+
+
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"slideNumberFormat": "%current%",
+"highlightStyle": "github",
+"highlightLines": true,
+"highlightSpans": true,
+"ratio": "16:9",
+"countIncrementalSlides": true,
+"navigation": {
+"scroll": false
+}
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+// add `data-at-shortcutkeys` attribute to <body> to resolve conflicts with JAWS
+// screen reader (see PR #262)
+(function(d) {
+  let res = {};
+  d.querySelectorAll('.remark-help-content table tr').forEach(tr => {
+    const t = tr.querySelector('td:nth-child(2)').innerText;
+    tr.querySelectorAll('td:first-child .key').forEach(key => {
+      const k = key.innerText;
+      if (/^[a-z]$/.test(k)) res[k] = t;  // must be a single letter (key)
+    });
+  });
+  d.body.setAttribute('data-at-shortcutkeys', JSON.stringify(res));
+})(document);
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>

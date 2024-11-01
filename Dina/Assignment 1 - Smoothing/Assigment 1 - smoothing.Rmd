@@ -41,6 +41,7 @@ F12 <- log(infrared$F12)
 Creating some normally distributed testing data:
 
 ```{r}
+library(ggplot2)
 set.seed(123)
 x_test <- rnorm(1e4)
 ```

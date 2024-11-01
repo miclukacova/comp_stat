@@ -1,0 +1,558 @@
+---
+title: "Density Estimation - Topic 1"
+author: 
+- "Dina Gyberg Jensen (vbz248)"
+institute: "University of Copenhagen"
+date: '`r Sys.Date()`'
+output:
+  xaringan::moon_reader:
+    css: themer-new.css
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      highlightSpans: true
+      ratio: 16:9
+      countIncrementalSlides: true
+      navigation:
+        scroll: false
+---
+<style type="text/css">
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content > h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+</style>
+```{r, include=FALSE, eval = FALSE}
+rmarkdown::render('presentation.rmd')
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE}
+library(xaringanthemer)
+library(CSwR)
+style_mono_accent(
+ base_color = "#4f7942")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(microbenchmark)
+library(testthat)
+library(bench)
+library(tidyverse)
+library(profvis)
+library(bench)
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+library(CSwR)
+library(parallel)
+library(foreach)
+library(doParallel)
+knitr::opts_chunk$set(fig.retina = 2)
+theme_set(
+  theme_bw(base_size = 18) +  # Set base font size and family
+    theme(
+      text = element_text(size = 15),           # Adjust text size
+      axis.line = element_line(size = 4),       # Set axis line thickness (use `size` not `linewidth`)
+      panel.grid = element_line(size = 0.5)     # Set grid line thickness
+    )
+)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Themes and colors:
+my_color_scale <- scale_color_manual(
+   name = "Density estimator",
+  values = c("R_density" = "coral4", "bin_kern_dens" = "#4f7942", "AMISE" = "hotpink4", "CV" = "#4f7942")
+)
+
+my_theme <-   theme(
+    text = element_text(size = 16),  # Change the base text size
+    plot.title = element_text(size = 18),  # Title size
+    axis.title = element_text(size = 16),  # Axis titles size
+    axis.text = element_text(size = 14),  # Axis text size
+    legend.title = element_text(size = 18),  # Legend title size
+    legend.text = element_text(size = 16),  # Legend text size
+     line = element_line(linewidth = 4) +
+      theme_bw()
+  )
+```
+
+###Introduction
+
+Objective is to implement a kernel density estimator using the Epanechnikov kernel. The Epanechnikov kernel is defined as:
+
+$$
+K(x) = \frac{3}{4}(1-x^2)1_{\left[-1,1\right]}(x)
+$$
+And implement two different methods for bandwidth selection:
+ - AMISE
+ - Cross-validation
+As the selection of the bandwidth is highly important for the performance of the kernel density estimator.
+---
+###Kernel Density Estimation
+The starting point for kernel density estimation is
+$$P(X \in (x-h, x+h)) = \int_{x-h}^{x+h} f(u)_0du\approx 2hf_0(x)$$
+where $f_0(x)$ is the density function of the random variable $X$. Inverting this and applying the law of large numbers, we get the kernel density estimator for a bandwidth $h$:
+$$f_0(x)\approx \frac{1}{2h}P(X \in (x-h, x+h))\approx \frac{1}{2hN}\sum_{i=1}^N 1_{\left(-h, h\right)}(x_i) = \hat{f}_h(x)$$
+Where $x = x_1,...x_N$ are the observations.
+<br>
+Instead of a naive average we can apply a Kernel function to smooth the estimator, yielding the kernel density estimator
+$$\hat{f}_h(x) = \frac{1}{2Nh}\sum_{i=1}^N K\left(\frac{x-x_i}{h}\right)$$
+where $K$ is the kernel function.
+
+---
+class: reduce-spacing
+
+###Implementation of the Binned Kernel Density Estimator
+```{r}
+#Kernel function:
+kernel <- function(z) (abs(z) <= 1) * 3 / 4 * (1 - z^2) 
+#Function that calculates the number of observations in each bin:
+kern_bin <- function(x, l, u, B) {
+   w <- numeric(B)
+   delta <- (u - l) / (B - 1)
+   for (j in seq_along(x)) {
+     i <- floor((x[j] - l) / delta + 0.5) + 1
+     w[i] <- w[i] + 1
+   }
+   w / sum(w)
+}
+#Binned Kernel density estimator:
+kern_dens_bin <- function(x, h, m = 512, B, normalize = TRUE) {
+  #finding the range of the data, defining our gridpoints and y
+  rg <- range(x)
+  y <- numeric(m)
+  xx <- seq(rg[1] - 3 * h, rg[2] + 3 * h, length.out = m)
+  #Normalizing if relevant:
+  if(normalize){
+    h <- h * sqrt(5) #Variance of Epanechnikov kernel
+  }
+  #Calculating delta and finding the center points.
+  delta <- (rg[2] - rg[1]) / (B - 1)
+  cent_points <- seq((rg[1] + delta/2), (rg[2] + delta/2), len = B) 
+  #Envoking the kern_bin function to find the weights/n_j's
+  nj <- kern_bin(x, rg[1], rg[2], B)
+  
+  for (i in seq_along(xx)) {
+        y[i] <- mean(nj %*% (kernel((xx[i] - cent_points)/h)))/(h)
+  }
+  list(x = xx, y = y)
+}
+```
+
+
+
+---
+class: reduce-spacing
+
+###Test
+To test if our implementation is correct, we compare our density estimator with `density()` in base `R`. We simulate data from $\mathcal{N}(0.25, 2.4)$. We first employ the testthat package we set the tolerance to $e^{-3}$ and then plot the difference:
+```{r, echo = FALSE, warning=FALSE}
+  set.seed(30102024)
+  x <- rnorm(1000, 0.25, 2.4)
+  h <- 0.5
+  B <- 1000
+```
+
+
+```{r}
+test_that("Test of the binned kernel density estimator against R's density() function",
+{
+  kde <- kern_dens_bin(x, h, B = B)
+  kde_base <- density(x, bw = h, n = 512, kernel = "epanechnikov")
+  expect_equal(kde$x, kde_base$x, tolerance = 1e-3)
+  expect_equal(kde$y, kde_base$y, tolerance = 1e-3)
+})
+```
+```{r, echo =FALSE}
+kde <- kern_dens_bin(x, h, B = B)
+kde_base <- density(x, bw = h, n = 512, kernel = "epanechnikov")
+```
+
+```{r, echo = FALSE, fig.align='center', fig.width=6, fig.height=3.5}
+#Difference between R_density and our kernel density estimator
+diff_df <- data.frame(x = kde$x, y = kde$y - kde_base$y)
+ggplot(diff_df, aes(x = x, y = y)) +
+  geom_line(color = "#4f7942") +
+  labs(title = "Difference between our KDE and R's density()",
+       x = "x", y = "Difference") +
+  theme_bw()
+```
+
+---
+###Test
+We also compare them visually for two different simulated datasets $\mathcal{N}(0.25,5)$ and $t$-distribution with 3 degrees of freedom. We set the bandwidth to 1.5 and 0.7 respectively.
+```{r, echo = FALSE, warning = FALSE}
+set.seed(30102024)
+x <- rnorm(1000, 0.25, 2.4)
+h <- 1.5
+B <- 1000
+kde_n <- kern_dens_bin(x, h, B = B)
+kde_base_n <- density(x, bw = h, n = 512, kernel = "epanechnikov")
+
+set.seed(30102024)
+y <- rt(1000, 3)
+h_e <- 0.7
+kde_e <- kern_dens_bin(y, h_e, B = B)
+kde_base_e <- density(y, bw = h_e, n = 512, kernel = "epanechnikov")
+
+n_df <- data.frame(x = kde_n$x, y = kde_n$y, y_base = kde_base_n$y)
+e_df <- data.frame(x = kde_e$x, y = kde_e$y, y_base = kde_base_e$y)
+```
+
+```{r, echo = FALSE, warning  = FALSE, fig.align='center', fig.width=16, fig.height=6}
+p1 <- ggplot(n_df, aes(x = x)) +
+  geom_line(aes(y = y_base, color = "R_density"), size = 1) +
+  geom_line(aes(y = y, color = "bin_kern_dens"), size = 1) +
+  geom_histogram(data = data.frame(x = x), aes(x = x, y = ..density..), fill = "coral", color = "coral1", alpha = 0.2, bins = 40) +
+  labs(title = "Comparison of our KDE and R's density() for N(0.25,5)",
+       x = "x", y = "Density") +
+  my_color_scale +
+  theme_bw()
+
+p2 <- ggplot(e_df, aes(x = x)) +
+  geom_line(aes(y = y_base, color = "R_density"), size = 1) +
+  geom_line(aes(y = y, color = "bin_kern_dens"), size = 1) +
+  geom_histogram(data = data.frame(x = y), aes(x = x, y = ..density..), fill = "coral", color = "coral1", alpha = 0.2, bins = 40) +
+  labs(title = "Comparison of our KDE and R's density() for t-dist.",
+       x = "x", y = "Density") +
+  my_color_scale +
+  theme_bw()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+---
+class: reduce-spacing
+
+###BW Selection - AMISE
+Based on minimizing the MISE asymptotically. The MISE is given as
+$$MISE_h(x)=\int E\left(\hat{f}_h(x)-f_0(x)\right)^2dx=\int V\left(\hat{f}_h(x) \right)dx + \int bias\left(\hat{f}_h(x) \right)^2dx$$
+Illustratetes that there is a tradeoff between the bias and the variance. The asymptotic MISE - the AMISE is given by:
+$$AMISE(h)=\frac{h^4}{36}||f_0''||_2^2+\frac{1}{2Nh}$$
+Differentiating and setting equal to 0 yields the optimal bandwidth. (Works well as AMISE goes to $\infty$ for $h\rightarrow 0$ and $h\rightarrow \infty$):
+$$h_{N}=\left(\frac{9}{2||f_0''||_2^2}\right)^{1/5}N^{-1/5}$$
+But we need an estimate for $||f_0''||_2^2$ - this is done using a pilot estimate $\tilde{f}$. This however, depends in the bandwidth. But here we will just find a pilot bandwidth for r using Silverman's rule of thumb.
+$$||\tilde{f}''||_2^2=\frac{1}{n^2r^6}\sum_{i=1}^N\sum_{j=1}^N\int H''\left(\frac{x-x_j}{r}\right)H''\left(\frac{x-x_i}{r}\right)$$
+---
+###Cross-validation
+The cross-validation method is based on k-fold cross-validation. I have chosen to maximize the loglikelihood, to compare the AMISE to a bandwidth selection that is completely different. 
+Let $I_1,...,I_k$ be a partition of the index set $\{1,...,N\}$ and define $I^{-i}$ as the set of indices where a given $i$ is not contained. And define $N_i=|I^{-i}|$ i.e the number of indices in $I^{-i}$. Now the kernel density estimate of the $i$'th fold is given by:
+$$\hat{f}_h^{-i}= \frac{1}{N_ih}\sum_{j\in I^{-i}}K\left(\frac{x-x_j}{h}\right)$$
+The loglikelihood is then given by:
+$$l_{CV}(h) = \sum_{i=1}^k\hat{f}_h^{-i}$$
+And thus the optimal bandwidth is chosen to be:
+$$\hat{h}_{CV} = \arg\max_h l_{CV}(h)$$
+In practice we are only examining a grid of $h$-values. Furthermore, the indices for the $I$-partition are sampled randomly with replacement. 
+
+---
+class: reduce-spacing
+
+###Implementation
+
+- Implemented both bandwidth estimators as functions.
+
+- Then implemented an S3 object that can be used for density estimation.
+
+- It takes $x$ as input, as well as the bandwidth selection method (and the kernel).
+
+- The object has a `plot` method that plots the density estimator, and a `print` method.
+
+```{r, echo=F, warning = FALSE}
+source("~/comp_stat/Dina/Assignment 1 - Smoothing/Source_code.R", local = FALSE)
+```
+
+```{r, results = "hide"}
+kernel_density(x = rnorm(1000, 0, 1), h = "CV", B = 1000, m = 512, k = 10)
+kernel_density(x = rnorm(1000, 0, 1), h = "AMISE", B = 1000)
+```
+
+.pull-left[
+CV
+```{r, echo =F}
+k1 <- kernel_density(x = rnorm(1000, 0, 1), h = "CV", B = 1000, m = 512, k = 10)
+k1 
+```
+
+]
+
+
+.pull-right[
+AMISE
+```{r, echo=F}
+k2 <- kernel_density(x = rnorm(1000, 0, 1), h = "AMISE", B = 1000)
+k2
+```
+
+]
+---
+###Testing our bw selection methods
+We test our kernel estimators on the simulated data from $\mathcal{N}(0.25,2.4)$ and compare them with the `density()` function in base `R`.
+```{r, echo=F, fig.align='center', fig.width=8, fig.height=5}
+x_norm <- rnorm(1000, 0.25, 2.4)
+
+norm_am <- kernel_density(x = x_norm, h = "AMISE", B = 1000, m = 512, k = 10)
+norm_cv <- kernel_density(x = x_norm, h = "CV", B = 1000, m = 512, k = 10)
+norm_R <- density(x_norm, bw = "nrd0", n = 512, kernel = "epanechnikov")
+
+
+plot_am_n <- plot_data(norm_am)
+plot_cv_n <- plot_data(norm_cv)
+plot_R_n <- data.frame(x = norm_R$x, y = norm_R$y)
+
+#Plotting the results
+w <- ggplot() +
+  geom_histogram(data = data.frame(x = x_norm), aes(x = x, y = ..density..), fill = "coral", color = "coral1", alpha = 0.2, bins = 40) +
+  geom_line(data = plot_am_n, aes(x = x, y = y, color = "AMISE"), size = 1) +
+  geom_line(data = plot_R_n, aes(x = x, y = y, color = "R_density"), size = 1) +
+  geom_line(data = plot_cv_n, aes(x = x, y = y, color = "CV"), size = 1) +
+  labs(title = "Waiting time",
+       x = "x", y = "Density") +
+  my_color_scale +
+  my_theme
+w
+```
+
+
+```{r, echo=FALSE}
+library(tidyr)
+library(knitr)
+
+# Original data frame
+h_values <- data.frame(
+  method = c( "AMISE", "CV"),
+  h = c(norm_am$density$h, norm_cv$density$h)
+)
+
+knitr::kable(h_values)
+
+```
+
+
+---
+###Testing
+We also test our kernel estimators on the `faithful` dataset, this contains the durations of eruptions of the Old Faithful Geyser along with the waiting time in between eruptions. We compare the kernel density estimator with the `density()` function in base `R`.
+```{r, echo=F, warning = FALSE, fig.align='center', fig.width=16, fig.height=5}
+wait_am <- kernel_density(x = faithful$waiting, h = "AMISE", B = 1000, m = 512, k = 10)
+wait_cv <- kernel_density(x = faithful$waiting, h = "CV", B = 1000, m = 512, k = 10)
+wait_R <- density(faithful$waiting, bw = "nrd0", n = 512, kernel = "epanechnikov")
+erupt_am <- kernel_density(x = faithful$eruptions, h = "AMISE", B = 1000, m = 512, k = 10)
+erupt_cv <- kernel_density(x = faithful$eruptions, h = "CV", B = 1000, m = 512, k = 10)
+erupt_R <- density(faithful$eruptions, bw = "nrd0", n = 512, kernel = "epanechnikov")
+
+
+plot_am <- plot_data(wait_am)
+plot_cv <- plot_data(wait_cv)
+plot_R <- data.frame(x = wait_R$x, y = wait_R$y)
+wait <- data.frame(x = faithful$waiting)
+
+plot_am_e <- plot_data(erupt_am)
+plot_cv_e <- plot_data(erupt_cv)
+plot_R_e <- data.frame(x = erupt_R$x, y = erupt_R$y)
+erupt <- data.frame(x = faithful$eruptions)
+
+#Plotting the results
+w <- ggplot() +
+  geom_histogram(data = wait, aes(x = x, y = ..density..), fill = "coral", color = "coral1", alpha = 0.2, bins = 40) +
+  geom_line(data = plot_am, aes(x = x, y = y, color = "AMISE"), size = 1) +
+  geom_line(data = plot_R, aes(x = x, y = y, color = "R_density"), size = 1) +
+  geom_line(data = plot_cv, aes(x = x, y = y, color = "CV"), size = 1) +
+  labs(title = "Waiting time",
+       x = "x", y = "Density") +
+  my_color_scale +
+  my_theme +
+  theme(legend.position = "none")
+
+
+e <- ggplot() +
+  geom_histogram(data = erupt, aes(x = x, y = ..density..), fill = "coral", color = "coral1", alpha = 0.2, bins = 40) +
+  geom_line(data = plot_am_e, aes(x = x, y = y, color = "AMISE"), size = 1) +
+  geom_line(data = plot_R_e, aes(x = x, y = y, color = "R_density"), size = 1) +
+  geom_line(data = plot_cv_e, aes(x = x, y = y, color = "CV"), size = 1) +
+  labs(title = "Eruptions",
+       x = "x", y = "Density") +
+  my_color_scale +
+  my_theme +
+  theme(legend.position = "none")
+
+legend_plot <- ggplot() +
+  geom_histogram(data = erupt, aes(x = x, y = ..density..), fill = "coral", color = "coral1", alpha = 0.2, bins = 40) +
+  geom_line(data = plot_am_e, aes(x = x, y = y, color = "AMISE"), size = 1) +
+  geom_line(data = plot_R_e, aes(x = x, y = y, color = "R_density"), size = 1) +
+  geom_line(data = plot_cv_e, aes(x = x, y = y, color = "CV"), size = 1) +
+  labs(title = "Eruptions",
+       x = "x", y = "Density") +
+  my_color_scale +
+  my_theme
+
+legend_l <- cowplot::get_legend(legend_plot)
+
+grid.arrange(w, e, legend_l, ncol = 3, widths = c(3, 3, 1))
+```
+
+```{r, echo=FALSE}
+library(tidyr)
+library(knitr)
+
+# Original data frame
+h_values <- data.frame(
+  dataset = c("Waiting", "Waiting", "Eruptions", "Eruptions"),
+  method = c("AMISE", "CV", "AMISE", "CV"),
+  h = c(wait_am$density$h, wait_cv$density$h, erupt_am$density$h, erupt_cv$density$h)
+)
+
+# Reshape the data so methods are columns
+h_values_wide <- pivot_wider(h_values, names_from = method, values_from = h)
+
+# Display the table with knitr::kable
+knitr::kable(h_values_wide,
+             col.names = c("Dataset", "AMISE", "CV"),
+             align = c("l", "c", "c"))
+
+```
+
+---
+###CV Bandwidth selection
+By construction, the CV bandwidth selection is more computationally expensive. So we investigate whether it is possible to optimize it. First we profile to identify the bottlenecks
+```{r, echo = FALSE}
+profvis({
+  cv_bw_M <- function(x, k = 10, h = seq(0.03, 10, by = 0.01)){
+    #Partition
+    n <-length(x)
+    groups <- sample(rep(1:k, length.out = n))
+    
+    #Number of observations in each group:
+    N <- sapply(seq(1,k), function(x) sum (groups == x), simplify = T)
+    
+    #bandwidth log likelihoods:
+    bw_l <- numeric(length(h))
+    
+    for (j in seq_along(h)) {
+      #kernel density estimates:
+      f_hat_i <- numeric(length(x))
+      
+      #Calculating CV density estimates
+      for (i in seq_along(x)) {
+        k <- groups[i]
+        x_m_i <- x[groups != k]
+        condition <- abs((x[i] - x_m_i)/h[j]) <= 1
+        f_hat_i[i] <- 3 / (N[k] * 4 * h[j]) * sum((1-(x[i] - x_m_i)^2/h[j]^2) * condition)
+        #if(any(f_hat_i < 0 )) {print(f_hat_i)} #Check for negative values of f_hat
+      }
+      
+      #Calculating log likelihood
+      bw_l[j] <- sum(log(f_hat_i))
+      #print(c(bw_l[j], h[j]))
+      
+    }
+  }
+  cv_bw_M(x = rnorm(1000, 0, 1), k = 10, h = seq(0.03, 10, by = 0.01))
+})
+```
+
+
+---
+class: reduce-spacing
+
+###Optimizing
+- Vectorizing
+Vectorizing the inner `for_loop` in the `cv_bw_M` function. We can do this by creating a matrix of the $\frac{(x- x_i)}{h}$ values, then applying the kernel function to the entire matrix and using the fast `colSums`. This is done as follows
+```{r, eval = FALSE}
+    for (i in 1:k) {
+      # Number of indices not in group i
+      N_i <- length(x[group != i])
+      # Creating a matrix consisting of all points (x_i - x_j)/h
+      x_matrix <- 1 / h[j] * outer(x[group != i], x[group == i], "-")
+      # Evaluating the kernel in each point
+      kerns <- kernel(x_matrix)
+      # Summing the kernel values over columns
+      kern_sums <- colSums(kerns)
+      
+      # Calculating f_hat for the given group
+      f_hat_i <- 1 / (h[j] * N_i) * kern_sums
+```
+
+
+ - Implementing in Rcpp
+Another approach is to carry out the calculations in C++ using `Rcpp`. I have chosen to implement the two inner loops along with the kernel function in C++. I have used the Armadillo package, as we are dealing with vectorized operations. 
+
+
+- Parallelizing 
+A last approach is to parallelize the for loop over `h` in the `bw_cv_vec` function. This is done using the `foreach` and `doParallel` packages for Windows. 
+
+---
+class: reduce-spacing
+
+###Comparing Perfomance
+We now want to see if our optimizations have had any effect on the performance. We use the `bench` package to compare the performance of the three functions on a sample of 500 from $\mathcal{N}(0,1)$. 
+```{r, echo = FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.width=8, fig.height=4}
+#Creating the benchmark
+bm <- bench::mark(
+  Naive = cv_bw_M(x = rnorm(100, 0, 1), k = 10, h = seq(0.03, 5, by = 0.1)),
+  Vectorized = bw_cv_vec(x = rnorm(100, 0, 1), k = 10, h = seq(0.03, 5, by = 0.1)),
+  Rcpp = bw_cv_rcpp(x = rnorm(100, 0, 1), k = 10, h = seq(0.03, 5, by = 0.1)),
+  Parallelized = bw_cv_vec_parallel(x = rnorm(100, 0, 1), k = 10, h = seq(0.03, 5, by = 0.1)),
+  iterations = 100,
+  check = FALSE
+)
+plot_bm <- plot(bm)
+plot_bm + scale_color_manual(values = c("none" = "#4f7942", "level0" = "coral2", "level1" = "steelblue", "level2" = "hotpink3")) 
+```
+
+```{r, echo = FALSE}
+knitr::kable(data.frame(expression = c('Naive', 'Vectorized', 'Rcpp', 'Parallalelized'), bm[,2:9]))
+```
+
+---
+###Comparing Performance
+Further investigating performance by using the `bench` package to see how the functions perform for larger sample sizes. They are tested on $(2^3,...,2^{10})$ with 5 iterations for each sample size.
+
+```{r, echo = FALSE, message = FALSE, warning=FALSE, fig.align='center', fig.width=11, fig.height=7}
+#Doing it using bench::press to see what happens with values of n from 2^3 to 2^10
+n_values <- 2^(3:10)
+
+bm_l <- bench::press(
+  n = n_values,
+  {
+    bench::mark(
+      Naive  = cv_bw_M(x = rnorm(n, 0, 1), k = 10, h = seq(0.03, 5, by = 0.1)),
+      Vectorized = bw_cv_vec(x = rnorm(n, 0, 1), k = 10, h = seq(0.03, 5, by = 0.1)),
+      Rcpp = bw_cv_rcpp(x = rnorm(n, 0, 1), k = 10, h = seq(0.03, 5, by = 0.1)),
+      Parallelized = bw_cv_vec_parallel(x = rnorm(n, 0, 1), k = 10, h = seq(0.03, 5, by = 0.1)),
+      iterations = 5,
+      check = FALSE
+    )
+  }
+)
+
+# Convert to a usable format for ggplot2
+plot_data <- bm_l %>%
+  mutate(
+    expr = as.character(expression),  # Ensure expr is character for color mapping
+    median = as.numeric(median),
+    n = as.numeric(n)  # Convert n for x-axis scale
+  )
+
+# Create the plot
+ggplot(plot_data, aes(x = n, y = median, color = expr)) +
+  geom_point() +
+  geom_line() +
+  scale_y_log10() +  # Log scale for better readability
+  scale_color_manual(
+    values = c("Naive" = "#4f7942", "Vectorized" = "coral3", 
+               "Rcpp" = "steelblue", "Parallelized" = "hotpink3")
+  ) +
+  labs(x = "n values", y = "Time (ms) - logscale", color = "Method") +
+  theme_bw() +
+  ggtitle("Benchmarking the Different Implementations") + my_theme
+```
+
+

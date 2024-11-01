@@ -1,0 +1,679 @@
+---
+title: "Rejection Sampling - Topic 2"
+author: 
+- "Dina Gyberg Jensen (vbz248)"
+institute: "University of Copenhagen"
+date: '07-09-2024'
+output:
+  xaringan::moon_reader:
+    css: themer-new.css
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      highlightSpans: true
+      ratio: 16:9
+      countIncrementalSlides: true
+      navigation:
+        scroll: false
+---
+<style type="text/css">
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content > h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+</style>
+```{r, include=FALSE, eval = FALSE}
+rmarkdown::render('presentation.rmd')
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE}
+library(xaringanthemer)
+library(CSwR)
+style_mono_accent(
+ base_color = "#4f7942")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(microbenchmark)
+library(testthat)
+library(bench)
+library(tidyverse)
+library(profvis)
+library(bench)
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+library(CSwR)
+library(parallel)
+library(foreach)
+library(doParallel)
+knitr::opts_chunk$set(fig.retina = 2)
+theme_set(
+  theme_bw(base_size = 18) +  # Set base font size and family
+    theme(
+      text = element_text(size = 15),           # Adjust text size
+      axis.line = element_line(size = 4),       # Set axis line thickness (use `size` not `linewidth`)
+      panel.grid = element_line(size = 0.5)     # Set grid line thickness
+    )
+)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Themes and colors:
+my_color_scale <- scale_color_manual(
+   name = "Density estimator",
+  values = c("R_density" = "coral4", "bin_kern_dens" = "#4f7942", "AMISE" = "hotpink4", "CV" = "#4f7942")
+)
+base <- "#4f7942"
+my_theme <- theme_bw() + 
+  theme(
+    text = element_text(size = 16),           # Change the base text size
+    plot.title = element_text(size = 18),     # Title size
+    axis.title = element_text(size = 16),     # Axis titles size
+    axis.text = element_text(size = 14),      # Axis text size
+    legend.title = element_text(size = 18),   # Legend title size
+    legend.text = element_text(size = 16),    # Legend text size
+    
+    # Customize only the axis lines' thickness
+    axis.line = element_line(linewidth = 1),   # Set to a smaller linewidth for axis
+  )
+
+```
+
+###Introduction
+
+Obejctive is to sample from the density 
+$$f(y)\propto\prod_{i=1}^{100}\exp(yz_ix_i-\exp(yx_i)), \quad y\geq0$$
+Where $(x_i,z_i)$ are pairs from the Poisson dataset. 
+<br>
+This will be done using rejection sampling for two different kinds of envelopes:
+
+ - Gaussian envelope 
+ - log-affine envelope.
+
+
+---
+###The Density
+Note that we can rewrite the density, and this is how we will implement it.
+$$f(y) = \exp(\sum_{i=1}^{100}yx_iz_i - \exp(yx_i)) = \exp (y\sum_{i=1}^{100} x_i z_i - \sum_{i=1}^{100}e^{yx_i})+1$$
+
+The unscaled density looks as follows. Note that it visually appears to be fairly symmetric.
+<br>
+<br>
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.width=7.5, fig.height=4}
+#Getting data
+library(readr)
+poisson_data <- read_csv("C:/Users/birgi/Documents/comp_stat/Dina/Assignment 2 - Rejection sampling/poisson.csv")
+zx <- sum(poisson_data$x*poisson_data$z)
+#Defining the density function:
+tar_dens <- function(y){
+  sapply(y, function(y) exp(y * zx - sum(exp(y*poisson_data$x))))
+}
+
+# Generate a sequence of y values
+y_vals <- seq(0, 1, length.out = 100)
+product_vals <- tar_dens(y_vals)
+
+# Create a data frame for ggplot
+product_df <- data.frame(y = y_vals, ProductValue = product_vals)
+
+# Plot using ggplot2
+ggplot(product_df, aes(x = y, y = ProductValue)) +
+  geom_line(color = "#4f7942", size = 1) +
+  labs(x = "y", y = "f(y)", title = "Density") +
+  my_theme
+```
+
+---
+###Rejection Sampling
+We have target density $f(y)$ and want to sample from it using a proposal density $g(y)$, which is easier to sample from.
+<br>
+Let $Y_1,Y_2,...$ be iid samples from the proposal density and let $U_1,U_2,...$ be iid uniformly distributed on $(0,1)$ and independent of the $Y_n$'s. Define:
+<br>
+$$\sigma = \inf\{ n\geq 1|U_n\leq \alpha f(X_n)/g(X_n) \} \quad  \alpha \in (0,1]$$
+It can be shown that the distribution of $Y_\sigma$ has density $f(y)$, which is why rejections sampling works.
+<br>
+<br>
+It is in practice carried out by sampling independent pairs $(Y_n,U_n)$ and then rejecting them whenever 
+<br>
+$$U_n>\alpha f(Y_n)/g(Y_n)$$
+The trick is to find a good proposal distribution.
+
+---
+###Gaussian Envelope
+We need to find $(\mu,\sigma)$ such that $\mathcal{N}(\mu,\sigma)$ approximates $f(y)$ as well as possible.
+<br>
+<br>
+As we saw that $f(y)$ appears to be fairly symmetrical, we will choose the mean of the Gaussian envelope to be $\mu = \max_y f(y)$. We find it using `optim`.
+<br>
+
+```{r, resuls='hide', warning=FALSE, message=FALSE}
+mu_opt <- optimize(function(y) - tar_dens(y), interval = c(0, 1))$minimum
+mu_opt
+```
+
+
+
+---
+class: reduce-spacing
+
+###Gaussian Envelope
+We now want to find $\alpha'$ so that $\alpha' \leq f(y)/g(y)$. This ensures that our envelope fulfills its requirements. We do not need to take normalizing constants into account - these are simply included in $\alpha'$. 
+<br>
+<br>
+The optimal value for $\alpha'$ can be found by minimizing over the ratio between our target and our proposal density. Since we want to optimize $\sigma^2$ over these values we find $\sigma^2$ by:
+$$\arg\max_{\sigma^2}(\min_{y} \log f(y)/g(y))$$
+<br>
+We find $\sigma^2$ as follows:
+<br>
+<br>
+```{r, results='hide'}
+y_seq <- seq(0,1, 0.001)
+sigma <- function(s){
+  alpha_star <- min(dnorm(y_seq, mu_opt, s)/tar_dens(y_seq))
+  return(-alpha_star)
+}
+sigma_opt <- optimize(sigma, c(0,1))$minimum
+sigma_opt 
+```
+<br>
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+sigma_opt 
+```
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+alpha_s <- -optimize(sigma, c(0,1))$objective
+```
+
+---
+###Visualizing
+Sanity check - is $\alpha'f(y)\leq g(y)$?
+<br>
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+test_y <- seq(0, 1, length.out = 6999)
+```
+
+```{r, warning=FALSE, message=FALSE}
+values <- data.frame(y = test_y, 
+              values = dnorm(test_y, mean = mu_opt, sd = sigma_opt)- tar_dens(test_y) * alpha_s)
+values$values[values$values < 0][1:5]
+```
+
+
+This is because we find $\alpha '$ by taking the minimum over a finite sequence of y's.
+
+```{r, echo = FALSE, fig.align='center', fig.width= 16, fig.height=4.5}
+# Calculate tar_dens for each y in y_seq
+tar_density <- alpha_s * tar_dens(y_seq)  
+
+# Calculate the standard normal density for each y in y_seq
+normal_density <- dnorm(y_seq, mean = mu_opt, sd = sigma_opt)
+
+# Combine the data into a data frame for plotting
+density_data <- data.frame(
+  y = y_seq,
+  tar_density = tar_density,
+  normal_density = normal_density
+)
+
+# Plot using ggplot2
+p1 <- ggplot(density_data, aes(x = y)) +
+  geom_line(aes(y = tar_density, color = "Target Density"), size = 1.2) +  # Tar density
+  geom_line(aes(y = normal_density, color = "Standard Normal"), linetype = "dashed", size = 1.2) +  # Standard normal density
+  labs(title = expression(paste("Target Density vs ", N(mu, sigma^2))),
+       x = "y",
+       y = "Density") +
+  scale_color_manual(values = c("Target Density" = "coral3", "Standard Normal" = base)) +  # Color settings
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  my_theme
+
+p2 <- ggplot(values, aes(x = y)) +
+  geom_line(aes(y = values), color = base, size = 1.2)+
+    labs(title = "Difference Between Target Density and Envelope",
+       x = "y",
+       y = "difference") +
+  my_theme
+
+grid.arrange(p1, p2, ncol = 2, widths = c(2, 1.75))
+```
+
+---
+class: reduce-spacing
+
+###Implementation
+```{r}
+rej_sample_slow <- function(n, mu, sigma, alpha, dens) {
+  y <- numeric(n)
+  rejection_count <- 0
+  total <- 0
+  
+  for (i in seq_len(n)) {
+    reject <- TRUE
+    while (reject) {
+      y0 <- rnorm(1, mean = mu, sd = sigma)
+      u <- runif(1)
+      reject <- u > 1/(sqrt(2*pi*sigma)) * alpha * dens(y0) / 
+        dnorm(y0, mean = mu, sd = sigma)
+      
+      #Counting no of rejections 
+      if (reject) {
+        rejection_count <- rejection_count + 1  
+        total <- total + 1
+      } else {
+        total <- total + 1
+      }
+    }
+    y[i] <- y0
+  }
+  return(list(y = y, total_iter = total, rejections = rejection_count))
+}
+```
+
+---
+###Visualization
+We can now calculate an estimate of our true $\alpha$
+```{r}
+y1 <- rej_sample_slow(100000, mu_opt, sigma_opt, alpha_s, tar_dens)
+1 - y1$rejections/y1$total_iter
+```
+
+And visualize how a sample from our rejection sampler compares to the target density:
+```{r, echo=FALSE, warning=FALSE, fig.align='center', fig.width= 8, fig.height=5}
+samp <- data.frame(y = y1$y)
+
+ggplot() +
+  geom_histogram(aes(x = samp$y, y = ..density..), bins = 70, fill = "coral", alpha = 0.2, color = "coral3") +
+  geom_line(data = density_data, aes(x = y, y = tar_density), color = base, size = 1.2) +
+  labs(title = "Rejection Sampling vs Target Density",
+       x = "Values",
+       y = "Density") +
+  my_theme
+
+```
+
+---
+###Log-affine Envelope
+Based on using the tangents on log-scale to bound the density. Works particularly well if the target density is either log-concave or log-convex.
+
+The log-affine proposal distribution is defined on an open interval $I \subset \mathbb{R}$ partioned into disjoint sets $I_n = (z_{n-1}, z_n]$ for $n = 1,...,m$. For suitable $a_i$ and $b_i$ define the piecewise affine function
+
+$$V(y) = \sum_{i = 1}^m (a_iy + b_i) \mathbb{1}_{I_i}(y)$$
+Now if the density on normal scale is finite $d = \int_{z_0}^{z_m} \exp (V(y)) dy < \infty$ we can use it to construct our proposal distribution:
+
+$$g(x) = \frac{1}{d} \exp(V(x))$$
+
+The distribution function for $g$ is given by
+
+$$G(x) = \int_{z_0}^x g(y) dy = \frac{1}{d} \int_{z_0}^x \exp(V(y)) dy$$
+We can sample from this distribution by inverting it and evaluate the inverse in a uniform random variable $u \sim U(0,1)$. Computing the inverse of $G(x)$ is not that hard, but requires us to keep our wits about.
+
+---
+###Implementation
+We have that
+$$\log f(y)  \propto \log \prod_{i=1}^{100} \exp(yx_iz_i - \exp(yx_i))=y\sum_{i=1}^{100} x_i z_i-\sum_{i=1}^{100}\exp(yx_i)$$
+We can then differentiate to see:
+.pull-left[
+$$\frac{d \log f(y)}{d y} = \sum_{i=1}^{100} x_i z_i-\sum_{i=1}^{100}x_i\exp(yx_i)$$
+]
+
+.pull-right[
+$$\frac{d^2 \log f(y)}{d y^2} = -\sum_{i=1}^{100}x_i\exp(yx_i)$$
+]
+
+As the $x_i$ values are all positive and $\exp(yx_i)\geq 0$ for all $y$, we see that the second derivative is negative for all $y$. This means that our target density is log concave. 
+
+---
+###Implementation
+Four our target density we see that
+$$\frac{d f(y)}{dy} =\exp\left( \sum_{i=1}^{100}(x_iz_iy-\exp(x_iy))\right)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right) =f(y)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right)$$
+This means that we simply get $a_j =  \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy_j))$.
+
+And $b$ is simply defined to be $b_j = \log f(y_j) - a\cdot y_j$. 
+
+We implement these alongside functions for $z_j$ and $H_j's$ and use those to construct our rejection sampler.
+
+---
+###Visualization
+We calculate our rejection rate, and plot the density of our sample against the target density and the envelope.
+```{r,echo=FALSE, warning=FALSE, message=FALSE}
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment 2 - Rejection sampling/Soure_code.R")
+```
+
+```{r}
+y2 <- aff_rej_n(1000, c( 0.2, 0.25, 0.3))
+y3 <- aff_rej_n(1000, seq(0,0.35, length.out = 10))
+c(y2$alpha, y3$alpha)
+```
+
+```{r, echo=FALSE, warning=FALSE, fig.align='center', fig.width= 16, fig.height=5}
+samp <- data.frame(y = y2$x)
+samp2 <- data.frame(y = y3$x)
+
+# Calculate the affine variables based on the breakpoints
+breakpoints <- c(0.2, 0.25, 0.3)
+affine_params <- affine_var(breakpoints)
+a <- affine_params$a
+b <- affine_params$b
+z <- affine_params$z  # Assuming z has segment boundaries
+
+breakpoints2 <- seq(0, 0.35, length.out = 10)
+affine_params2 <- affine_var(breakpoints2)
+a2 <- affine_params2$a
+b2 <- affine_params2$b
+z2 <- affine_params2$z  # Assuming z has segment boundaries
+
+
+# Define the range of y values for the plot
+y_vals <- seq(0,5, length.out = 500)
+
+
+# Initialize a vector to hold the affine envelope values
+affine_envelope <- numeric(length(y_vals))
+affine_envelope2 <- numeric(length(y_vals))
+
+# Loop through each segment based on z
+for (i in seq_along(z)[-length(z)]) {
+  # Determine indices in y_vals that fall within the current segment
+  segment_indices <- which(y_vals >= z[i] & y_vals < z[i + 1])
+  
+  # Calculate affine values for this segment using the corresponding a[i] and b[i]
+  affine_envelope[segment_indices] <- exp(a[i] * y_vals[segment_indices] + b[i]) * alpha_s
+}
+
+for (i in seq_along(z2)[-length(z2)]) {
+  # Determine indices in y_vals that fall within the current segment
+  segment_indices <- which(y_vals >= z2[i] & y_vals < z2[i + 1])
+  
+  # Calculate affine values for this segment using the corresponding a[i] and b[i]
+  affine_envelope2[segment_indices] <- exp(a2[i] * y_vals[segment_indices] + b2[i]) * alpha_s
+}
+
+# Prepare data frame for ggplot
+affine_data <- data.frame(y = y_vals, affine_envelope = affine_envelope)
+affine_data2 <- data.frame(y = y_vals, affine_envelope = affine_envelope2)
+
+
+# Plot with ggplot2
+c1 <- ggplot() +
+  geom_histogram(aes(x = samp$y, y = ..density..), bins = 70, fill = "coral", alpha = 0.2, color = "coral3") +
+  geom_line(data = density_data, aes(x = y, y = tar_density, color = "Target dens"), size = 1.2) +
+  geom_line(data = affine_data, aes(x = y, y = affine_envelope, color = "Envelope"), size = 1, linetype = "dashed") + 
+  labs(
+    title = "Rejection Sampling vs Target Density",
+    x = "Values",
+    y = "Density"
+  ) +
+  scale_color_manual(values = c("Target dens" = base, "Envelope" = "steelblue4")) +
+  xlim(0, 1) +
+  theme_bw()
+
+
+c2 <- ggplot() +
+  geom_histogram(aes(x = samp2$y, y = ..density..), bins = 70, fill = "coral", alpha = 0.2, color = "coral3") +
+  geom_line(data = density_data, aes(x = y, y = tar_density, color = "Target dens"), size = 1.2) +
+  geom_line(data = affine_data2, aes(x = y, y = affine_envelope, color = "Envelope"), size = 1, linetype = "dashed") + 
+  labs(
+    title = "Rejection Sampling vs Target Density",
+    x = "Values",
+    y = "Density"
+  ) +
+  scale_color_manual(values = c("Target dens" = base, "Envelope" = "steelblue4")) +
+  xlim(0, 1) +
+  theme_bw()
+
+grid.arrange(c1, c2, ncol = 2)
+```
+
+
+---
+###Structuring
+
+ - Computationally expensive to sample $U_n$ every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time.
+ 
+ - Implement S3-sampler for each sampler.
+
+ - Chooses the Gaussian envelope numerically every time - employing the same method we did.
+ 
+ - The breakpoints for the log-affine envelope are chosen as an equidistant grid between 0 and 0.35, the number is set to 10 by default.
+ 
+ - Implemented `print` and `plot` method for easy comparison
+ 
+---
+###Breakpoints
+
+We saw earlier, that the log-affine envelope did not seem to perform that well. Idea is to increase the number of breakpoints, so that it can better approximate the target density. However, there will most likely be a tradeoff between rejection rate and how fast the sampler is. 
+<br>
+<br>
+We will test this by sampling 1000 values from the target density using the affine envelope, with breakpoints between 0 and 0.35 and the number of breakpoints ranging from 1 to 30.
+<br>
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.width= 16, fig.height=5}
+# Initialize as list for breakpoints and numeric vector for alpha values
+alpha <- numeric(40)           # Numeric vector for alpha values
+time <- numeric(40)
+
+# Loop through iterations
+for (i in 1:40) {
+  # Start the timer
+  start_time <- Sys.time()
+  
+  # Compute the alpha value
+  alpha[i] <- aff_rej_n(50000, seq(0.01, 0.35, length.out = i + 2))$alpha
+  
+  # End the timer and calculate duration
+  end_time <- Sys.time()
+  time[i] <- as.numeric(difftime(end_time, start_time, units = "secs"))
+}
+
+plot_df <- data.frame(x = 1:40, y = alpha, time = time)
+
+d1 <- ggplot(plot_df, aes(x = x, y = time)) +
+  geom_line(color = base, size = 1.2) +
+  geom_point(aes(y = time), color = base, size = 3) +
+  labs(title = "Time",
+       x = "Number of Breakpoints",
+       y = "Time") +
+  my_theme
+
+d2 <- ggplot(plot_df, aes(x = x, y = y)) +
+  geom_line(color = "coral4", size = 1.2) +
+  geom_point(aes(y = y), color = "coral4", size = 3) +
+  labs(title = "Rejection Rate",
+       x = "Number of Breakpoints",
+       y = "Rejection Rate") +
+  my_theme
+
+grid.arrange(d1, d2, ncol = 2)
+```
+
+---
+###Comparison
+We can now compare the two samplers against eachother using `bench::press`.
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.width= 16, fig.height=5}
+# Define the number of samples
+n_samples <- 10^seq(1,5)
+
+# Define the number of breakpoints
+n_breakpoints <- seq(0, 0.3, length.out = 10)
+
+bm_l <- bench::press(
+  n = n_samples,
+  {
+    bench::mark(
+      Gaussian = gaus_rej_f(n, mu_opt, sigma_opt, alpha_s, tar_dens),
+      log_affine = aff_rej_n(n, n_breakpoints),
+      iterations = 10,
+      check = FALSE
+    )
+  }
+)
+
+bm <- bench::mark(
+      Gaussian = gaus_rej_f(1000, mu_opt, sigma_opt, alpha_s, tar_dens),
+      log_affine = aff_rej_n(1000, n_breakpoints),
+      iterations = 100,
+      check = FALSE
+)
+
+plot_bm <- plot(bm) + scale_color_manual(values = c("none" = "#4f7942", "level0" = "coral2", "level1" = "steelblue", "level2" = "hotpink3")) + my_theme + ggtitle("Comparison for n = 1000")
+
+# Convert to a usable format for ggplot2
+plot_data <- bm_l %>%
+  mutate(
+    expr = as.character(expression),  # Ensure expr is character for color mapping
+    median = as.numeric(median),
+    n = as.numeric(n)  # Convert n for x-axis scale
+  )
+
+# Create the plot
+plot_bp <- ggplot(plot_data, aes(x = n, y = median, color = expr)) +
+  geom_point(size = 2.5) +
+  geom_line(size  = 1.2) +
+  scale_y_log10() +  # Log scale for better readability
+  scale_color_manual(
+    values = c("Gaussian" = "#4f7942", "log_affine" = "coral3")
+  ) +
+  labs(x = "number of samples", y = "Time (ms) - logscale", color = "Method") +
+  theme_bw() +
+  ggtitle("Development for no. of samples") + my_theme
+
+grid.arrange(plot_bm, plot_bp, ncol = 2)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center'}
+knitr::kable(data.frame(expression = c('Gaussian', 'log_affine'), bm[,2:9]))
+```
+
+
+---
+###Optimization
+Most interesting for log-affine. We will start out by profiling to identify any bottlenecks.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+profvis({
+  # Slopes
+a_i <- function(x_i) tar_dens_log_difference(x_i) 
+
+# Intercepts
+b_i <- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i
+
+# Interval points
+z_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)
+
+# R_i's
+r_i <- function(as, bs, zs, n) {
+  1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
+}
+
+piece_lin_rejec_samp <- function(N, ys) {
+  
+  # Calculating a's, b's, z's
+  as <- sapply(ys, a_i, simplify = TRUE)
+  bs <- mapply(FUN = b_i, ys, as)
+  n <- length(bs)
+  zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)
+  
+  # Bookkeeping
+  # I_i integrals
+  R <- r_i(as, bs, zs, n)
+  
+  # Distribution function (ish)
+  Q <- c(0, cumsum(R))
+  
+  # Drawing from piecewise linear density and uniform
+  u0 <- Q[n + 1] * runif(N)
+  u <- runif(N)
+  
+  # Determine the interval that each point belongs to
+  geq_z <-outer(u0, Q[1:n], FUN = function(y1, y2) y1 > y2)
+  leq_z <-outer(u0, Q[2:(n+1)], FUN = function(y1, y2) y1 <= y2)
+  I <- geq_z & leq_z
+  
+  
+  x <- numeric(N)
+  accept <- logical(N)
+  for(i in 1:N){
+    # Finding the interval x_i belongs to
+    int <- which(I[i,] == 1)
+    
+    # Taking the inverse cdf
+    x[i] <- log((u0[i] - Q[int]) * as[int] * exp(- bs[int]) + exp(as[int] * zs[int])) / as[int]
+    
+    # Acceptance step
+    accept[i] <- u[i] <=  tar_dens(x[i]) / exp(as[int] * x[i] + bs[int])
+  }
+  
+  return(x[accept])
+}
+  piece_lin_rejec_samp_s(10000, seq(0, 0.35, length.out = 10))
+})
+```
+
+
+---
+###Optimization
+Based on the profiling, we can see that we spend some time in the loop. We have investigated two approaches:
+
+- Parallelization
+Seeing as we are performing independent operations, one approach is to parallelize the code. We will use `foreach` and `doParallel` to do this.
+
+- Implementing in `Rcpp`
+Another approach is to implement the code in `Rcpp`.
+
+```{r,echo=F, warning=FALSE, message=FALSE}
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment 2 - Rejection sampling/Soure_code.R")
+
+# Define the number of samples
+n_samples <- 10^seq(1,3)
+
+# Define the number of breakpoints
+n_breakpoints <- seq(0, 0.35, length.out = 10)
+
+bm_l <- bench::press(
+  n = n_samples,
+  {
+    bench::mark(
+      parallelized = aff_rej_par(n, n_breakpoints),
+      log_affine = aff_rej_s(n, n_breakpoints),
+      vectorized = aff_rej_n(n, n_breakpoints),
+      iterations = 10,
+      check = FALSE
+    )
+  }
+)
+
+
+# Convert to a usable format for ggplot2
+plot_data <- bm_l %>%
+  mutate(
+    expr = as.character(expression),  # Ensure expr is character for color mapping
+    median = as.numeric(median),
+    n = as.numeric(n)  # Convert n for x-axis scale
+  )
+
+# Create the plot
+ggplot(plot_data, aes(x = n, y = median, color = expr)) +
+  geom_point(size = 2.5) +
+  geom_line(size  = 1.2) +
+  scale_y_log10() +  # Log scale for better readability
+  scale_color_manual(
+    values = c("parallelized" = "#4f7942", "log_affine" = "coral3")
+  ) +
+  labs(x = "number of samples", y = "Time (ms) - logscale", color = "Method") +
+  theme_bw() +
+  ggtitle("Development for no. of samples") + my_theme
+
+
+```
+
+
+

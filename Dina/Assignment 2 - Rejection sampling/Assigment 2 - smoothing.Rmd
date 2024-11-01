@@ -126,7 +126,6 @@ sigma <- function(s){
 sigma_opt <- optimize(sigma, c(0,1))$minimum
 alpha_s <- -optimize(sigma, c(0,1))$objective
 sigma_opt 
-
 ```
 
 Plot of target density scaled with alpha alongside envelope:
@@ -308,7 +307,6 @@ extract_nonzero_indices <- function(mat) {
   apply(mat, 1, function(row) which(row != 0))
 }
 
-cor_interval(c(1,2,3), c(0,))
 ```
 
 
@@ -404,6 +402,8 @@ new_rejection_sampler <- function(generator) {
 log_affine_samp <- new_rejection_sampler(adap_log_rej_sampler)
 
 samp <- log_affine_samp(1000, c( 0.2, 0.25, 0.3), tar_dens_log, tar_dens_log_difference)
+
+
 ```
 
 Lets plot it:
