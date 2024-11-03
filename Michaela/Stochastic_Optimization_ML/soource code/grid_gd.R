@@ -5,22 +5,24 @@ gd_grid <- function(
     t0 = 1e-2,
     maxit = 1200,
     cb = NULL,
-    epsilon = 1e-5,
+    epsilon = 1e-6,
     beta = 0.8,
     alpha = 0.1,
     x,
     y,
+    mu = 0.9,
     ...) {
   
   x_vals <- unique(x)
   matches <- match(x, x_vals)
   n <- length(x)
+  par_old <- par
 
   for (i in 1:maxit) {
     
     # Computing 
     fs <- f(par, x_vals)[matches]
-    nabla_fs <- sapply(seq_along(x_vals), function(i) nabla_f(par, x_vals[i]))
+    nabla_fs <- sapply(seq_along(x_vals), function(i) d_f(par, x_vals[i]))
     
     # Calculations of objective and gradient
     value <- sum((y - fs)^2) 
@@ -28,23 +30,26 @@ gd_grid <- function(
     
     grad_norm <- sum(gr^2)
     
-    # Callback
-    if (!is.null(cb)) cb()
-    
     t <- t0
     # Proposed descent step
-    par_new <- par - t * gr
+    par_new <- par - t * gr + mu * (par - par_old)
     new_fs <- f(par_new, x_vals)[matches]
     
-    # Convergence criterion based on gradient norm
-    if (all(abs(par_new - par) <= epsilon)) break
     
     # Backtracking line search
-    while (sum((y - new_fs)^2) > value - alpha * t * grad_norm) {
+    while (mean((y - new_fs)^2) > value - alpha * t * grad_norm) {
       t <- beta * t
       par_new <- par - t * gr
       new_fs <- f(par_new, x_vals)[matches]
     }
+    
+    # Callback
+    if (!is.null(cb)) cb()
+    
+    # Convergence criterion 
+    if (sum((par_new - par)^2) <= epsilon * (sum(par_new^2) + epsilon)) break
+    
+    par_old <- par
     par <- par_new
   }
   

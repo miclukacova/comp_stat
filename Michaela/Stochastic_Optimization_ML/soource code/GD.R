@@ -4,7 +4,7 @@ grad_desc <- function(
     par,
     grad,
     H,
-    t0 = 5e-2,
+    t0 = 1,
     maxit = 1200,
     cb = NULL,
     epsilon = 1e-3,
@@ -13,9 +13,10 @@ grad_desc <- function(
     x,
     y,
     ...) {
+  
+  n <- length(x)
+  
   for (i in 1:maxit) {
-    
-    n <- length(x)
     
     # Calculations of objective and gradient
     value <- H(par, x, y)
@@ -23,21 +24,23 @@ grad_desc <- function(
     
     grad_norm <- sum(gr^2)
     
-    # Callback
-    if (!is.null(cb)) cb()
-    
     t <- t0
     # Proposed descent step
     par_new <- par - t * gr
     
-    # Convergence criterion 
-    if (all(abs(par_new - par) <= epsilon)) break
-    
+    #browser()
     # Backtracking line search
     while (H(par_new, x, y) > value - alpha * t * grad_norm) {
       t <- beta * t
       par_new <- par - t * gr
     }
+    
+    # Callback
+    if (!is.null(cb)) cb()
+    
+    # Convergence criterion 
+    if (sum((par_new - par)^2) <= epsilon * (sum(par_new^2) + epsilon)) break
+    
     par <- par_new
   }
   
@@ -59,17 +62,18 @@ GD_tracer <- tracer(c("par", "i"), Delta = 0)
 GD <- function(par,
                grad = grad_gd,
                H = H,
-               t0 = 5e-2,
+               t0 = 1,
                maxit = 1200,
                cb = GD_tracer$tracer,
-               epsilon = 1e-3,
+               epsilon = 1e-6,
                beta = 0.8,
                alpha = 0.1,
                true_par = NULL,
+               alg = grad_desc,
                ...) {
   output = structure(
     list(
-      est = grad_desc(par = par, 
+      est = alg(par = par, 
                       grad = grad, 
                       t0 = t0,
                       maxit = maxit,
@@ -169,5 +173,60 @@ plot_data.My_GD <- function(object) {
   GD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
   
   return(GD_plot_df)
+}
+
+# Gradient descent algorithm 
+grad_desc_mom <- function(
+    par,
+    grad,
+    H,
+    t0 = 1,
+    maxit = 1200,
+    cb = NULL,
+    epsilon = 1e-6,
+    beta = 0.8,
+    alpha = 0.1,
+    x,
+    y,
+    mu = 0.9,
+    ...) {
+  
+  n <- length(x)
+  par_old <- par
+  
+  for (i in 1:maxit) {
+    
+    #browser()
+    
+    # Calculations of objective and gradient
+    value <- H(par, x, y)
+    gr <- 1 / n * grad(par, x, y)
+    
+    grad_norm <- sum(gr^2)
+    
+    t <- t0
+    
+    # Proposed descent step
+    par_new <- par - t * gr + mu * (par - par_old)
+    
+    # Backtracking line search
+    while (H(par_new, x, y) > value - alpha * t * grad_norm) {
+      t <- beta * t
+      par_new <- par - t * gr
+    }
+    
+    # Callback
+    if (!is.null(cb)) cb()
+    
+    # Convergence criterion 
+    if (sum((par_new - par)^2) <= epsilon * (sum(par_new^2) + epsilon)) break
+    
+    par_old <- par
+    par <- par_new
+  }
+  
+  if (i == maxit)  warning("Maximal number, ", maxit, ", of iterations reached")
+  
+  par
 }
 

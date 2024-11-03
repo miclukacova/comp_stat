@@ -1,23 +1,10 @@
-##################################################
-################### Packages #####################
-##################################################
-
-library(bench)
-library(ggplot2)
-library(tidyverse)
-library(testthat)
-library(profvis)
-library(gridExtra)
-theme_set(theme_bw())
-library(CSwR)
-
 ## SGD ###############################################
 
 sgd <- function(
     par,
     grad, # Function of parameter and observation index
     gamma, # Decay schedule or a fixed learning rate
-    maxiter = 150, # Max epoch iterations
+    maxit = 100, # Max epoch iterations
     sampler = sample, # How data is resampled. Default is a random permutation
     cb = NULL,
     epoch = vanilla,
@@ -26,15 +13,21 @@ sgd <- function(
     y,
     ...) {
   
-  n <- length(x)
-  gamma <- if (is.function(gamma)) gamma(1:maxiter) else rep(gamma, maxiter)
+  #browser()
   
-  for (k in 1:maxiter) {
+  n <- length(x)
+  gamma <- if (is.function(gamma)) gamma(1:maxit) else rep(gamma, maxit)
+  
+  for (k in 1:maxit) {
     
     if (!is.null(cb)) cb()
     samp <- sampler(n)
-    par <- epoch(par = par, samp = samp, gamma = gamma[k], 
-                 grad = grad, n = n, x = x, y = y, m = m)
+    par_new <- epoch(par = par, samp = samp, gamma = gamma[k], 
+                 grad = grad, n = n, x = x, y = y, m = m, ...)
+    # Convergence criterion 
+    if (sum((par_new - par)^2) <= epsilon * (sum(par_new^2) + epsilon)) break
+    
+    par <- par_new
     
   }
   par
@@ -46,7 +39,7 @@ SGD_tracer <- tracer(c("par", "k"), Delta = 0)
 
 ###### SGD class ###########################################
 
-SGD <- function(par0, grad, gamma, maxiter = 100, epoch = vanilla,
+SGD <- function(par0, grad, gamma, maxit = 100, epoch = vanilla,
                 sampler = sample, cb = SGD_tracer, m = 1, 
                 true_par = NULL, ...) {
   output = structure(
@@ -54,7 +47,7 @@ SGD <- function(par0, grad, gamma, maxiter = 100, epoch = vanilla,
       est = sgd(par = par0, 
                 grad = grad, 
                 gamma = gamma, 
-                maxiter = maxiter, 
+                maxit = maxit, 
                 sampler = sample, 
                 cb = cb$tracer,
                 epoch = epoch,
@@ -182,49 +175,21 @@ decay_scheduler <- function(gamma0 = 1, # Initial learning rate
   function(n) b / (K + n^a)
 }
 
-
-adam <- function() {
-  rho <- v <- 0
-  function(
-   #    par,
-    samp,
-    gamma,
-    grad,
-    m = 50,         # Mini-batch size
-    beta1 = 0.9,    # Momentum memory
-    beta2 = 0.9,    # Momentum memory
-    ...
-    
-  ){
-    M <- floor(length(samp) / m) 
-    for (j in 0:(M - 1)) {
-      i <- samp[(j * m + 1):(j * m + m)]
-      gr <- grad(par, i, ...)
-      rho <<- beta1 * rho + (1 - beta1) * gr
-      v <<- beta2 * v + (1 - beta2) * gr^2
-      par <- par - gamma * (rho / (sqrt(v) + 1e-8))
-    }
-    par
-  } 
-}
-
 adam_2 <- function() {
   rho <- v <- 0
   function(
-        par,
+    par,
     samp,
     gamma,
     grad,
     m = 50,         # Mini-batch size
     beta1 = 0.9,    # Momentum memory
     beta2 = 0.9,    # Momentum memory
-    ...
-    
-  ){
+    x, y, n){
     M <- floor(length(samp) / m) 
     for (j in 0:(M - 1)) {
       i <- samp[(j * m + 1):(j * m + m)]
-      gr <- grad(par, ...)
+      gr <- 1 / m * grad(par, x[i], y[i])
       rho <<- beta1 * rho + (1 - beta1) * gr
       v <<- beta2 * v + (1 - beta2) * gr^2
       par <- par - gamma * (rho / (sqrt(v) + 1e-8))
@@ -235,102 +200,22 @@ adam_2 <- function() {
 
 
 momentum <- function() {
-  rho <- 0
+  rho <- 0        # Initialize rho outside the inner function to keep track of the previous gradient
   function(
-    par,
-    samp,
-    gamma,
-    grad,
-    m = 50,         # Mini-batch size
-    beta = 0.95,    # Momentum memory
-    ...
-  ){
-    M <- floor(length(samp) / m) 
+    par,          # Parameter values
+    samp,         # Sample of N indices
+    gamma,        # Learning rate
+    grad,         # Gradient function
+    m = 50,       # Mini-batch size
+    beta = 0.9,   # Momentum memory
+    x, y, n){
+    M <- floor(n / m) 
     for (j in 0:(M - 1)) {
       i <- samp[(j * m + 1):(j * m + m)]
-      # Using '<<-' assigns the value to rho in the enclosing
-      environment
-      rho <<- beta * rho + (1 - beta) * grad(par, i, ...)
+      rho <<- beta * rho + (1 - beta) * 1 / m * grad(par, x[i], y[i])   # Using '<<-' assigns the value to rho in the enclosing environment
       par <- par - gamma * rho
     }
     par
   } 
 }
 
-momentum_2 <- function() {
-  rho <- 0
-  function(
-    par,
-    samp,
-    gamma,
-    grad,
-    m = 50,         # Mini-batch size
-    beta = 0.95,    # Momentum memory
-    ...
-  ){
-    M <- floor(length(samp) / m) 
-    for (j in 0:(M - 1)) {
-      i <- samp[(j * m + 1):(j * m + m)]
-      # Using '<<-' assigns the value to rho in the enclosing
-      environment
-      rho <<- beta * rho + (1 - beta) * grad(par,...)
-      par <- par - gamma * rho
-    }
-    par
-  } 
-}
-
-rate_momentum <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = 1e-1)
-rate_adam <- decay_scheduler(gamma0 = 1e-1, a = 1, gamma1 = 1e-5)
-
-
-########### Rcpp ############################
-
-library(Rcpp)
-
-cppFunction('
-NumericVector gradient_rcpp(NumericVector par, NumericVector indices, NumericVector x, NumericVector y) {
-  // Extract parameters
-  double alpha = par[0];
-  double beta = par[1];
-  double gamma = par[2];
-  double rho = par[3];
-
-  // Initialize gradients
-  double grad_alpha = 0.0;
-  double grad_beta = 0.0;
-  double grad_gamma = 0.0;
-  double grad_rho = 0.0;
-
-  int n = indices.size(); // Number of indices
-
-  // Loop over the indices
-  for (int idx = 0; idx < n; ++idx) {
-    int i = indices[idx] - 1;  // Convert from r to c++ indexing
-
-    // Get individual data point
-    double x_i = x[i];
-    double y_i = y[i];
-
-    // Calculating f(x_i, par)
-    double f_x_i = gamma + (rho - gamma) / (1 + exp(beta * log(x_i) - alpha));
-
-    // Exponential term
-    double expbetalogxalpha = exp(beta * log(x_i) - alpha);
-
-    // Identical part used in gradients
-    double identical_part = -2 * (y_i - f_x_i);
-
-    // Accumulate gradients for all indices
-    grad_alpha += (identical_part * (rho - gamma) * expbetalogxalpha) 
-    / pow(1 + expbetalogxalpha, 2);
-    grad_beta += -(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha) 
-    / pow(1 + expbetalogxalpha, 2);
-    grad_gamma += identical_part * (1 - 1 / (1 + expbetalogxalpha));
-    grad_rho += identical_part / (1 + expbetalogxalpha);
-  }
-
-  // Return the mean of accumulated gradients
-  return NumericVector::create(grad_alpha / n, grad_beta / n, grad_gamma / n, grad_rho / n);
-}
-')

@@ -31,8 +31,6 @@ grad_desc <- function(
   
   for (i in 1:maxit) {
     
-    #browser()
-    
     # Calculations of objective and gradient
     value <- 1 / n * H(x = x, par = par, nu = nu)
     gr <- 1/n * grad(mu = par[1], sigma = sqrt(par[2]), nu = nu, x = x)

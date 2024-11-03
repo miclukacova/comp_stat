@@ -1,0 +1,1382 @@
+---
+title: "Log-logistic Dose-response Curves"
+author: "Michaela Lukacova (dns525)"
+institute: "University of Copenhagen"
+date: '`r Sys.Date()`'
+output:
+  xaringan::moon_reader:
+    css: themer-new.css
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      highlightSpans: true
+      ratio: 16:9
+      countIncrementalSlides: true
+      navigation:
+        scroll: false
+---
+<style type="text/css">
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content > h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+</style>
+```{r, include=FALSE, eval = FALSE}
+#rmarkdown::render('4---presentation.rmd')
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE}
+library(xaringanthemer)
+library(CSwR)
+style_mono_accent(
+ base_color = "#4f7942")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(microbenchmark)
+library(bench)
+library(tidyverse)
+library(profvis)
+library(bench)
+library(knitr)
+library(testthat)
+library(gridExtra)
+library(CSwR)
+library(grid)
+library(patchwork)
+knitr::opts_chunk$set(fig.retina = 2)
+theme_set(
+  theme_bw(base_size = 18) +  # Set base font size and family
+    theme(text = element_text(size = 15)))        # Adjust text size
+```
+
+```{r source code, include=FALSE, warning=FALSE}
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Stochastic_Optimization_ML/soource code/SGD.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Stochastic_Optimization_ML/soource code/grad.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Stochastic_Optimization_ML/soource code/d_f.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Stochastic_Optimization_ML/soource code/f.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Stochastic_Optimization_ML/soource code/sampler.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Stochastic_Optimization_ML/soource code/obj.R")
+source("~/Desktop/Uni/5aar/CompStat/comp_stat/Michaela/Stochastic_Optimization_ML/soource code/GD.R")
+```
+
+###Introduction
+Objective is to use stochastic optimization to estimate the parameters of a log-logistic dose-response model using non-linear least squares estimation. That is obtaining the parameters $\alpha, \beta, \gamma, \rho$ that minimize the loss function:
+$$L(X,(\alpha,\beta,\gamma,\rho))=\frac{1}{N}\sum_{i=1}^N\left( y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)^2$$
+<br>
+Where the response is given by:
+$$Y_i = f(x_i| \alpha, \beta,\gamma,\rho) + \varepsilon_i \hskip5mm \text{with}\hskip2mm \varepsilon_i \stackrel{iid}{\sim} N(0,\omega^2)$$
+And the log-logistic dose-response model is given by:
+$$f(x_i| \alpha, \beta,\gamma,\rho) = \gamma + \frac{\rho - \gamma}{1 + \exp(\beta \log(x_i) - \alpha)}$$
+
+---
+###Stochastic Gradient Descent
+Start out implementing a standard version of the stochastic gradient descent algorithm (SGD). The gradient in a single point is given by
+$$-2\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)  $$
+
+<br>
+Where $\nabla f(x_i| \alpha, \beta,\gamma,\rho)$ is given by
+$$\nabla f(x_i| \alpha, \beta,\gamma,\rho) = \begin{pmatrix}
+  \frac{\rho-\gamma}{(1+\exp(\beta\log(x_i)-\alpha))^2}\cdot\exp(\beta\log(x_i)-\alpha)\\
+  \frac{\rho-\gamma}{(1+\exp(\beta\log(x_i)-\alpha))^2}\cdot\exp(\beta\log(x_i)-\alpha)\cdot\log(x_i)\\
+  1-\frac{1}{1+\exp(\beta\log(x_i)-\alpha)} \\
+  \frac{1}{1+\exp(\beta\log(x_i)-\alpha)}
+\end{pmatrix}$$
+So the update scheme becomes:
+$$\theta_{t+1} = \theta_t +2 \gamma_t\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)$$
+Where $\theta_t = (\alpha_t, \beta_t, \gamma_t, \rho_t)$ and $\gamma_t$ is the learning rate at time $t$.
+---
+###Implementation 
+
+The gradient function and $f$ are implemented separately
+
+```{r}
+sgd <- function(
+    par,
+    grad, # Function of parameter and observation index
+    gamma, # Decay schedule or a fixed learning rate
+    maxit = 100, # Max epoch iterations
+    sampler = sample, # How data is resampled. Default is a random permutation
+    cb = NULL,
+    epoch = vanilla,
+    m = 1, # Batch size
+    x,
+    y,
+    ...) {
+  
+  #browser()
+  
+  n <- length(x)
+  gamma <- if (is.function(gamma)) gamma(1:maxit) else rep(gamma, maxit)
+  
+  for (k in 1:maxit) {
+    
+    if (!is.null(cb)) cb()
+    samp <- sampler(n)
+    par_new <- epoch(par = par, samp = samp, gamma = gamma[k], 
+                 grad = grad, n = n, x = x, y = y, m = m, ...)
+    # Convergence criterion 
+    if (sum((par_new - par)^2) <= epsilon * (sum(par_new^2) + epsilon)) break
+    
+    par <- par_new
+    
+  }
+  par
+}
+
+vanilla <- function(par, samp, gamma, grad, n, x, y, ...){
+  for (j in 1:n) {
+    i <- samp[j]
+    par <- par - gamma * grad(par, x[i], y[i])
+  }
+  return(par)
+}
+```
+
+---
+###Implementation
+
+ - Implemented a tracer using `CSwR`:
+```{r}
+SGD_tracer <- tracer(c("par", "k"), Delta = 0) 
+```
+ 
+ - S3 object `SGD`
+ 
+  - Contains optimal parameters and trace
+  
+  - Plot, print and summary methods are implemented to ease comparisons and analysis.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+N <- 5000
+param <- parameters(2,5,1,2)
+data <- sim(param, N)
+x <- data$x
+y <- data$y
+```
+
+
+```{r}
+SGD(par0 = param$par, grad = grad, gamma = 0.01, x = x, y = y, true_par = param$par)
+```
+
+---
+###Sampling
+ 
+ - Implemented an S3 object `parameters` and a method `sim` to simulate data from the log-logistic dose-response model.
+ 
+ - 2 different types of sampling methods
+ 
+  - `grid_sample`: samples $X$ from a fixed grid of points $(e, e^2,..., e^{15})$.
+  
+  - `gauss_sample`: samples $\log(X)$ from $\mathcal{N}(0, \omega^2)$. Note $\omega$ may not be too large.
+
+- The method also allows for scaling the data, which is useful for optimization.
+
+```{r, eval = FALSE, message=FALSE}
+sim(parameters(1, 1, 1, 1), N = 100, grid = TRUE, scale = TRUE)
+```
+
+ - True parameters have been set to `c(2,5,1,2)` and the data is simulated with `N = 5000`.
+ 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(4027)
+N <- 5000
+param <- parameters(2,5,1,2)
+data <- sim(param, N)
+x <- data$x
+y <- data$y
+```
+
+---
+### Test of Algorithm 
+
+We do a naive test of the algorithm, and run the algorithm with 3 different starting values: the true values $(2,5,1,2)$, $(1,1,1,1)$ and random values $(1.88, 0.31, 3.64, 2.29)$. Step size is $0.005$, maximal number of iterations $100$.  
+
+```{r, echo = FALSE}
+set.seed(4027)
+sv1 <- param$par
+sv2 <- c(1,1,1,1)
+sv3 <- abs(rnorm(4, 2, 1.5))
+
+sgd1 <- SGD(par0 = sv1, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par)
+sgd2 <- SGD(par0 = sv2, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par)
+sgd3 <- SGD(par0 = sv3, grad = grad, gamma = 0.005, x = x, y = y, true_par = param$par)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+grid.arrange(plot(sgd1, 1) + ggtitle("True vals"),
+             plot(sgd2, 1)+ ggtitle("c(1,1,1,1)"), 
+             plot(sgd3, 1) + ggtitle("Random vals"),
+             nrow = 1)
+```
+
+---
+### Test of Algorithm 
+
+We obtain quite different convergence schemes. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+plot(sgd1, 3) + 
+  geom_line(aes(x = plot_data(sgd2)$.time, 
+                y = plot_data(sgd2)$abs_dist_from_par), col = "orange") + 
+  geom_line(aes(x = plot_data(sgd3)$.time, 
+                y = plot_data(sgd3)$abs_dist_from_par), col = "red")
+
+diff_start_vals_sgd <- tibble(
+  "Par" = c("\u03B1 (2)", "\u03B2 (5)", "\u03B3 (1)", "\u03C1 (2)"),
+  "True vals" = sgd1$est,
+  "(1, 1, 1, 1)" = sgd2$est,
+   "Random vals" = sgd3$est)
+
+diff_start_vals_sgd %>% kable(caption = "Different starting values")
+```
+
+---
+###Profiling the algorithm
+
+```{r, echo = FALSE}
+profvis({
+f <- function(par, x) {
+  alpha <- par[1]
+  beta <- par[2]
+  gamma <- par[3]
+  rho <- par[4]
+  gamma + (rho - gamma)/(1 + exp(beta * log(x) - alpha))
+}
+
+grad <- function(par, x, y,...) {
+  
+  alpha <- par[1]
+  beta <- par[2]
+  gamma <- par[3]
+  rho <- par[4]
+  
+  const_term <- exp(beta * log(x) - alpha)
+  
+  d_alpha <- (rho - gamma) / (1 + const_term)^2 * const_term
+  d_beta <- - log(x) * (rho - gamma) / (1 + const_term)^2 * const_term
+  d_gamma <- 1 - 1 / (1 + const_term)
+  d_rho <- 1 / (1 + const_term)
+  
+  return(- 2 * c(d_alpha, d_beta, d_gamma, d_rho) * (y - f(par, x)))
+}
+
+vanilla <- function(par, samp, gamma, grad, n, x, y, ...){
+  for (j in 1:n) {
+    i <- samp[j]
+    par <- par - gamma * grad(par, x[i], y[i])
+  }
+  return(par)
+}
+
+sgd <- function(
+    par,
+    grad, # Function of parameter and observation index
+    gamma, # Decay schedule or a fixed learning rate
+    maxit = 100, # Max epoch iterations
+    sampler = sample, # How data is resampled. Default is a random permutation
+    cb = NULL,
+    epoch = vanilla,
+    m = 1, # Batch size
+    x,
+    y,
+    ...) {
+  
+  n <- length(x)
+  gamma <- if (is.function(gamma)) gamma(1:maxit) else rep(gamma, maxit)
+  
+  for (k in 1:maxit) {
+    
+    if (!is.null(cb)) cb()
+    samp <- sampler(n)
+    par <- epoch(par = par, samp = samp, gamma = gamma[k], 
+                 grad = grad, n = n, x = x, y = y, m = m)
+    
+  }
+  par
+}
+
+sgd(par = sv1, grad = grad, gamma = 0.005, x = x, y = y)
+})
+```
+---
+###Implementing the gradient function in RCPP
+
+```{r}
+library(Rcpp)
+
+cppFunction('
+NumericVector grad_rcpp(NumericVector par, double x, double y) {
+  // Extract parameters
+  double alpha = par[0];
+  double beta = par[1];
+  double gamma = par[2];
+  double rho = par[3];
+  
+  // Calculating f(x, par)
+  double f_x = gamma + (rho - gamma) / (1 + exp(beta * log(x) - alpha));
+  
+  // Exponential term
+  double const_term = exp(beta * log(x) - alpha);
+  
+  // Identical part used in gradients
+  double identical_part = -2 * (y - f_x);
+
+  // Initialize gradients
+  double grad_alpha = identical_part * (rho - gamma) 
+  / pow(1 + const_term, 2) * const_term;
+  double grad_beta = - identical_part * log(x) * (rho - gamma) 
+  / pow(1 + const_term, 2) * const_term;
+  double grad_gamma = identical_part * (1 - 1 / (1 + const_term));
+  double grad_rho = identical_part / (1 + const_term);
+
+  // Return the mean of accumulated gradients
+  return NumericVector::create(grad_alpha , grad_beta , grad_gamma , grad_rho );
+}
+')
+
+```
+
+```{r}
+expect_equal(grad(par = c(3,3,3,3), x = x[1], y = y[1]), grad_rcpp(c(3,3,3,3), x[1], y[1]))
+```
+
+---
+###Benchmarking
+Benchmarking the RCPP implementation against the R implementation
+```{r,warning  = FALSE, message = FALSE, echo=F, fig.width=12, fig.height=4, fig.align='center'}
+sim1 <- data[1:100,]
+
+bench_results1 <- bench::mark(
+    R = sgd(c(3,3,3,3), grad = grad, gamma = 0.01, x = sim1$x, y = sim1$y),
+    Rcpp = sgd(c(3,3,3,3), grad = grad_rcpp, gamma = 0.01, x = sim1$x, y = sim1$y),
+    iterations = 100,
+    check = F
+)
+p1 <- plot(bench_results1) + ggtitle("n = 100")
+
+sim2 <- data[1:1000,]
+
+bench_results2 <- bench::mark(
+    R = sgd(c(3,3,3,3), grad = grad, gamma = 0.01, x = sim2$x, y = sim2$y),
+    Rcpp = sgd(c(3,3,3,3), grad = grad_rcpp, gamma = 0.01, x = sim2$x, y = sim2$y),
+    iterations = 10,
+    check = F
+)
+p2 <- plot(bench_results2) + ggtitle("n = 1000")
+
+grid.arrange(p1, p2, nrow = 1)
+```  
+<br>
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results1[,2:9])) %>% 
+  kableExtra::kable_styling( position = "center")
+```
+
+---
+### Decay Schedule
+
+We implement a flexible three-parameter power law family of decay schedules
+
+$$
+\gamma_n = \frac{\gamma_0 K}{K + n^{a}}
+$$
+Instead of specifying $K$, one canspecify a desired learning rate $\gamma_1$ which should be reached at iteration $n_1$. These specifications then determine the parameter $K$. We try 3 different schedules
+
+- $a = 1$, $K= 0.4$ and $\gamma_0 = 1$. 
+- $\gamma_0 = 1$, $n_1 = 100$, $\gamma_1 = 0.01$ and $a = 1$. 
+- $\gamma_0 = 1$, $n_1 = 100$, $\gamma_1 = 0.01$ and $a = 0.6$. 
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 0.4)
+decay2 <- decay_scheduler(gamma0 = 1, a = 1, n1 = 100, gamma1 = 0.01)
+decay3 <- decay_scheduler(gamma0 = 1, a = 0.6, n1 = 100, gamma1 = 0.01)
+```
+
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+set.seed(4027)
+sgd_decay1 <- SGD(par0 = sv2, grad = grad_rcpp, 
+                  gamma = decay1, x = x, y = y, true_par = param$par)
+sgd_decay2 <- SGD(par0 = sv2, grad = grad_rcpp, 
+                  gamma = decay2, x = x, y = y, true_par = param$par)
+sgd_decay3 <- SGD(par0 = sv2, grad = grad_rcpp, 
+                  gamma = decay3, x = x, y = y, true_par = param$par)
+```
+
+```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+ggplot() +
+  geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+                y = plot_data(sgd_decay1)$loss, color = "a = 1, K = 0.4"))+
+  geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+                y = plot_data(sgd_decay2)$loss, color = "a = 1, gamma1 = 0.01")) +
+  geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+                y = plot_data(sgd_decay3)$loss, color = "a = 0.6, gamma1 = 0.01")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("a = 1, K = 0.4" = "red", 
+                                "a = 1, gamma1 = 0.01" = "orange", 
+                                "a = 0.6, gamma1 = 0.01" = "black"),
+                         labels = c(
+      expression(a == 1 ~ ", " ~ K == 0.4), 
+      expression(a == 1 ~ ", " ~ gamma[1] == 0.01), 
+      expression(a == 0.6 ~ ", " ~ gamma[1] == 0.01)))+
+  labs(color = "Parameter values")
+```
+
+---
+### Decay Schedule
+
+```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+ggplot() +
+  geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+                y = plot_data(sgd_decay1)$abs_dist_from_par, color = "a = 1, K = 0.4"))+
+  geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+                y = plot_data(sgd_decay2)$abs_dist_from_par, color = "a = 1, gamma1 = 0.01")) +
+  geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+                y = plot_data(sgd_decay3)$abs_dist_from_par, color = "a = 0.6, gamma1 = 0.01")) +
+  scale_y_log10() +
+  labs(title = "Abs. dist. to par vs Time", x = "Time", y = "Abs. dist. to par")+
+  scale_color_manual(values = c("a = 1, K = 0.4" = "red", 
+                                "a = 1, gamma1 = 0.01" = "orange", 
+                                "a = 0.6, gamma1 = 0.01" = "black"),
+                         labels = c(
+      expression(a == 1 ~ ", " ~ K == 0.4), 
+      expression(a == 1 ~ ", " ~ gamma[1] == 0.01), 
+      expression(a == 0.6 ~ ", " ~ gamma[1] == 0.01)
+    ))+
+  labs(color = "Parameter values")
+
+```
+
+
+---
+### Gradient Descent
+
+- S3 class `GD` is implemented to perform gradient descent.
+- Stopping criterion: $||\theta_n - \theta_{n-1}||^2_2 \leq \epsilon (||\theta ||^2_2 + \epsilon)$
+- Initial step length is $1$. 
+- Backtracking line search in order to find step length. 
+
+We check that the algorithm works: 
+
+```{r, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+gd0 <- GD(par = sv1 + rep(0.1,4), H = H, x = x, y = y, true_par = param$par)
+gd1 <- GD(par = sv2, H = H, x = x, y = y, true_par = param$par)
+gd2 <- GD(par = sv3, H = H, x = x, y = y, true_par = param$par)
+
+ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$loss, color = "a"))+
+  geom_line(aes(x = plot_data(gd1)$.time, 
+                y = plot_data(gd1)$loss, color = "b")) +
+  geom_line(aes(x = plot_data(gd2)$.time, 
+                y = plot_data(gd2)$loss, color = "c")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("a" = "red", 
+                                "b" = "orange", 
+                                "c" = "black"),
+                         labels = c("True vals", "c(1,1,1,1)", "Random vals"))+
+  labs(color = "Starting values")
+
+
+diff_start_vals_gd <- tibble(
+  "Par" = c("\u03B1 (2)", "\u03B2 (5)", "\u03B3 (1)", "\u03C1 (2)"),
+  "(2.1, 5.1, 1.1, 2.1)" = gd0$est,
+  "(1, 1, 1, 1)" = gd1$est,
+  "Random vals" = gd2$est)
+
+diff_start_vals_gd %>% kable()
+```
+
+---
+### Optimizing: Implementing momentum
+
+We implement Gradient Descent with Polyak Momentum. This amounts to altering the update rule to
+
+$$\theta_{n+1} = \theta_n - \gamma \nabla \mathcal{l}(\theta_n) + \mu (\theta_n - \theta_{n-1})$$
+We use $\beta = 0.9$. We create a new object to sanity check the algorithm
+
+```{r, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+gd0 <- GD(par = sv1 + rep(0.1,4), H = H, x = x, y = y, true_par = param$par, alg = grad_desc_mom)
+gd1 <- GD(par = sv2, H = H, x = x, y = y, true_par = param$par, alg = grad_desc_mom)
+gd2 <- GD(par = sv3, H = H, x = x, y = y, true_par = param$par, alg = grad_desc_mom)
+
+ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$loss, color = "a"))+
+  geom_line(aes(x = plot_data(gd1)$.time, 
+                y = plot_data(gd1)$loss, color = "b")) +
+  geom_line(aes(x = plot_data(gd2)$.time, 
+                y = plot_data(gd2)$loss, color = "c")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("a" = "red", 
+                                "b" = "orange", 
+                                "c" = "black"),
+                         labels = c("True vals", "c(1,1,1,1)", "Random vals"))+
+  labs(color = "Starting values")
+
+
+diff_start_vals_gd <- tibble(
+  "Par" = c("\u03B1 (2)", "\u03B2 (5)", "\u03B3 (1)", "\u03C1 (2)"),
+  "(2.1, 5.1, 1.1, 2.1)" = gd0$est,
+  "(1, 1, 1, 1)" = gd1$est,
+  "Random vals" = gd2$est)
+
+diff_start_vals_gd %>% kable()
+```
+Looks promising! 
+
+---
+### Comparison
+
+We compare the performance of the two algorithms SGD and GD with momentum. We use the same data as before and start the algorithms off in the points $(2.2, 5.2, 1.2, 2.2)$. 
+
+```{r, echo = FALSE}
+gd0 <- GD(par = param$par + rep(0.2,4), H = H, x = x, y = y, true_par = param$par, alg = grad_desc_mom)
+sgd0 <- SGD(par0 = param$par + rep(0.2,4), grad = grad_rcpp, x = x, y = y, true_par = param$par, 
+            gamma = 0.01)
+```
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+tibble(" " = c("\u03B1", "\u03B2", "\u03B3", "\u03C1"), 
+       "True" = param$par, 
+       "GD" = gd0$est, 
+       "SGD" = sgd0$est) %>% kable() 
+```
+
+---
+### Comparison
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+p1 <- ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$loss, color = "GD"))+
+  geom_line(aes(x = plot_data(sgd0)$.time, 
+                y = plot_data(sgd0)$loss, color = "SGD")) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("GD" = "red", "SGD" = "orange"))+
+  labs(color = "Method")
+p2 <- ggplot() +
+  geom_line(aes(x = plot_data(gd0)$.time, 
+                y = plot_data(gd0)$abs_dist_from_par, color = "GD"))+
+  geom_line(aes(x = plot_data(sgd0)$.time, 
+                y = plot_data(sgd0)$abs_dist_from_par, color = "SGD")) +
+  scale_y_log10() +
+  labs(title = "Abs. dist to par", x = "Time", y = "Abs. dist to par")+
+  scale_color_manual(values = c("GD" = "red", "SGD" = "orange"))+
+  labs(color = "Method")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+###Mini-batch stochastic gradient descent
+The idea is to calculate the gradient in a _batch_ of data points and update the parameters:
+
++ Sample $m$ indices, $I_n = \{i_1, ...,i_m \}$ from $\{1, ..., N\}$.
++ Compute $\rho_n = \frac{1}{m} \sum_{i \in I_n} \nabla L_\theta(x_i, y_i, \theta_n)$
++ Update $\theta_{n+1} = \theta_n - \gamma_n \rho_n$
+
+We sample a partition of $I_1 \cup I_2 \cup ... \cup I_{M} \subseteq \{1, ..., N\}$ for $M = \lfloor N/m \rfloor$.
+
+```{r}
+batch <- function(
+    par,           # Parameter estimates
+    samp,          # Sample of N indices
+    gamma,         # Learning rate
+    grad,          # Gradient function
+    m = 50,        # Mini-batch size
+    n, x, y
+){
+  M <- floor(n / m)
+  for (j in 0:(M - 1)) {
+    i <- samp[(j * m + 1):(j * m + m)]
+    par <- par - 1 / m * gamma * grad(par, x[i], y[i])
+  }
+  return(par)
+}
+```
+
+
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+m1 <- 20
+m2 <- 50
+m3 <- 250
+m_values <- list(m1, m2, m3)
+
+gamma1 <- 1e-1
+gamma2 <- 1e-2
+gamma3 <- 1e-5
+
+rate1 <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = gamma1, n1 = 100)
+rate2 <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = gamma2, n1 = 100)
+rate3 <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = gamma3, n1 = 100)
+rate_values <- list(rate1, rate2, rate3)
+
+true_par <- c(2, 5, 1, 2)
+init_par <- sv3
+
+# Function to create the plots dynamically
+create_SGD_plot <- function(SGD_obj, plot_no) {
+  plot(SGD_obj, plot_no) + 
+    theme(axis.title.x = element_blank(), 
+          axis.title.y = element_blank(), 
+          plot.title = element_blank(),
+          plot.margin = margin(10, 10, 20, 20))
+}
+
+```
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center'}
+SGD_object_batchm1_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1,
+                            epoch = batch, m = m1, x = x, y = y, true_par = true_par)
+SGD_object_batchm2_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1,
+                            epoch = batch, m = m2, x = x, y = y, true_par = true_par)
+SGD_object_batchm3_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1,
+                            epoch = batch, m = m3, x = x, y = y,true_par = true_par)
+
+SGD_object_batchm1_2 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate2,
+                            epoch = batch, m = m1, x = x, y = y, true_par = true_par)
+SGD_object_batchm2_2 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate2,
+                            epoch = batch, m = m2, x = x, y = y, true_par = true_par)
+SGD_object_batchm3_2 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate2,
+                            epoch = batch, m = m3, x = x, y = y, true_par = true_par)
+
+SGD_object_batchm1_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                            epoch = batch, m = m1, x = x, y = y, true_par = true_par)
+SGD_object_batchm2_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                            epoch = batch, m = m2, x = x, y = y, true_par = true_par)
+SGD_object_batchm3_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                            epoch = batch, m = m3, x = x, y = y, true_par = true_par)
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+batch_SGD_objects <- list(SGD_object_batchm1_1, SGD_object_batchm2_1, SGD_object_batchm3_1,
+                          SGD_object_batchm1_2, SGD_object_batchm2_2, SGD_object_batchm3_2,
+                          SGD_object_batchm1_3, SGD_object_batchm2_3, SGD_object_batchm3_3)
+
+# Store all plots in a list
+batch_SGD_plots <- lapply(batch_SGD_objects, create_SGD_plot, plot_no = 1)
+
+# Arrange the plots in a grid
+batch_grid <- grid.arrange(
+  grobs = batch_SGD_plots,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Loss vs Time for batch algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+---
+
+###Momentum
+
+Version of batch gradient descent where we add _momemtum_ to the gradient through a convex combination of the current gradient and the previous gradient. Given $\theta_n$ and a batch $I_n$ with $|I_n| = m$ we
+
++ Compute $g_n = \frac{1}{m} \sum_{i \in I_n} \nabla_\theta L(y_i, x_i, \theta_n)$
++ Compute $\rho_n = \beta \rho_{n-1} + (1 - \beta) g_n$
++ Update $\theta_{n+1} = \theta_n - \gamma_n \rho_n$
+
+The value of $\beta$ determines the gradient memory and is a parameter that can be tuned. Default is set to $0.9$. Note that $\beta = 0$ corresponds to batch stochastic gradient descent.
+
+```{r}
+momentum <- function() {
+  rho <- 0        # Initialize rho outside the inner function to keep track of the previous gradient
+  function(
+    par,          # Parameter values
+    samp,         # Sample of N indices
+    gamma,        # Learning rate
+    grad,         # Gradient function
+    m = 50,       # Mini-batch size
+    beta = 0.9,   # Momentum memory
+    x, y, n){
+    #browser()
+    M <- floor(n / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      rho <<- beta * rho + (1 - beta) * 1 / m * grad(par, x[i], y[i])   # Using '<<-' assigns the value to rho in the enclosing environment
+      par <- par - gamma * rho
+    }
+    par
+  } 
+}
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center'}
+SGD_object_momentumm1_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1,
+                               epoch = momentum(), m = m1, x = x, y = y, true_par = true_par)
+SGD_object_momentumm2_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1,
+                               epoch = momentum(), m = m2, x = x, y = y, true_par = true_par)
+SGD_object_momentumm3_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1,
+                               epoch = momentum(), m = m3,x = x, y = y, true_par = true_par)
+
+SGD_object_momentumm1_2 <- SGD(par0 = sv2, grad = grad_mult, gamma = rate2, 
+                               epoch = momentum(), m = m1, x = x, y = y, true_par = true_par)
+SGD_object_momentumm2_2 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate2,
+                               epoch = momentum(), m = m2, x = x, y = y, true_par = true_par)
+SGD_object_momentumm3_2 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate2,
+                               epoch = momentum(), m = m3, x = x, y = y, true_par = true_par)
+
+SGD_object_momentumm1_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                               epoch = momentum(), m = m1, x = x, y = y, true_par = true_par)
+SGD_object_momentumm2_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                               epoch = momentum(), m = m2, x = x, y = y, true_par = true_par)
+SGD_object_momentumm3_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                               epoch = momentum(), m = m3, x = x, y = y, true_par = true_par)
+```
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center', include = F}
+momentum_SGD_objects <- list(SGD_object_momentumm1_1, SGD_object_momentumm1_2, SGD_object_momentumm1_3,
+                          SGD_object_momentumm2_1, SGD_object_momentumm2_2, SGD_object_momentumm3_2,
+                          SGD_object_momentumm3_1, SGD_object_momentumm3_2, SGD_object_momentumm3_3)
+
+# Store all plots in a list
+momentum_SGD_plots <- lapply(momentum_SGD_objects, create_SGD_plot, plot_no = 1)
+
+# Arrange the plots in a grid
+momentum_grid <- grid.arrange(
+  grobs = momentum_SGD_plots,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Distance to true parameters vs Time for momentum algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+---
+
+###Adaptive learning rates
+To mitigate tuning issues, we introduce the adam algorithm, an adaptive learning rate algorithm. The idea is to combine momemtum with a standardiziation of each coordinate direction of the descent direction. This is in practice done by dividing the learning rate by a running average of magnitude of previous gradients:
+$$v_n = \beta_2 v_{n-1} + (1 - \beta_2) g_n \odot g_n$$
+where we denote $\beta_2$ the forgetting factor. The complete algorithm is as follows:
+
++ Initialize $\theta_0$, $\rho_0 = 0$, $v_0 = 0$
++ Compute $g_n = \frac{1}{m} \sum_{i \in I_n} \nabla_\theta L(y_i, x_i, \theta_n)$
++ Compute $\rho_n = \beta_1 \rho_{n-1} + (1 - \beta_1) g_n$
++ Compute $v_n = \beta_2 v_{n-1} + (1 - \beta_2) g_n \odot g_n$
++ Update $\theta_{n+1} = \theta_n - \gamma_n \frac{\rho_n}{\sqrt{v_n} + \epsilon}$
+
+where we add $\epsilon$ to avoid division by zero (default is $\epsilon = 10^{-8}$). The interpretation of $\beta_1$ is the same as in the momentum algorithm.
+
+---
+
+```{r}
+adam <- function() {
+  rho <- v <- 0     # Initialize rho and v outside the inner function to keep track of the previous gradients
+  function(
+    par,            # Initial parameter values
+    samp,           # Sample of N indices
+    gamma,          # Learning rate
+    grad,           # Gradient function
+    m = 50,         # Mini-batch size
+    beta1 = 0.9,    # First-moment memory
+    beta2 = 0.9,    # Second-moment memory
+    x, y, n){
+    M <- floor(n / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      gr <- 1/m * grad(par, x[i], y[i])
+      rho <<- beta1 * rho + (1 - beta1) * gr
+      v <<- beta2 * v + (1 - beta2) * gr^2
+      par <- par - gamma * (rho / (sqrt(v) + 1e-8))
+    }
+    par
+  } 
+}
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=9, fig.height=8, fig.align='center'}
+SGD_object_adamm1_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1,
+                           epoch = adam(), m = m1, x = x, y = y, true_par = true_par)
+SGD_object_adamm2_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1, epoch = adam(), 
+                           m = m2, x = x, y = y, true_par = true_par)
+SGD_object_adamm3_1 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate1,
+                           epoch = adam(), m = m3, x = x, y = y, true_par = true_par)
+
+SGD_object_adamm1_2 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate2,
+                           epoch = adam(), m = m1, x = x, y = y, true_par = true_par)
+SGD_object_adamm2_2 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate2,
+                           epoch = adam(), m = m2, x = x, y = y, true_par = true_par)
+SGD_object_adamm3_2 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate2, epoch = adam(), 
+                           m = m3, x = x, y = y, true_par = true_par)
+
+SGD_object_adamm1_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                           epoch = adam(), m = m1, x = x, y = y, true_par = true_par)
+SGD_object_adamm2_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                           epoch = adam(), m = m2, x = x, y = y, true_par = true_par)
+SGD_object_adamm3_3 <- SGD(par0 = init_par, grad = grad_mult, gamma = rate3,
+                           epoch = adam(), m = m3, x = x, y = y, true_par = true_par)
+```
+
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=9, fig.height=8, fig.align='center', include = FALSE}
+adam_SGD_objects <- list(SGD_object_adamm1_1, SGD_object_adamm2_1, SGD_object_adamm3_1,
+                         SGD_object_adamm1_2, SGD_object_adamm2_2, SGD_object_adamm3_2,
+                         SGD_object_adamm1_3, SGD_object_adamm2_3, SGD_object_adamm3_3)
+
+# Store all plots in a list
+adam_SGD_plots <- lapply(adam_SGD_objects, create_SGD_plot, plot_no = 1)
+
+# Arrange the plots in a grid
+adam_grid <- grid.arrange(
+  grobs = adam_SGD_plots,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Loss vs Time for Adam algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=9, fig.height=8, fig.align='center', include = F}
+# Store all plots in a list
+adam_SGD_plots3 <- lapply(adam_SGD_objects, create_SGD_plot, plot_no = 3)
+
+# Arrange the plots in a grid
+adam_grid <- grid.arrange(
+  grobs = adam_SGD_plots3,
+  ncol = 3, nrow = 3,
+  widths = c(0.5, 0.5, 0.5),
+  heights = c(0.5, 0.5, 0.5),
+  top = textGrob("Distance to true parameters vs Time for Adam algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+)
+
+grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+                                                                                                           
+---
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=16, fig.height=9, fig.align='center'}
+p1 <- adam_SGD_plots[[1]] +
+    geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
+                y = plot_data(SGD_object_batchm1_1)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_1)$.time, 
+                y = plot_data(SGD_object_momentumm1_1)$loss), col = "red")
+
+p2 <- adam_SGD_plots[[2]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_1)$.time, 
+                y = plot_data(SGD_object_batchm2_1)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_1)$.time, 
+                y = plot_data(SGD_object_momentumm2_1)$loss), col = "red")
+
+p3 <- adam_SGD_plots[[3]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_1)$.time, 
+                y = plot_data(SGD_object_batchm3_1)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_1)$.time, 
+                y = plot_data(SGD_object_momentumm3_1)$loss), col = "red")
+
+p4 <- adam_SGD_plots[[4]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm1_2)$.time, 
+                y = plot_data(SGD_object_batchm1_2)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_2)$.time, 
+                y = plot_data(SGD_object_momentumm1_2)$loss), col = "red")
+
+p5 <- adam_SGD_plots[[5]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_2)$.time, 
+                y = plot_data(SGD_object_batchm2_2)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_2)$.time, 
+                y = plot_data(SGD_object_momentumm2_2)$loss), col = "red")
+
+p6 <- adam_SGD_plots[[6]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_2)$.time, 
+                y = plot_data(SGD_object_batchm3_2)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_2)$.time, 
+                y = plot_data(SGD_object_momentumm3_2)$loss), col = "red")
+
+p7 <- adam_SGD_plots[[7]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm1_3)$.time, 
+                y = plot_data(SGD_object_batchm1_3)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_3)$.time, 
+                y = plot_data(SGD_object_momentumm1_3)$loss), col = "red")
+
+p8 <- adam_SGD_plots[[8]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_3)$.time, 
+                y = plot_data(SGD_object_batchm2_3)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_3)$.time, 
+                y = plot_data(SGD_object_momentumm2_3)$loss), col = "red")
+
+p9 <- adam_SGD_plots[[9]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_3)$.time, 
+                y = plot_data(SGD_object_batchm3_3)$loss), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_3)$.time, 
+                y = plot_data(SGD_object_momentumm3_3)$loss), col = "red")
+
+
+legend_grob <- grobTree(
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "black")),
+  textGrob("Adam", x = unit(0.1, "npc"), y = 0.55, just = "left"),
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "blue"), y = 0.4),
+  textGrob("Mini-batch", x = unit(0.1, "npc"), y = 0.45, just = "left"),
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "red"), y = 0.3),
+  textGrob("Momentum", x = unit(0.1, "npc"), y = 0.35, just = "left")
+)
+
+
+
+momentum_grid <- grid.arrange(arrangeGrob(p1, p2, p3, p4, p5, p6, p7, p8, p9, ncol = 3),
+                              legend_grob,
+                              widths = c(9, 0.5, 0.5),
+                              heights = c(9, 0.5, 0.5),
+                              top = textGrob("Comparing Convergence of the Algorithms - Loss vs Time", gp = gpar(fontsize = 20, fontface = "bold")))
+
+
+grid.text(paste0("m = ", m1), x = unit(0.15, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.45, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.8, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.55, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.25, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+---
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=16, fig.height=9, fig.align='center'}
+p1 <- adam_SGD_plots3[[1]] +
+    geom_line(aes(x = plot_data(SGD_object_batchm1_1)$.time, 
+                y = plot_data(SGD_object_batchm1_1)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_1)$.time, 
+                y = plot_data(SGD_object_momentumm1_1)$abs_dist_from_par), col = "red")
+
+p2 <- adam_SGD_plots3[[2]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_1)$.time, 
+                y = plot_data(SGD_object_batchm2_1)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_1)$.time, 
+                y = plot_data(SGD_object_momentumm2_1)$abs_dist_from_par), col = "red")
+
+p3 <- adam_SGD_plots3[[3]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_1)$.time, 
+                y = plot_data(SGD_object_batchm3_1)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_1)$.time, 
+                y = plot_data(SGD_object_momentumm3_1)$abs_dist_from_par), col = "red")
+
+p4 <- adam_SGD_plots3[[4]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm1_2)$.time, 
+                y = plot_data(SGD_object_batchm1_2)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_2)$.time, 
+                y = plot_data(SGD_object_momentumm1_2)$abs_dist_from_par), col = "red")
+
+p5 <- adam_SGD_plots3[[5]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_2)$.time, 
+                y = plot_data(SGD_object_batchm2_2)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_2)$.time, 
+                y = plot_data(SGD_object_momentumm2_2)$abs_dist_from_par), col = "red")
+
+p6 <- adam_SGD_plots3[[6]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_2)$.time, 
+                y = plot_data(SGD_object_batchm3_2)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_2)$.time, 
+                y = plot_data(SGD_object_momentumm3_2)$abs_dist_from_par), col = "red")
+
+p7 <- adam_SGD_plots3[[7]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm1_3)$.time, 
+                y = plot_data(SGD_object_batchm1_3)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm1_3)$.time, 
+                y = plot_data(SGD_object_momentumm1_3)$abs_dist_from_par), col = "red")
+
+p8 <- adam_SGD_plots3[[8]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm2_3)$.time, 
+                y = plot_data(SGD_object_batchm2_3)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm2_3)$.time, 
+                y = plot_data(SGD_object_momentumm2_3)$abs_dist_from_par), col = "red")
+
+p9 <- adam_SGD_plots3[[9]] +
+      geom_line(aes(x = plot_data(SGD_object_batchm3_3)$.time, 
+                y = plot_data(SGD_object_batchm3_3)$abs_dist_from_par), col = "blue") +
+  geom_line(aes(x = plot_data(SGD_object_momentumm3_3)$.time, 
+                y = plot_data(SGD_object_momentumm3_3)$abs_dist_from_par), col = "red")
+
+
+legend_grob <- grobTree(
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "black")),
+  textGrob("Adam", x = unit(0.1, "npc"), y = 0.55, just = "left"),
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "blue"), y = 0.4),
+  textGrob("Mini-batch", x = unit(0.1, "npc"), y = 0.45, just = "left"),
+  rectGrob(width = 0.5, height = 0.05, gp = gpar(fill = "red"), y = 0.3),
+  textGrob("Momentum", x = unit(0.1, "npc"), y = 0.35, just = "left")
+)
+
+
+
+momentum_grid <- grid.arrange(arrangeGrob(p1, p2, p3, p4, p5, p6, p7, p8, p9, ncol = 3),
+                              legend_grob,
+                              widths = c(9, 0.5, 0.5),
+                              heights = c(9, 0.5, 0.5),
+                              top = textGrob("Distance to true parameters vs Time", gp = gpar(fontsize = 20, fontface = "bold")))
+
+
+grid.text(paste0("m = ", m1), x = unit(0.15, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m2), x = unit(0.45, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+grid.text(paste0("m = ", m3), x = unit(0.8, "npc"), y = unit(0.1, "npc"), gp = gpar(fontsize = 12))
+
+# Add y-axis labels for gamma-values (next to the left column)
+grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.55, "npc"), rot = 90, gp = gpar(fontsize = 12))
+grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.25, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+---
+### Exploiting Grid Structure 
+
+- If the $x$'s from a grid of $m$ points we can exploit the fact that we only have $m$ distinct $x$-values.
+- We only compute $f(x_i| \alpha, \beta,\gamma,\rho)$ for each unique $x$-value 
+- In the same way, we can save computations when calculating the derivative of $f$. 
+- We have implemented a `gd_grid` function that exploits this structure. 
+- `gd_grid` uses momentum as well. 
+
+```{r, warning = FALSE, message = FALSE}
+gd_grid <- function(
+    par,
+    t0 = 1,
+    maxit = 1200,
+    cb = NULL,
+    epsilon = 1e-6,
+    beta = 0.8,
+    alpha = 0.1,
+    x,
+    y,
+    mu = 0.9,
+    ...) {
+  
+  x_vals <- unique(x)
+  matches <- match(x, x_vals)
+  n <- length(x)
+  par_old <- par
+
+  for (i in 1:maxit) {
+    
+    # Computing 
+    fs <- f(par, x_vals)[matches]
+    nabla_fs <- sapply(seq_along(x_vals), function(i) d_f(par, x_vals[i]))
+    
+    # Calculations of objective and gradient
+    value <- mean((y - fs)^2) 
+    gr <- - 2 / n * nabla_fs[,matches] %*% (y - fs)
+    
+    grad_norm <- sum(gr^2)
+    
+    t <- t0
+    # Proposed descent step
+    par_new <- par - t * gr + mu * (par - par_old)
+    new_fs <- f(par_new, x_vals)[matches]
+    
+    
+    # Backtracking line search
+    while (mean((y - new_fs)^2) > value - alpha * t * grad_norm) {
+      t <- beta * t
+      par_new <- par - t * gr
+      new_fs <- f(par_new, x_vals)[matches]
+    }
+    
+    # Callback
+    if (!is.null(cb)) cb()
+    
+    # Convergence criterion 
+    if (sum((par_new - par)^2) <= epsilon * (sum(par_new^2) + epsilon)) break
+    
+    par_old <- par
+    par <- par_new
+  }
+  
+  if (i == maxit)  warning("Maximal number, ", maxit, ", of iterations reached")
+  
+  par
+}
+```
+
+---
+### Benchmarking the two GD versions
+
+We sample data from a grid, we use the same true parametes $(2,5,1,2)$, and sample the $x$'s from the grid. 
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+data2 <- sim(param, N, grid = TRUE)
+x2 <- data2$x
+y2 <- data2$y
+```
+
+We check that the two algorithms return the same output:
+
+```{r, warning = FALSE, message = FALSE, }
+sum(abs(grad_desc_mom(par = c(1,1,1,1), grad = grad_gd, H = H, x = x2, y = y2) -
+  gd_grid(par = c(1,1,1,1), x = x2, y = y2))) < 10^(-13)
+```
+
+Comparing grid version with regular GD by benchmarking with 100 point
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE, fig.width=16, fig.height=4, fig.align='center'}
+x_bench <- x2[1:100]
+y_bench <- y2[1:100]
+
+bench_results1 <- bench::mark(
+    "GD" = grad_desc_mom(par = sv1, grad = grad_gd, H = H, x = x2, y = y2),
+    "Grid GD"= gd_grid(par = sv1, x = x2, y = y2),
+    iterations = 100,
+    check = F
+)
+
+
+x_bench <- x2[1:1000]
+y_bench <- y2[1:1000]
+
+bench_results2 <- bench::mark(
+    "GD" = grad_desc_mom(par = sv1, grad = grad_gd, H = H, x = x2, y = y2),
+    "Grid GD"= gd_grid(par = sv1, x = x2, y = y2),
+    iterations = 100,
+    check = F
+)
+
+grid.arrange(
+  plot(bench_results1) + ggtitle("n = 100"),
+  plot(bench_results2) + ggtitle("n = 1000"),
+  nrow = 1
+)
+```
+
+---
+###Comparison for N large
+
+Convergence of the loss function against time
+
+```{r, warning=FALSE, echo = FALSE}
+#Simulating data
+set.seed(4027)
+param <- parameters(2,5,1,2)
+sim1 <- sim(param, 100)
+sim2 <- sim(param, 1000)
+sim3 <- sim(param, 10000)
+start_p <- c(1,1,1,1)
+#Adjusting decayschedulers
+decaySGD <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.01)
+decayMB <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.001)
+decayMOM <- decay_scheduler(gamma0 = 1, a = 0.5, n1 = 150, gamma1 = 0.001)
+
+##### Running the algorithms ########
+#Gradient descent
+gd1 <-  GD(par = start_p, H = H, x = sim1$x, y = sim1$y, true_par = param$par, 
+           alg = grad_desc_mom, maxit = 150)
+gd2 <- GD(par = start_p, H = H, x = sim2$x, y = sim2$y, true_par = param$par, 
+          alg = grad_desc_mom, maxit = 150)
+gd3 <- GD(par = start_p, H = H, x = sim3$x,  y = sim3$y, true_par = param$par, 
+          alg = grad_desc_mom, maxit = 150)
+d_gd1 <- plot_data(gd1)
+d_gd2 <- plot_data(gd2)
+d_gd3 <- plot_data(gd3)
+#Vanilla SGD
+sgd1 <- SGD(par0 = start_p, grad = grad_mult, gamma = decaySGD, x = sim1$x, 
+            y = sim1$y, true_par = param$par, maxit = 150)
+sgd2 <- SGD(par0 = start_p, grad = grad, gamma = decaySGD, x = sim2$x, 
+            y = sim2$y, true_par = param$par, maxit = 150)
+sgd3 <- SGD(par0 = start_p, grad = grad, gamma = decaySGD, x = sim3$x, 
+            y = sim3$y, true_par = param$par, maxit = 150)
+d_sgd1 <- plot_data(sgd1)
+d_sgd2 <- plot_data(sgd2)
+d_sgd3 <- plot_data(sgd3)
+#Minibatch
+mb1 <- SGD(par0 = start_p, grad = grad_mult, gamma = decayMB, epoch = batch, 
+           m = 25, x = sim1$x, y = sim1$y, true_par = param$par, maxit = 150)
+mb2 <- SGD(par0 = start_p, grad = grad_mult, gamma = decayMB, epoch = batch, 
+           m = 25, x = sim2$x, y = sim2$y, true_par = param$par, maxit = 150)
+mb3 <- SGD(par0 = start_p, grad = grad_mult, gamma = decayMB, epoch = batch, 
+           m = 25, x = sim3$x, y = sim3$y, true_par = param$par, maxit = 150)
+d_mb1 <- plot_data(mb1)
+d_mb2 <- plot_data(mb2)
+d_mb3 <- plot_data(mb3)
+```
+
+
+```{r, warning=FALSE, echo = FALSE}
+#Momentum
+mom1 <- SGD(par0 = start_p, grad = grad_mult, gamma = decaySGD, epoch = momentum(), 
+            m = 25, maxit = 150, x = sim1$x, y = sim1$y, true_par =  param$par)
+mom2 <- SGD(par0 = start_p, grad = grad_mult, gamma = decaySGD, epoch = momentum(), 
+            m = 25, maxit = 150, x = sim2$x, y = sim2$y, true_par =  param$par)
+mom3 <- SGD(par0 = start_p, grad = grad_mult, gamma = decaySGD, epoch = momentum(), 
+            m = 25, maxit = 150, x = sim3$x, y = sim3$y, true_par = param$par)
+d_mom1 <- plot_data(mom1)
+d_mom2 <- plot_data(mom2)
+d_mom3 <- plot_data(mom3)
+#Adam
+ad1 <- SGD(par0 = start_p, grad = grad_mult, gamma = decaySGD, epoch = adam(), 
+           m = 25, maxit = 150, x = sim1$x, y = sim1$y, true_par =  param$par)
+ad2 <- SGD(par0 = start_p, grad = grad_mult, gamma = decaySGD, epoch = adam(), 
+           m = 25, maxit = 150, x = sim2$x, y = sim2$y, true_par =  param$par)
+ad3 <- SGD(par0 = start_p, grad = grad_mult, gamma = decaySGD, epoch = adam(), 
+           m = 25, maxit = 150, x = sim3$x, y = sim3$y, true_par =  param$par)
+d_ad1 <- plot_data(ad1)
+d_ad2 <- plot_data(ad2)
+d_ad3 <- plot_data(ad3)
+```
+
+
+```{r, echo =F, warning=FALSE}
+#Plot theming
+my_color_scale <- scale_color_manual(
+   name = "Optimization Methods",
+  values = c("GD" = "hotpink4", "SGD" = "tan4", "MB" = "steelblue4", 
+             "Momentum" = "#4f7942", "Adam" = "coral4")
+)
+
+my_theme <-   theme(
+    text = element_text(size = 16),  # Change the base text size
+    plot.title = element_text(size = 18),  # Title size
+    axis.title = element_text(size = 16),  # Axis titles size
+    axis.text = element_text(size = 14),  # Axis text size
+    legend.title = element_text(size = 18),  # Legend title size
+    legend.text = element_text(size = 16),  # Legend text size
+    legend.position = "none",  # Keep the legend hidden
+     line = element_line(linewidth = 4) +
+      theme_bw()
+  )
+```
+
+
+```{r, echo = FALSE, fig.retina = 2, fig.width = 16, fig.height = 7, class = "center", warning = FALSE}
+l_time_1 <- ggplot(d_gd1, aes(x = .time, y = loss, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 100", x = "Time", y = "Loss") + 
+  geom_line(aes (y = d_sgd1$loss, color = "SGD")) +
+  geom_line(aes (y = d_mb1$loss, color = "MB")) +
+  geom_line(aes (y = d_mom1$loss, color = "Momentum")) +
+  geom_line(aes (y = d_ad1$loss, color = "Adam")) +
+  my_color_scale +
+  my_theme
+               
+l_time_2 <- ggplot() +
+      geom_line(aes(x = d_gd2$.time, y = d_gd2$loss, color = "GD")) +
+      scale_y_log10() +
+      labs(title = "N = 1000", x = "Time", y = "Loss") + 
+  geom_line(aes (x = d_sgd2$.time, y = d_sgd2$loss, color = "SGD")) +
+  geom_line(aes (x = d_mb2$.time, y = d_mb2$loss, color = "MB")) +
+  geom_line(aes (x = d_mom2$.time, y = d_mom2$loss, color = "Momentum")) +
+  geom_line(aes (x = d_ad2$.time, y = d_ad2$loss, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+l_time_3 <- ggplot() +
+      geom_line(aes(x = d_gd3$.time, y = d_gd3$loss, color = "GD")) +
+      scale_y_log10() +
+      labs(title = "N = 10.000", x = "Time", y = "Loss") + 
+  geom_line(aes (x = d_sgd3$.time, y = d_sgd3$loss, color = "SGD")) +
+  geom_line(aes (x = d_mb3$.time, y = d_mb3$loss, color = "MB")) +
+  geom_line(aes (x = d_mom3$.time, y = d_mom3$loss, color = "Momentum")) +
+  geom_line(aes (x = d_ad3$.time,y = d_ad3$loss, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+legend_plot <- ggplot() +
+      geom_line(aes(x = d_gd3$.time, y = d_gd3$loss, color = "GD")) +
+      scale_y_log10() +
+      labs(title = "N = 10.000", x = "Time", y = "Loss") + 
+  geom_line(aes(x = d_sgd3$.time, y = d_sgd3$loss, color = "SGD")) +
+  geom_line(aes(x = d_mb3$.time, y = d_mb3$loss, color = "MB")) +
+  geom_line(aes(x = d_mom3$.time, y = d_mom3$loss, color = "Momentum")) +
+  geom_line(aes(x = d_ad3$.time, y = d_ad3$loss, color = "Adam")) +
+  my_color_scale +
+  theme(
+    text = element_text(size = 16),  # Change the base text size
+    plot.title = element_text(size = 18, face = "bold"),  # Title size
+    axis.title = element_text(size = 14),  # Axis titles size
+    axis.text = element_text(size = 12),  # Axis text size
+    legend.title = element_text(size = 14),  # Legend title size
+    legend.text = element_text(size = 12))
+
+legend_l <- cowplot::get_legend(legend_plot)
+
+grid.arrange(l_time_1, l_time_2, l_time_3, legend_l, nrow = 1)
+```
+
+---
+###Comparison for N large
+
+Convergence of $|H(\theta') - H(\theta)|$ against time
+```{r, echo = FALSE, fig.retina = 2, fig.width = 16, fig.height = 7, class = "center", warning = FALSE}
+a_time_1 <- ggplot(d_gd1, aes(x = .time, y = abs_dist_from_par, color = "GD")) +
+      geom_line() +
+      scale_y_log10() +
+      labs(title = "N = 100", x = "Time", y = "abs_dist_from_par") + 
+  geom_line(aes (y = d_sgd1$abs_dist_from_par, color = "SGD")) +
+  geom_line(aes (y = d_mb1$abs_dist_from_par, color = "MB")) +
+  geom_line(aes (y = d_mom1$abs_dist_from_par, color = "Momentum")) +
+  geom_line(aes (y = d_ad1$abs_dist_from_par, color = "Adam")) +
+  my_color_scale +
+  my_theme
+               
+a_time_2 <- ggplot() +
+      geom_line(aes(x = d_gd2$.time, y = d_gd2$abs_dist_from_par, color = "GD")) +
+      scale_y_log10() +
+      labs(title = "N = 1000", x = "Time", y = "abs_dist_from_par") + 
+  geom_line(aes (x = d_sgd2$.time, y = d_sgd2$abs_dist_from_par, color = "SGD")) +
+  geom_line(aes (x = d_mb2$.time, y = d_mb2$abs_dist_from_par, color = "MB")) +
+  geom_line(aes (x = d_mom2$.time, y = d_mom2$abs_dist_from_par, color = "Momentum")) +
+  geom_line(aes (x = d_ad2$.time, y = d_ad2$abs_dist_from_par, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+a_time_3 <- ggplot() +
+      geom_line(aes(x = d_gd3$.time, y = d_gd3$abs_dist_from_par, color = "GD")) +
+      scale_y_log10() +
+      labs(title = "N = 10.000", x = "Time", y = "abs_dist_from_par") + 
+  geom_line(aes (x = d_sgd3$.time, y = d_sgd3$abs_dist_from_par, color = "SGD")) +
+  geom_line(aes (x = d_mb3$.time, y = d_mb3$abs_dist_from_par, color = "MB")) +
+  geom_line(aes (x = d_mom3$.time, y = d_mom3$abs_dist_from_par, color = "Momentum")) +
+  geom_line(aes (x = d_ad3$.time,y = d_ad3$abs_dist_from_par, color = "Adam")) +
+  my_color_scale+
+  my_theme
+
+grid.arrange(a_time_1, a_time_2, a_time_3, legend_l, nrow = 1)
+```
+
+---
+### Conclusion
