@@ -5,9 +5,9 @@ grad_desc <- function(
     grad,
     H,
     t0 = 1,
-    maxit = 1200,
+    maxit = 1000,
     cb = NULL,
-    epsilon = 1e-3,
+    epsilon = 1e-7,
     beta = 0.8,
     alpha = 0.1,
     x,
@@ -63,9 +63,9 @@ GD <- function(par,
                grad = grad_gd,
                H = H,
                t0 = 1,
-               maxit = 1200,
+               maxit = 1000,
                cb = GD_tracer$tracer,
-               epsilon = 1e-6,
+               epsilon = 1e-7,
                beta = 0.8,
                alpha = 0.1,
                true_par = NULL,
@@ -112,20 +112,21 @@ print.My_GD <- function(object){
 }
 
 # Plot method
-plot.My_GD <- function(object, plot_no = 1, ...) {
+plot.My_GD <- function(object, plot_no = 1, ref = NULL, ...) {
   x <- object$additional_args$x
   y <- object$additional_args$y
-  true_par <- object$true_par
+  min_loss <- ref[[1]]
+  optim_par <- ref[[2]]
   
   loss <- H_mult(x = x, y = y, 
                              alpha = object$trace$par.1, 
                              beta = object$trace$par.2,
                              gamma = object$trace$par.3,
                              rho = object$trace$par.4)
-  true_par <- object$additional_args$true_par
-  H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+
+  H_distance <- abs(min_loss - loss)
   abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) 
-    sum(abs(par_est - true_par)))
+    sum(abs(par_est - optim_par)))
   
   GD_plot_df <- data.frame(object$trace, loss, H_distance)
   
@@ -143,21 +144,19 @@ plot.My_GD <- function(object, plot_no = 1, ...) {
     ggplot(GD_plot_df, aes(x = .time, y = abs_dist_from_par)) +
       geom_line() +
       scale_y_log10() +
-      labs(title = "Sum of absolute distance to true parameters vs Time", x = "Time", y = "Distance") 
+      labs(title = "Sum of absolute distance to optimal parameters vs Time", x = "Time", y = "Distance") 
   } else {
     stop("Invalid plot number. Please choose 1 2 or 3.")
   }
 }
 
-# Method to extract plot data
-plot_data <- function(x) {
-  UseMethod("plot_data")
-}
 
-
-plot_data.My_GD <- function(object) {
+plot_data.My_GD <- function(object, ref = NULL) {
   x <- object$additional_args$x
   y <- object$additional_args$y
+  
+  min_loss <- ref[[1]]
+  optim_par <- ref[[2]]
   
   loss <- H_mult(x = x, y = y, 
                              alpha = object$trace$par.1, 
@@ -166,9 +165,8 @@ plot_data.My_GD <- function(object) {
                              rho = object$trace$par.4)
   
 
-  true_par <- object$true_par
-  H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
-  abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
+  H_distance <- abs(min_loss - loss)
+  abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - optim_par)))
   
   GD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
   
@@ -181,14 +179,14 @@ grad_desc_mom <- function(
     grad,
     H,
     t0 = 1,
-    maxit = 1200,
+    maxit = 1000,
     cb = NULL,
-    epsilon = 1e-6,
+    epsilon = 1e-7,
     beta = 0.8,
     alpha = 0.1,
     x,
     y,
-    mu = 0.9,
+    mu = 0.99,
     ...) {
   
   n <- length(x)

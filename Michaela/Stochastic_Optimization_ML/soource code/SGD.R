@@ -9,6 +9,7 @@ sgd <- function(
     cb = NULL,
     epoch = vanilla,
     m = 1, # Batch size
+    epsilon = 1e-7,
     x,
     y,
     ...) {
@@ -32,6 +33,7 @@ sgd <- function(
   }
   par
 }
+
 
 ##### Tracer #####################################
 
@@ -80,10 +82,16 @@ print.My_SGD <- function(object){
   print(tail(object$trace, 1)[,6])
 }
 
+
+######## Suboptimality plot
+
 # Plot method
-plot.My_SGD <- function(object, plot_no = 1, ...) {
+plot.My_SGD <- function(object, plot_no = 1, ref = NULL, ...) {
   x <- object$additional_args$x
   y <- object$additional_args$y
+  
+  min_loss <- ref[[1]]
+  optim_par <- ref[[2]]
   
   loss <- H_mult(x = x, y = y, 
                  alpha = object$trace$par.1, 
@@ -91,10 +99,9 @@ plot.My_SGD <- function(object, plot_no = 1, ...) {
                  gamma = object$trace$par.3,
                  rho = object$trace$par.4)
   
-  true_par <- object$true_par
-  H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
+  H_distance <- abs(min_loss - loss)
   abs_dist_from_par <- apply(object$trace[,1:4], 1, 
-                               FUN = function(par_est) sum(abs(par_est - true_par)))
+                               FUN = function(par_est) sum(abs(par_est - optim_par)))
   
   SGD_plot_df <- data.frame(object$trace, loss, H_distance)
   
@@ -107,26 +114,29 @@ plot.My_SGD <- function(object, plot_no = 1, ...) {
     ggplot(SGD_plot_df, aes(x = .time, y = H_distance)) +
       geom_line() +
       scale_y_log10() +
-      labs(title = "Distance to True Loss vs Time", x = "Time", y = "Distance") 
+      labs(title = "Distance to Minimal Loss vs Time", x = "Time", y = "Distance") 
   } else if (plot_no == 3){
     ggplot(SGD_plot_df, aes(x = .time, y = abs_dist_from_par)) +
       geom_line() +
       scale_y_log10() +
-      labs(title = "Sum of absolute distance to true parameters vs Time", x = "Time", y = "Distance") 
+      labs(title = "Sum of absolute distance to optimal parameters vs Time", x = "Time", y = "Distance") 
   } else {
     stop("Invalid plot number. Please choose 1 2 or 3.")
   }
 }
 
 # Method to extract plot data
-plot_data <- function(x) {
+plot_data <- function(object, ref) {
   UseMethod("plot_data")
 }
 
 
-plot_data.My_SGD <- function(object) {
+plot_data.My_SGD <- function(object, ref = NULL) {
   x <- object$additional_args$x
   y <- object$additional_args$y
+  
+  min_loss <- ref[[1]]
+  optim_par <- ref[[2]]
   
   loss <- H_mult(x = x, y = y, 
                              alpha = object$trace$par.1, 
@@ -134,9 +144,8 @@ plot_data.My_SGD <- function(object) {
                              gamma = object$trace$par.3,
                              rho = object$trace$par.4)
   
-  true_par <- object$true_par
-  H_distance <- abs(H(x = x, y = y, par = true_par) - loss)
-  abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - true_par)))
+  H_distance <- abs(min_loss - loss)
+  abs_dist_from_par <- apply(object$trace[,1:4], 1, FUN = function(par_est) sum(abs(par_est - optim_par)))
   
   SGD_plot_df <- data.frame(".time" = object$trace$.time, loss, H_distance, abs_dist_from_par)
   
@@ -218,4 +227,36 @@ momentum <- function() {
     par
   } 
 }
+
+### Rcpp
+
+cppFunction('
+NumericVector grad_rcpp(NumericVector par, double x, double y) {
+  // Extract parameters
+  double alpha = par[0];
+  double beta = par[1];
+  double gamma = par[2];
+  double rho = par[3];
+  
+  // Calculating f(x, par)
+  double f_x = gamma + (rho - gamma) / (1 + exp(beta * log(x) - alpha));
+  
+  // Exponential term
+  double const_term = exp(beta * log(x) - alpha);
+  
+  // Identical part used in gradients
+  double identical_part = -2 * (y - f_x);
+
+  // Initialize gradients
+  double grad_alpha = identical_part * (rho - gamma) 
+  / pow(1 + const_term, 2) * const_term;
+  double grad_beta = - identical_part * log(x) * (rho - gamma) 
+  / pow(1 + const_term, 2) * const_term;
+  double grad_gamma = identical_part * (1 - 1 / (1 + const_term));
+  double grad_rho = identical_part / (1 + const_term);
+
+  // Return the mean of accumulated gradients
+  return NumericVector::create(grad_alpha , grad_beta , grad_gamma , grad_rho );
+}
+')
 

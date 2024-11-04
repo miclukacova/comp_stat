@@ -89,7 +89,6 @@ Where $\theta_t = (\alpha_t, \beta_t, \gamma_t, \rho_t)$ and $\gamma_t$ is the l
 ###Implementation 
 The gradient function and $f$ are implemented seperately
 ```{r}
-
 sgd <- function(
     par,
     grad, # Function of parameter and observation index
