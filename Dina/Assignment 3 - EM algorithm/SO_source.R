@@ -229,24 +229,26 @@ plot.My_EM <- function(object, plot_no = 1, mle_est = NULL,...) {
   }
 
   if (plot_no == 1) {
-    p <- ggplot(data = object$trace, aes(x = .time, y = log(par_norm_diff))) +
+    p <- ggplot(data = object$trace, aes(x = .time, y = par_norm_diff)) +
       geom_line(color = "coral4", size = 1.2) +
       geom_point(color = "coral4", size = 2.5) +
       labs(
         x = "Time",
         y = expression(log(bgroup("||", theta^{(n-1)} - theta^n, "||")))
       ) +
+      scale_y_log10() +
       my_theme
     return(p)
   }
   if (plot_no == 4) {
-    p <- ggplot(data = object$trace, aes(x = i, y = log(par_norm_diff))) +
+    p <- ggplot(data = object$trace, aes(x = i, y = par_norm_diff)) +
       geom_line(color = base, size = 1.2) +
       geom_point(color = base, size = 2.5) +
       labs(
         x = "Iterations",
         y = expression(log(bgroup("||", theta^{(n-1)} - theta^n, "||")))
       )+
+      scale_y_log10() +
       my_theme
     return(p)
   }
@@ -257,16 +259,18 @@ plot.My_EM <- function(object, plot_no = 1, mle_est = NULL,...) {
       labs(
            x = "Time",
            y = "Log-likelihood - logscale") +
+      scale_y_log10() +
       my_theme
     return(p)
   }
   else if (plot_no == 3) {
-    p <- ggplot(data = plot_data, aes(x = .time, y = log(suboptimality))) +
+    p <- ggplot(data = plot_data, aes(x = .time, y = suboptimality)) +
       geom_line(color = "steelblue4", size = 1.2) +
       geom_point(color = "steelblue4", size = 2) +
       labs(
            x = "Time",
            y = "Suboptimality - logscale") +
+      scale_y_log10() +
       my_theme
     return(p)
   }
@@ -291,7 +295,7 @@ heatmap.My_EM <- function(object, mle_est, gradient = F, path = F, ...){
   
   # Create a grid of m and s values
   m_values <- seq(-3, 3, length.out = 100)
-  s_values <- seq(0.01, 5, length.out = 100)
+  s_values <- seq(0.01, 5.5, length.out = 100)
   
   # Create a dataframe to store the values of m, s, and log_lik
   results <- expand.grid(m = m_values, s = s_values)
@@ -322,13 +326,13 @@ heatmap.My_EM <- function(object, mle_est, gradient = F, path = F, ...){
     
     # Create a dense grid for the heatmap (100 x 100)
     m_values <- seq(-3, 3, length.out = 100)
-    s_values <- seq(0.01, 5, length.out = 100)
+    s_values <- seq(0.01, 5.5, length.out = 100)
     results <- expand.grid(m = m_values, s = s_values)
     results$log_lik <- apply(results, 1, function(row) log_lik(row['m'], row['s'], ny = object$par_true$ny, x = as.matrix(object$x)))
     
     # Create a coarser grid for gradient arrows (10 x 10)
     m_values_coarse <- seq(-3, 3, length.out = 10)
-    s_values_coarse <- seq(0.01, 5, length.out = 10)
+    s_values_coarse <- seq(0.01, 5.5, length.out = 10)
     coarse_grid <- expand.grid(m = m_values_coarse, s = s_values_coarse)
     
     # Calculate gradients on the coarse grid
@@ -358,12 +362,12 @@ heatmap.My_EM <- function(object, mle_est, gradient = F, path = F, ...){
       geom_tile(aes(fill = log_lik)) +  # Specify `fill` only here
       geom_contour(aes(z = log_lik), color = "darkseagreen4", bins = 50) +
       scale_fill_gradient2(mid = "darkseagreen1", high = "coral1", low = "seagreen4", midpoint = -3000) +
-      geom_point(aes(x = theo_param$mu, y = theo_param$sigma), colour = "seagreen", size = 5) +
+      geom_point(aes(x = theo_param$mu, y = theo_param$sigma), colour = "darkgreen", size = 5) +
       geom_point(aes(x = EM_param[1], y = EM_param[2]), colour = "coral4", size = 5) +
       
       # Add text labels next to the points
       geom_text(aes(x = theo_param$mu, y = theo_param$sigma, label = "True MLE"), 
-                hjust = 1.2, vjust = 0.5, colour = "seagreen", size = 5) +
+                hjust = 1.2, vjust = 0.5, colour = "darkgreen", size = 5) +
       geom_text(aes(x = EM_param[1], y = EM_param[2], label = "EM Estimate"), 
                 hjust = -0.2, vjust = 0.5, colour = "coral4", size = 5) +
       
@@ -379,7 +383,7 @@ heatmap.My_EM <- function(object, mle_est, gradient = F, path = F, ...){
   }
   else if(gradient == F & path == T){
     # Path of EM
-    em_path <- object$trace %>% select(c(mu_mark,sigma_mark)) %>% rename(mu = mu_mark, sigma = sigma_mark)
+    em_path <- object$trace %>% select(c(mu_old,sigma_old)) %>% rename(mu = mu_old, sigma = sigma_old)
     em_path$log_lik <- log_lik(m = em_path$mu, s = em_path$sigma,  ny = object$par_true$ny, x = as.matrix(object$x))
     
     p <- ggplot(results, aes(x = m, y = s, fill = log_lik)) +
@@ -387,12 +391,12 @@ heatmap.My_EM <- function(object, mle_est, gradient = F, path = F, ...){
       geom_contour(aes(z = log_lik), color = "darkseagreen4", bins = 50) +
       scale_fill_gradient2(mid = "darkseagreen1", high = "coral1", low = "seagreen4", midpoint = -2700) +
       #geom_path(data = em_path, aes(x = mu, y = sigma), color = "seagreen", size = 1) +
-      geom_point(data = em_path, aes(x = mu, y = sigma), color = "seagreen", size = 5) +
-      geom_point(aes(x = theo_param$mu, y = theo_param$sigma), colour = "seagreen", size = 5) +
+      geom_point(data = em_path, aes(x = mu, y = sigma),color = "seagreen", size = 3, ) +
+      geom_point(aes(x = theo_param$mu, y = theo_param$sigma),colour = "darkgreen", size = 5, alpha = 0.6) +
       geom_point(aes(x = EM_param[1], y = EM_param[2]), colour = "coral4", size = 5) +
       # Add text labels next to the points
       geom_text(aes(x = theo_param$mu, y = theo_param$sigma, label = "True MLE"), 
-                hjust = 1.2, vjust = 0.5, colour = "seagreen", size = 5) +
+                hjust = 1.2, vjust = 0.5, colour = "darkgreen", size = 5, alpha = 0.6) +
       geom_text(aes(x = EM_param[1], y = EM_param[2], label = "EM Estimate"), 
                 hjust = -0.2, vjust = 0.5, colour = "coral4", size = 5) +
       labs(x = expression(mu), y = expression(sigma), fill = "loglikelihood") +
@@ -402,7 +406,8 @@ heatmap.My_EM <- function(object, mle_est, gradient = F, path = F, ...){
     return(p)
 
   }
-  }
+}
+
 
 #test$trace
 #heatmap.My_EM(test, theo_par(test$x, sim1$w, test$par_true$ny), gradient = T)

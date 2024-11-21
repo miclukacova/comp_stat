@@ -129,8 +129,7 @@ $$\sigma^2_{opt} =\frac{1}{n\nu}\sum_{i=1}^nw_i(x_i-\mu)^2$$
 For the E-step we need to compute the $Q$-function
 $$Q(\theta|\theta')=E_{\theta'}\left(\log( f(X,W \ | \ \theta) \ | \ X=x) \right)= \sum_{i=1}^nE_{\theta'}(\log( f(x_i,W_i \ | \ \theta) \ | \ X_i=x_i) )\\
 =\sum_{i=1}^nE_{\theta'}\left( \log\left( \frac{1}{\sqrt{\pi \sigma \nu}2^{(\nu+1)/2}\Gamma(\nu/2)}w^{\frac{\nu-1}{2}}e^{-\frac{w}{2}\left(1+\frac{(x-\mu)^2}{\nu\sigma^2} \right)}\right) \right)\\
-=-\sum_{i=1}^n\log\left(\sigma\sqrt{\pi\nu}2^{(\nu+1)/2}\Gamma(\nu/2) \right)+\frac{\nu-1}{2}\sum_{i=1}^nE_{\theta'}( \log(W_i\ | \ X_i=x_i))\\
--\frac{1}{2}\left(1+\frac{(x_i-\mu)^2}{\nu\sigma^2} \right)\sum_{i=1}^n E_{\theta'}(W_i \ | \ X_i=x_i)$$
+=-\sum_{i=1}^n\log\left(\sigma\sqrt{\pi\nu}2^{(\nu+1)/2}\Gamma(\nu/2) \right)+\frac{\nu-1}{2}\sum_{i=1}^nE_{\theta'}( \log(W_i\ | \ X_i=x_i))-\frac{1}{2}\left(1+\frac{(x_i-\mu)^2}{\nu\sigma^2} \right)\sum_{i=1}^n E_{\theta'}(W_i \ | \ X_i=x_i)$$
 
 The conditional distribution of $W_i \ | X_i=x_i$ can be recognized as the gamma distribution with shape $k = \frac{\nu+1}{2}$ and scale $t_i = \frac{2}{1+\frac{(x_i-\mu')^2}{\nu\sigma'^2} }$. Hence we have:
 .pull-left[
@@ -148,12 +147,12 @@ $$
 ###M-step
 For the M-step we need to maximize the $Q$-function with respect to $\mu$ and $\sigma^2$. This can be done analytically:
 .pull-left[
-$$\frac{\partial }{\partial\mu}Q(\theta|\theta')=-\sum_{i=0}^n\frac{(x_i-\mu)}{\nu\sigma^2}kt_i\\
+$$\frac{\partial }{\partial\mu}Q(\theta|\theta')=-\sum_{i=1}^n\frac{(x_i-\mu)}{\nu\sigma^2}kt_i\\
 \Rightarrow\hat{\mu}_{opt}=\frac{\sum_{i=1}^nx_it_i}{\sum_{i=1}^nt_i}$$
 ]
 
 .pull-right[
-$$\frac{\partial }{\partial\sigma}Q(\theta|\theta')=\frac{n}{\sigma}-3\sum_{i=1}^n\frac{(x_i-\mu)^2}{\nu\sigma^2}kt_i \\
+$$\frac{\partial }{\partial\sigma}Q(\theta|\theta')=-\frac{n}{\sigma}+\sum_{i=1}^n\frac{(x_i-\mu)^2}{\nu\sigma^3}kt_i \\
 \Rightarrow \hat{\sigma}^2_{opt}=\frac{1}{n\nu}k\sum_{i=1}^n(x_i-\mu)^2t_i$$
 ]
 
@@ -207,6 +206,8 @@ S3 object for both simulation and the EM algorithm
 - `parameters`-class for $\mu$, $\sigma^2$ and $\nu$ - and a `sim` function that simulates $W$ from a $\mathcal{X}_\nu^2$-distribution and then simulates $X$ from a normal distribution with mean $\mu$ and variance $\frac{\nu\sigma^2}{w}$ for $W =w$.
 
 - `EM`-class for the EM algorithm, with corresponding `summary`, `print` and a `plot`-method. The `plot`-method can both plot the loglikelihood-convergence but also the suboptimality to the true MLE-estimates. We have the true MLE estimates as we simulate data ourselves.
+
+- Stopping criterion is $||\theta' - \theta||^2\leq \varepsilon||\theta||^2 + \varepsilon$
 
 ```{r}
 EM(sim1$x, parameters(1, 2, 3), 20, 1e-10, par_true = parameters(1, 1, 1))
@@ -314,9 +315,9 @@ exp(coefficients(log_lm)["i"])
 
 ---
 ###Heatmaps
-We now want to visualize the convergence furter.
+We now want to visualize the convergence further.
 ```{r, warning=FALSE, fig.align='center', fig.width= 16, fig.height= 6, message = FALSE}
-p1 <- heatmap.My_EM(EM1, theo_par(sim1$x, sim1$w, 1), path = T)
+p1 <- heatmap.My_EM(EM1, theo_par(sim1$x, sim1$w, 1), path = T) + ylim(0,5.5)
 p2 <- heatmap.My_EM(EM1, theo_par(sim1$x, sim1$w, 1), gradient = T)
 grid.arrange(p1, p2, ncol = 2)
 ```
@@ -333,8 +334,33 @@ grid.arrange(p1, p2, ncol = 2)
 ```
 
 ---
+### Gradiant Descent
+
+As loss function we will use the negative loglikelihood divided by $\frac{1}{n}$
+
+$$-\frac{1}{n}\mathcal{l}(\theta) = \frac{1}{n}\sum_{i=1}^n \log(\sigma) + \frac{\nu +1 }{2} \log \left( 1 + \frac{(x_i - \mu)^2}{\nu \sigma^2} \right)$$
+The gradient is
+
+$$\nabla - \mathcal{l}(\theta) =  \begin{pmatrix} \sum_{i=1}^n  \left(\nu +1 \right) \frac{(x_i - \mu)}{(x_i - \mu)^2 + \nu \sigma^2}  \\ \sum_{i=1}^n \frac{1}{\sigma} -  \frac{(\nu +1)}{  \nu \sigma^2 + (x_i - \mu)^2} \frac{(x_i - \mu)^2}{\sigma} \end{pmatrix}$$
+ 
+We implement the gradient in the function `grad` and check that the gradient is close to $0$ in the full data MLE estimates.
+
+```{r, message=FALSE, echo = FALSE, warning=FALSE, fig.width=10, fig.height=4, fig.align='center'}
+grad_negloglik <- function(mu, sigma, nu, x){
+  n <- length(x)
+  d_mu <- - (nu + 1) * sum((x - mu) / (nu * sigma^2 + (x - mu)^2))
+  d_sigma <- n/sigma - (nu + 1) / sigma * sum((x - mu)^2 / (nu * sigma^2 + (x - mu)^2))
+  return(c(d_mu, d_sigma))
+}
+mle_est <- theo_par(sim1$x, sim1$w, 1)
+grad_negloglik(mu = mle_est$mu, sigma = sqrt(mle_est$sigma), nu = 1, x = sim1$x) * 1 / length(sim1$x)
+```
+
+---
 ###Gradient Descent
-Now implementing Gradient Descent to compare it to our EM. The GD is implemented for a normalized negative loglikelihood and with backtracking linesearch and initial stepsize $1$. We first look at the convergence of GD. Done for data simulated from $parameters = (1,1,1)$ and with starting points $(-2,5)$ - same as for EM. 
+Now implementing Gradient Descent to compare it to our EM. Wrapped in an S3-function similar to that of the EM. Initial stepsize $1$ and topping criterion is also $||\theta' - \theta||^2\leq \varepsilon||\theta||^2 + \varepsilon$.
+
+We first look at the convergence of GD for data simulated from $parameters = (1,1,1)$ and with starting points $(-2,5)$ - same as for EM.  
 <br>
 ```{r, echo=FALSE}
 source("~/comp_stat/Dina/Assignment 3 - EM Algorithm/GD.R", local = FALSE)
@@ -342,7 +368,7 @@ source("~/comp_stat/Dina/Assignment 3 - EM Algorithm/GD.R", local = FALSE)
 
 ```{r, echo = FALSE, fig.width = 16, fig.height = 5}
 mle_est1 <- c(theo_par(sim1$x, sim1$w, 1)$mu, theo_par(sim1$x, sim1$w, 1)$sigma)
-GD1 <- GD(par = c(-2, 5), x = sim1$x, nu = 1)
+GD1 <- GD(par = c(-2, 5), x = sim1$x, nu = 1, epsilon = 1e-10)
 p1 <- plot(GD1, 1) + my_theme
 p2 <- plot(GD1, 2) + my_theme
 p3 <- plot(GD1, 3, mle_est1) + my_theme
@@ -351,7 +377,7 @@ grid.arrange(p1, p2, p3, ncol = 3)
 
 ---
 ###Comparison
-Plotting the convergence-rate of EM in the same plot as GD
+Looking at the convergence of GD compared to the EM.
 <br>
 <br>
 ```{r, echo=FALSE, fig.width = 16, fig.height = 6}
@@ -368,8 +394,19 @@ p1 <- ggplot() +
         y = expression(log(bgroup("||", theta^{(n-1)} - theta^n, "||")))
         )
 
-GD1$trace$abs_dist_from_par <- apply(GD1$trace[,1:2], 1, FUN = function(par_est) sum(abs(par_est - mle_est1)))
-EM1$trace$abs_dist_from_par <- apply(EM1$trace[,1:2], 1, FUN = function(par_est) sum(abs(par_est - mle_est1)))
+log_lik_new <- function(par, ny, x = samp$x){
+  m <- par[[1]]
+  s <- par[[2]]
+  k <- (ny + 1) / 2
+  return( - length(x) * log(sqrt(s)) - sum(k * log(1 + (x - m)^2 / (ny * s))))
+}
+log_lik1 <- log_lik(mle_est1[1], mle_est1[2], 1, sim1$x)
+GD1$trace$abs_dist_from_par <- apply(GD1$trace[,1:2], 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
+EM1$trace$abs_dist_from_par <- apply(EM1$trace[,1:2] , 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
 
 p2 <- ggplot() +
   geom_line(data = GD1$trace, aes(x = .time, y = abs_dist_from_par, color = "GD"), size = 1.2) +
@@ -379,77 +416,301 @@ p2 <- ggplot() +
   my_theme +
   labs(
     x = "Time",
-    y = "Suboptimality - logscale"
+    y = "Suboptimality (ll) - logscale"
   ) +
   scale_color_manual(values = c("GD" = base, "EM" = "coral4")) +
   scale_y_log10()
+
+legend_plot <- ggplot() +
+  geom_line(data = GD1$trace, aes(x = .time, y = log(par_norm_diff), color = "GD"), size = 1.2) +
+  geom_point(data = GD1$trace, aes(x = .time, y = log(par_norm_diff)), color = base, size = 2.5) +
+  geom_line(data = EM1$trace, aes(x = .time, y = log(par_norm_diff), color = "EM"), size = 1.2) +
+  geom_point(data = EM1$trace, aes(x = .time, y = log(par_norm_diff)), color = "coral4", size = 2.5) +
+  my_theme +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4")) +
+  labs(
+    x = "Time",
+    y = expression(log(bgroup("||", theta^{(n-1)} - theta^n, "||")))
+  )
+grid.arrange(p1, p2, ncol = 2)
+```
+---
+#Optimizing GD
+As GD is not competitive, we seek to improve it by giving it Polyak momentum. Now the update step is:
+$$x_k = x_{k-1}-\gamma\nabla f(x_{k-1}) + \mu(x_{k-1}-x_{k-2}) \quad \text{for} \quad \mu\in[0,1), x_{-1}=x_0$$
+```{r, echo=FALSE, warning=FALSE, fig.width=16, fig.height=6}
+#Plotting EM, GD and optimized GD in the same plot
+source("~/comp_stat/Dina/Assignment 3 - EM Algorithm/EM_mom.R", local = FALSE)
+mle_est1 <- c(theo_par(sim1$x, sim1$w, 1)$mu, theo_par(sim1$x, sim1$w, 1)$sigma)
+GD_mom <- GD_m(par = c(-2, 5), x = sim1$x, nu = 1, mu = 0.9)
+
+p1 <- ggplot() +
+  geom_line(data = GD1$trace, aes(x = .time, y = log(par_norm_diff), color = "GD"), size = 1.2) +
+  geom_point(data = GD1$trace, aes(x = .time, y = log(par_norm_diff)), color = base, size = 2.5) +
+  geom_line(data = EM1$trace, aes(x = .time, y = log(par_norm_diff), color = "EM"), size = 1.2) +
+  geom_point(data = EM1$trace, aes(x = .time, y = log(par_norm_diff)), color = "coral4", size = 2.5) +
+  geom_line(data = GD_mom$trace, aes(x = .time, y = log(par_norm_diff), color = "Momentum"), size = 1.2) +
+  geom_point(data = GD_mom$trace, aes(x = .time, y = log(par_norm_diff)), color = "steelblue4", size = 2.5) +
+  my_theme +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4", "Momentum" = "steelblue4")) +
+        labs(
+        x = "Time",
+        y = expression(log(bgroup("||", theta^{(n-1)} - theta^n, "||")))
+        ) + theme(legend.position = "none")
+
+GD1$trace$abs_dist_from_par <- apply(GD1$trace[,1:2], 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
+EM1$trace$abs_dist_from_par <- apply(EM1$trace[,1:2] , 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
+GD_mom$trace$abs_dist_from_par <- apply(GD_mom$trace[,1:2], 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
+
+p2 <- ggplot() +
+  geom_line(data = GD1$trace, aes(x = .time, y = abs_dist_from_par, color = "GD"), size = 1.2) +
+  geom_point(data = GD1$trace, aes(x = .time, y = abs_dist_from_par), color = base, size = 2.5) +
+  geom_line(data = EM1$trace, aes(x = .time, y = abs_dist_from_par, color = "EM"), size = 1.2) +
+  geom_point(data = EM1$trace, aes(x = .time, y = abs_dist_from_par), color = "coral4", size = 2.5) +
+  geom_line(data = GD_mom$trace, aes(x = .time, y = abs_dist_from_par, color = "Momentum"), size = 1.2) +
+  geom_point(data = GD_mom$trace, aes(x = .time, y = abs_dist_from_par), color = "steelblue4", size = 2.5) +
+  my_theme +
+  labs(
+    x = "Time",
+    y = "Suboptimality - logscale"
+  ) +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4", "Momentum" = "steelblue4")) +
+  scale_y_log10() + theme(legend.position = "none")
+
+legend_plot <- ggplot() +
+  geom_line(data = GD1$trace, aes(x = .time, y = log(par_norm_diff), color = "GD"), size = 1.2) +
+  geom_point(data = GD1$trace, aes(x = .time, y = log(par_norm_diff)), color = base, size = 2.5) +
+  geom_line(data = EM1$trace, aes(x = .time, y = log(par_norm_diff), color = "EM"), size = 1.2) +
+  geom_point(data = EM1$trace, aes(x = .time, y = log(par_norm_diff)), color = "coral4", size = 2.5) +
+  geom_line(data = GD_mom$trace, aes(x = .time, y = log(par_norm_diff), color = "Momentum"), size = 1.2) +
+  geom_point(data = GD_mom$trace, aes(x = .time, y = log(par_norm_diff)), color = "steelblue4", size = 2.5) +
+  my_theme +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4", "Momentum" = "steelblue4")) +
+  labs(
+    x = "Time",
+    y = expression(log(bgroup("||", theta^{(n-1)} - theta^n, "||")))
+  )
+
+get_l <- cowplot::get_legend(legend_plot)
+
+p3 <- ggplot() +
+  geom_line(data = EM1$trace, aes(x = .time, y = abs_dist_from_par, color = "EM"), size = 1.2) +
+  geom_point(data = EM1$trace, aes(x = .time, y = abs_dist_from_par), color = "coral4", size = 2.5) +
+  geom_line(data = GD_mom$trace, aes(x = .time, y = abs_dist_from_par, color = "Momentum"), size = 1.2) +
+  geom_point(data = GD_mom$trace, aes(x = .time, y = abs_dist_from_par), color = "steelblue4", size = 2.5) +
+  my_theme +
+  labs(
+    x = "Time",
+    y = "Suboptimality - logscale"
+  ) +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4", "Momentum" = "steelblue4")) +
+  scale_y_log10()
+
+
+
+grid.arrange(p1, p2, get_l, p3, ncol = 4, widths = c(2,2,1,3))
+```
+
+---
+###Comparison for larger datasets
+Increasing $n$, to see how that impacts performance of the two.
+```{r, echo=FALSE, warning=FALSE, fig.width = 16, fig.height = 6}
+set.seed(123)
+sim1_large <- sim(parameters(1,1,1), 10000)
+sim1_larger <- sim(parameters(1,1,1), 100000)
+
+mle_est1 <- c(theo_par(sim1$x, sim1$w, 1)$mu, theo_par(sim1$x, sim1$w, 1)$sigma)
+GD_mom_l <- GD_m(par = c(-2, 5), x = sim1_large$x, nu = 1, mu = 0.9, epsilon = 1e-10)
+GD_mom_la <- GD_m(par = c(-2, 5), x = sim1_larger$x, nu = 1, mu = 0.9, epsilon = 1e-10)
+EM1_l <- EM(sim1_large$x, parameters(-2,5,1), 20, 1e-10, par_true = parameters(1, 1,1))
+EM1_la <- EM(sim1_larger$x, parameters(-2,5,1), 20, 1e-10, par_true = parameters(1, 1,1))
+
+EM1_l$trace$abs_dist_from_par <- apply(EM1_l$trace[,1:2] , 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
+GD_mom_l$trace$abs_dist_from_par <- apply(GD_mom_l$trace[,1:2], 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
+EM1_la$trace$abs_dist_from_par <- apply(EM1_la$trace[,1:2] , 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
+GD_mom_la$trace$abs_dist_from_par <- apply(GD_mom_la$trace[,1:2], 1, FUN = function(par_est) sum(
+  abs(log_lik1 - log_lik_new(par_est, ny = par1[3], x = sim1$x)))
+)
+
+p1 <- ggplot() +
+  geom_line(data = EM1_l$trace, aes(x = .time, y = abs_dist_from_par, color = "EM"), size = 1.2) +
+  geom_point(data = EM1_l$trace, aes(x = .time, y = abs_dist_from_par), color = "coral4", size = 2.5) +
+  geom_line(data = GD_mom_l$trace, aes(x = .time, y = abs_dist_from_par, color = "Momentum"), size = 1.2) +
+  geom_point(data = GD_mom_l$trace, aes(x = .time, y = abs_dist_from_par), color = "steelblue4", size = 2.5) +
+  my_theme +
+  labs(title = "n = 10.000",
+    x = "Time",
+    y = "Suboptimality - logscale"
+  ) +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4", "Momentum" = "steelblue4")) +
+  scale_y_log10()
+
+p2 <- ggplot() +
+  geom_line(data = EM1_la$trace, aes(x = .time, y = abs_dist_from_par, color = "EM"), size = 1.2) +
+  geom_point(data = EM1_la$trace, aes(x = .time, y = abs_dist_from_par), color = "coral4", size = 2.5) +
+  geom_line(data = GD_mom_la$trace, aes(x = .time, y = abs_dist_from_par, color = "Momentum"), size = 1.2) +
+  geom_point(data = GD_mom_la$trace, aes(x = .time, y = abs_dist_from_par), color = "steelblue4", size = 2.5) +
+  my_theme +
+  labs(title = "n = 100.000",
+    x = "Time",
+    y = "Suboptimality - logscale"
+  ) +
+  scale_color_manual(values = c("GD" = base, "EM" = "coral4", "Momentum" = "steelblue4")) +
+  scale_y_log10()
+
 grid.arrange(p1, p2, ncol = 2)
 ```
 
 
 ---
 ###Fischer Information
-The Fischer information matrix can be calculated as the empirical variance of the gradient of our $Q$ function. We can calculate the gradient of $Q$ wrt. $\mu$ and $\sigma^2$ and the Fischer information:
-.pull.left[
-$$\frac{\partial }{\partial\mu}Q(\theta|\theta')=-\sum_{i=0}^n\frac{(x_i-\mu)}{\nu\sigma^2}kt_i\\
-\frac{\partial }{\partial\sigma}Q(\theta|\theta')=\frac{n}{\sigma}-3\sum_{i=1}^n\frac{(x_i-\mu)^2}{\nu\sigma^2}kt_i$$
-]
-.pull.right[
-$$I(\theta) = \begin{pmatrix}
-\sum_{i=1}^n\frac{kt_i}{\sigma^2} & -\sum_{i=1}^n\frac{(x_i-\mu)kt_i}{\nu\sigma^3} \\
--\sum_{i=1}^n\frac{(x_i-\mu)kt_i}{\nu\sigma^3} & \frac{n}{\sigma^2}-3\sum_{i=1}^n\frac{(x_i-\mu)^2kt_i}{\nu\sigma^4}
-\end{pmatrix}$$
-]
-We can then implement it, so that we can calculate it:
-```{r, echo=FALSE}
-Fisher_info <- function(x, param, ny){
-  mu_mark <- param$mu 
-  sigma_mark <- param$sigma
-  ny <- ny
-  k <- (ny + 1) / 2   
-  t <- 2 / (1 + (x - mu_mark)^2 / (ny * sigma_mark))
-  I <- matrix(0, 2, 2)
-  I[1,1] <- sum(k * t / sigma_mark^2)
-  I[1,2] <- -sum((x - mu_mark) * k * t / (ny * sigma_mark^3))
-  I[2,1] <- I[1,2]
-  I[2,2] <- n / sigma_mark^2 - 3 * sum((x - mu_mark)^2 * k * t / (ny * sigma_mark^4))
-  I
-}
-```
+The empirical Fischer information matrix can be calculated as the empirical variance of the gradient of our $Q$ function. For a single observation we have
+$$\nabla_\theta Q_i(\theta'|\theta')=\nabla_\theta \ell_i(\theta')$$
+Where $\ell_i(\theta')$ is the loglikelihood for a single observation. By using the second Bartlett identity we have that the empirical Fischer information matrix can be calculated as
+$$\mathcal{I}(\hat{\theta}) = \sum_{i=1}^n\left(\nabla_\theta Q_i(\hat{\theta}|\hat{\theta})- N^{-1}\nabla_\theta \ell(\hat{\theta}) \right)\left(\nabla_\theta Q_i(\hat{\theta}|\hat{\theta})- N^{-1}\nabla_\theta \ell(\hat{\theta}) \right)^T$$
+We will calculate this both for $\nabla_\theta l(\hat{\theta})=0$ and without. To see if the fact that $\nabla_\theta l(\hat{\theta})$ is only approximately zero has any effect. We have already calculated the gradient of $Q$ wrt. $\mu$ and $\sigma^2$ for the M-step of our EM.
+
 
 ---
 ###Fischer information
 
-We can also calculate the empirical Fischer information using the `numDeriv`-package on our gradient function.
-```{r, echo=FALSE}
+We will now implement it and compare it to the numerical derivative obtained using `numDeriv`. We will calculate it in the optimal parameters from our EM-algorithm.
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
 library(numDeriv)
-# Define the gradient function
-grad_negloglik <- function(mu, sigma, nu, x) {
+#Med sigma^2 som input!!!!
+grad_sing_point <- function(par, ny, x){
+  m <- par[1]
+  s <- par[2]
+  k <- (ny + 1) / 2
+  
+  # Using consistent variance treatment and k factor
+  par_m <- - (k * 2 * (x - m)) / (ny * s + (x - m)^2)
+  par_s <- -1 / (2 * s) + (k * (x - m)^2) / (ny * s^2 + (x - m)^2)
+  return(c(par_m, par_s))
+}
+
+
+#Michaelas gradient
+grad <- function(par, nu, x) {
+  m <- par[1]
+  s <- par[2]
   n <- length(x)
-  d_mu <-  (nu + 1) * sum((x - mu) / (nu * sigma^2 + (x - mu)^2))
-  d_sigma <- - n / sigma - (nu + 1) / sigma * sum((x - mu)^2 / (nu * sigma^2 + (x - mu)^2))
+  k <- (nu + 1) / 2
+  
+  # Partial derivative with respect to m
+  partial_m <- -sum((k * 2 * (x - m)) / (nu * s * (1 + (x - m)^2 / (nu * s))))
+  
+  # Partial derivative with respect to s
+  partial_s <- -n / (2 * s) + sum(k * (x - m)^2 / (nu * s^2 * (1 + (x - m)^2 / (nu * s))))
+  
+  return(c(partial_m, partial_s))
+}
+
+
+#Centralized version - we need the gradient of the loglikelihood
+grad_negloglik_old <- function(par, nu, data){
+  mu <- par[1]
+  sigma <- par[2]
+  w <- 2 / (1 + (data - mu)^2 / (nu * sigma^2))
+  grad_mu <- -sum(w * (data - mu)) / (nu * sigma^2)
+  grad_sigma <- -length(data) / sigma + sum(w * (data - mu)^2) / (nu * sigma^2)
+  return(c(grad_mu, grad_sigma))
+}
+
+grad_negloglik <- function(par, nu, data){
+  mu <- par[1]
+  sigma <- par[2]
+  n <- length(data)
+  d_mu <- - (nu + 1) * sum((data - mu) / (nu * sigma^2 + (data - mu)^2))
+  d_sigma <- n/sigma - (nu + 1) / sigma * sum((data - mu)^2 / (nu * sigma^2 + (data - mu)^2))
   return(c(d_mu, d_sigma))
 }
+
+grad_loglik <- function(par, nu, data){
+  mu <- par[1]
+  sigma <- par[2]
+  n <- length(data)
+  d_mu <- (nu + 1) * sum((data - mu) / (nu * sigma^2 + (data - mu)^2))
+  d_sigma <- - n/sigma + (nu + 1) / sigma * sum((data - mu)^2 / (nu * sigma^2 + (data - mu)^2))
+  return(c(d_mu, d_sigma))
+}
+
+
+fisher_information_naive_cent <- function(gradient, par, nu, data){
+  n <- length(data)
+  mu <- par[1]
+  sigma <- par[2]
+
+  grad <- -gradient(par = par, nu = nu, data = data)/n
+  
+  fisher_information <- matrix(0, nrow = 2, ncol = 2)
+  
+  for (i in seq_along(data)){
+    
+    fisher_i <- gradient(par, 
+                      nu = nu,
+                      data = data[i])
+    
+    fisher_information <- fisher_information + (fisher_i - grad) %*% t(fisher_i - grad)
+  }
+  
+  return(fisher_information)
+}
+
+fisher_information_naive <- function(gradient, par, nu, data){
+  n <- length(data)
+  mu <- par[1]
+  sigma <- par[2]
+  
+  fisher_information <- matrix(0, nrow = 2, ncol = 2)
+  
+  for (i in seq_along(data)){
+    
+    fisher_i <- gradient(par, 
+                      nu = nu,
+                      data = data[i])
+    
+    fisher_information <- fisher_information + (fisher_i) %*% t(fisher_i)
+  }
+  
+  return(fisher_information)
+}
 ```
-<br>
-<br>
-Comparing the two:
-```{r}
-ihat <- -jacobian(grad_negloglik, mu = EM1$est[1], sigma = EM1$est[2], nu = 1 , x = sim1$x)
-I <- Fisher_info(sim1$x, parameters(EM1$est[1], EM1$est[2], 1), 1)
+
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+mle_EM <- EM1$est
+fisher_information_naive_cent(grad_loglik, c(mle_EM[1], mle_EM[2]), 1, sim1$x)
+fisher_information_naive(grad_loglik, c(mle_EM[1], mle_EM[2]), 1, sim1$x)
+-numDeriv::jacobian(grad_loglik, x = c(mle_EM[1], mle_EM[2]), nu = 1 , data = sim1$x)
 ```
+
+
 .pull-left[
-Gradient of the $Q$.function
-```{r, echo = F}
-I
+```{r, echo=FALSE}
+print('Naive Fisherinformation')
+fisher_information_naive(grad_loglik, c(mle_EM[1], mle_EM[2]), 1, sim1$x)
+print('Centered Fisherinformation')
+fisher_information_naive_cent(grad_loglik, c(mle_EM[1], mle_EM[2]), 1, sim1$x)
 ```
 ]
 .pull-right[
-Calculated numerically using `numDev`
 ```{r, echo = F}
-ihat
+print('numDeriv')
+-numDeriv::jacobian(grad_loglik, x = c(mle_EM[1], mle_EM[2]), nu = 1 , data = sim1$x)
 ```
-
 ]
 
 ---
@@ -489,11 +750,13 @@ profvis({
 ###Optimizing the EM Algorithm
 Implementing in `Rcpp` and in `RcppArmadillo` to see if it is possible to optimize.
 
-```{r, echo=FALSE, warning=FALSE}
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
 sourceCpp("~/comp_stat/Dina/Assignment 3 - EM Algorithm/EM_cpp.cpp")
 sourceCpp("~/comp_stat/Dina/Assignment 3 - EM Algorithm/EM_arma.cpp")
 ```
-```{r, echo=FALSE, fig.align='center', fig.width = 16, fig.height = 6}
+
+
+```{r, echo=FALSE, fig.align='center', fig.width = 16, fig.height = 6, warning=FALSE, message=FALSE}
 #Another simple one just using bench::mark
 bm_s <- bench::mark(
   Original = EM_alg(sim1$x, parameters(-2,5,1), ny = 1, 100, 1e-10),
