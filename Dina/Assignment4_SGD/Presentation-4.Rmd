@@ -1,0 +1,1598 @@
+---
+title: "Log-logistic Dose-response Curves"
+author: 
+- "Dina Gyberg Jensen (vbz248)"
+institute: "University of Copenhagen"
+date: '`r Sys.Date()`'
+output:
+  xaringan::moon_reader:
+    css: themer-new.css
+    nature:
+      slideNumberFormat: "%current%"
+      highlightStyle: github
+      highlightLines: true
+      highlightSpans: true
+      ratio: 16:9
+      countIncrementalSlides: true
+      navigation:
+        scroll: false
+---
+<style type="text/css">
+.remark-slide-content {
+    font-size: 18px;
+        padding: 1em 4em 1em 4em;
+    }
+.remark-slide-content > h1 {
+  font-size: 40px;
+}
+.remark-slide-scaler {
+    overflow-y: auto;
+    overflow-x: auto;
+}
+</style>
+```{r, include=FALSE, eval = FALSE}
+rmarkdown::render('presentation.rmd')
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE}
+library(xaringanthemer)
+library(CSwR)
+style_mono_accent(
+ base_color = "#4f7942")
+base <- "#4f7942"
+
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Read required libraries
+library(ggplot2)          # For plotting
+library(grid)             # For arranging plots
+library(gridExtra)        # For arranging plots
+
+library(bench)            # For benchmarking
+library(microbenchmark)   # For benchmarking code
+library(testthat)         # For testing
+
+library(Rcpp)             # For C++ code
+
+library(dplyr)            # For data manipulation
+library(tidyverse)        # For data manipulation
+
+library(Rfast)            # For fast matrix operations
+
+library(parallel)         # For parallel processing
+library(doParallel)       # For parallel processing
+
+library(MASS)             # For ucv
+library(CSwR)             # For the data
+
+library(pander)           # For printing tables
+library(knitr)
+
+library(microbenchmark)
+library(testthat)
+library(bench)
+library(tidyverse)
+library(profvis)
+library(bench)
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+library(CSwR)
+library(parallel)
+library(foreach)
+library(doParallel)
+library(Rcpp)
+library(RcppArmadillo)
+library(xaringanthemer)
+library(CSwR)
+library(ggplot2)
+
+theme_set(
+  theme_bw(base_size = 18) +  # Set base font size and family
+    theme(
+      text = element_text(size = 15),           # Adjust text size       # Set axis line thickness (use `size` not `linewidth`)
+      panel.grid = element_line(size = 0.5)     # Set grid line thickness
+    )
+)
+
+knitr::opts_chunk$set(fig.retina = 2)
+
+my_theme <- theme_bw() + 
+  theme(
+    text = element_text(size = 16),           # Change the base text size
+    plot.title = element_text(size = 18),     # Title size
+    axis.title = element_text(size = 16),     # Axis titles size
+    axis.text = element_text(size = 14),      # Axis text size
+    legend.title = element_text(size = 18),   # Legend title size
+    legend.text = element_text(size = 16),    # Legend text size
+    
+    # Customize only the axis lines' thickness
+    axis.line = element_line(linewidth = 0.7),   # Set to a smaller linewidth for axis
+  )
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/Adaptive learning rate.R", local = knitr::knit_global())
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/Sampling.R", local = knitr::knit_global())
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/Stochastic gradient descent.R", local = knitr::knit_global())
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/Gradient_descent.R", local = knitr::knit_global())
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/Descent tuning.R", local = knitr::knit_global())
+Rcpp::sourceCpp("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/SGD.cpp")
+```
+
+###Introduction
+
+Objective is to use stochastic optimization to estimate the parameters of a log-logistic dose-response model using non-linear least squares estimation. That is obtaining the parameters $\alpha, \beta, \gamma, \rho$ that minimize the loss function:
+$$L(X,(\alpha,\beta,\gamma,\rho))=\frac{1}{N}\sum_{i=1}^N\left( y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)^2$$
+
+Where the response is given by:
+$$Y_i = f(x_i| \alpha, \beta,\gamma,\rho) + \varepsilon_i \hskip5mm \text{with}\hskip2mm \varepsilon_i \stackrel{iid}{\sim} N(0,\omega^2)$$
+And the log-logistic dose-response model is given by:
+$$f(x_i| \alpha, \beta,\gamma,\rho) = \gamma + \frac{\rho - \gamma}{1 + \exp(\beta \log(x_i) - \alpha)}$$
+
+
+---
+
+### Sampling
+We implement an S3 object of class `My_params` with a `simulate` method to simulate data from the log-logistic dose-response model.
+ 
+ - 2 different types of sampling methods
+ 
+  - `grid_sample`: samples $X$ from a fixed grid of points $(e, e^2,..., e^{15})$.
+  
+  - `gauss_sample`: samples $\log(X)$ from $\mathcal{N}(0, \omega^2)$. Note $\omega$ may not be too large.
+
+- The method also allows for scaling the data, which is useful for optimization.
+ 
+
+```{r echo = TRUE, results='hide'}
+simulate(parameters(2,1,2,1), 1000, omega = 1, grid = FALSE, scale = FALSE)
+```
+
+True parameters have been set to `c(2,5,1,2)` and the data is simulated with `N = 5000`.
+
+```{r echo = FALSE}
+set.seed(02112024)
+N <- 5000
+param <- parameters(2,5,1,2)
+data <- simulate(param, N, omega = 1)
+sim1 <- simulate(param, N, omega = 1)
+x <- data$x
+y <- data$y
+```
+
+---
+###Preliminary Investigation
+To get an idea of what the log-logistic dose-response model looks like, we plot the data and the model with the true parameters.
+
+```{r, echo = FALSE, warning=FALSE, message = FALSE, fig.width=12, fig.height=5, fig.align='center'}
+
+p1 <- ggplot(data = data, aes(x = x, y = y)) +
+  geom_point(size = 1, color = base) +
+  geom_line(aes(y = f(x = x, par = param$par)), color = "coral4", size = 1.2) +
+  labs(title = "Simulated Data and True Model", x = "x", y = "y") + my_theme
+
+p2 <- ggplot(data = data, aes(x = x, y = y)) +
+  geom_line(aes(y = f(x = x, par = param$par)), color = "coral4", size = 1.2) +
+  labs(title = "True Model", x = "x", y = "y") + my_theme
+
+grid.arrange(p1, p2, nrow = 1)
+```
+---
+###Preliminary Analysis
+Plotting the $f$-function, where the different parameters are varied:
+```{r, echo = FALSE, message=FALSE, warning=FALSE, fig.align='center', fig.width=12, fig.height=6.5}
+
+p1 <- ggplot(data = data, aes(x = x, y = y)) +
+  geom_line(aes(y = f(x = x, par = c(1, 5, 1, 2)), color = "1"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 1, 2)), color = "2"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(3, 5, 1, 2)), color = "3"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(4, 5, 1, 2)), color = "4"), size = 1.2) +
+  labs(title = "Varying alpha", x = "x", y = "y", color = expression(alpha)) + 
+  scale_color_manual(values = c("1" = "coral4", "2" = base, "3" = "steelblue4"
+                                                                                  , "4" = "hotpink4") ) + my_theme +
+  xlim(0,10)
+
+p2 <- ggplot(data = data, aes(x = x, y = y)) +
+  geom_line(aes(y = f(x = x, par = c(2, 1, 1, 2)), color = "1"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 2.5, 1, 2)), color = "2.5"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 1, 2)), color = "5"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 10, 1, 2)), color = "10"), size = 1.2) +
+  labs(title = "Varying beta", x = "x", y = "y", color = expression(beta)) + 
+  scale_color_manual(values = c("1" = "coral4", "2.5" = base, "5" = "steelblue4"
+                                                                                 , "10" = "hotpink4") ) + my_theme+
+  xlim(0,10)
+
+p3 <- ggplot(data = data, aes(x = x, y = y)) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 0, 2)), color = "0.5"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 1, 2)), color = "1"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 1.5, 2)), color = "1.5"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 2, 2)), color = "2"), size = 1.2) +
+  labs(title = "Varying gamma", x = "x", y = "y", color = expression(gamma)) + 
+  scale_color_manual(values = c("0.5" = "coral4", "1" = base, "1.5" = "steelblue4"
+                                                                                  , "2" = "hotpink4") ) + my_theme+
+  xlim(0,10)
+p4 <- ggplot(data = data, aes(x = x, y = y)) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 1, 1)), color = "1"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 1, 2)), color = "2"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 1, 3)), color = "3"), size = 1.2) +
+  geom_line(aes(y = f(x = x, par = c(2, 5, 1, 4)), color = "4"), size = 1.2) +
+  labs(title = "Varying rho", x = "x", y = "y", color = expression(rho)) +
+  scale_color_manual(values = c("1" = "coral4", "2" = base, "3"="steelblue4", "4" = "hotpink4") ) + my_theme+
+  xlim(0,10)
+
+grid.arrange(p1, p2, p3, p4, nrow = 2)
+
+```
+
+---
+### Stochastic Gradient Descent
+
+Start out implementing a standard version of the stochastic gradient descent algorithm (SGD). The gradient in a single point is given by
+$$-2\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)  $$
+
+<br>
+Where $\nabla f(x_i| \alpha, \beta,\gamma,\rho)$ is given by
+$$\nabla f(x_i| \alpha, \beta,\gamma,\rho) = \begin{pmatrix}
+  \frac{\rho-\gamma}{(1+\exp(\beta\log(x_i)-\alpha))^2}\cdot\exp(\beta\log(x_i)-\alpha)\\
+  \frac{\rho-\gamma}{(1+\exp(\beta\log(x_i)-\alpha))^2}\cdot\exp(\beta\log(x_i)-\alpha)\cdot\log(x_i)\\
+  1-\frac{1}{1+\exp(\beta\log(x_i)-\alpha)} \\
+  \frac{1}{1+\exp(\beta\log(x_i)-\alpha)}
+\end{pmatrix}$$
+So the update scheme becomes:
+$$\theta_{t+1} = \theta_t +2 \gamma_t\cdot\nabla f(x_i| \alpha, \beta,\gamma,\rho)\cdot\left(y_i - f(x_i| \alpha, \beta,\gamma,\rho)\right)$$
+Where $\theta_t = (\alpha_t, \beta_t, \gamma_t, \rho_t)$ and $\gamma_t$ is the learning rate at iteration $t$.
+
+---
+
+###Implementation
+
+We implement the gradient and check that it is approximately $0$ in the true parameters:
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+gradient <- function(par, x, y){
+  alpha <- par[[1]]
+  beta <- par[[2]]
+  gamma <- par[[3]]
+  rho <- par[[4]]
+
+  
+  expbetalogxalpha <- exp(beta * log(x) - alpha)
+  
+  identical_part <- - 2 * (y - f(x = x, par = par))
+  
+  grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
+  grad_beta <- - mean(identical_part * (rho - gamma) * log(x) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
+  grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))
+  grad_rho <- mean(identical_part / (1 + expbetalogxalpha))
+  
+  return(c(grad_alpha, grad_beta, grad_gamma, grad_rho))
+}
+```
+
+
+```{r, ehco = FALSE, message=FALSE, warning=FALSE}
+gradient(param$par, x, y)
+```
+
+We then implement the SGD-algoritm.
+
+```{r, warning=FALSE, message=FALSE}
+sgd <- function(par0, x, y, grad, epoch = vanilla,
+    gamma, # Decay schedule or a fixed learning rate
+    maxiter = 100, # Max epoch iterations
+    sampler = sample, # How data is resampled. Default is a random permutation
+    cb = NULL, ...) {
+  
+  if (is.function(gamma)) gamma <- gamma(1:maxiter)
+  gamma <- rep_len(gamma, maxiter)
+  
+  N <- length(x)
+  par <- par0
+  
+  for (n in 1:maxiter) {
+    
+    if (!is.null(cb)) cb$tracer()
+    samp <- sampler(N)
+    par <- epoch(par = par, samp = samp, gamma = gamma[n], 
+                 grad = grad, x = x, y = y, ...)
+  }
+  return(par)
+}
+
+vanilla <- function(par, samp, gamma, grad, x, y, ...){
+  N <- length(x)
+  for (j in 1:N) {
+    i <- samp[j]
+    par <- par - gamma * grad(par, x = x[i], y = y[i], ...)
+  }
+  return(par)
+}
+```
+
+---
+###Implementation
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/Stochastic gradient descent.R", local = knitr::knit_global())
+```
+
+ - Implemented a tracer using `CSwR`:
+```{r}
+SGD_tracer <- tracer(c("par", "n"), Delta = 0) 
+```
+ 
+ - S3 object `SGD`
+ 
+  - Contains optimal parameters and trace. Stopping criteria is set to $e^{-6}$ and is given by $||\theta'-\theta||^2\leq\varepsilon||\theta||^2+\varepsilon$, where $\theta$ is the parameter vector.
+  
+  - Plot, print and summary methods are implemented to ease comparisons and analysis.
+
+
+```{r}
+SGD(par0 = param$par, grad = gradient, gamma = 0.01, x = x, y = y, true_par = param$par)
+```
+
+---
+
+### Test of Algorithm 
+
+We visualize the convergence for three different starting values `c(2, 5, 1, 2)`, `c(1, 1, 1, 1)` and `c(2.33, 1.09, 2.7, 2.32)`. The random starting values are used later as `init_par`.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=15, fig.height=4, fig.align='center'}
+set.seed(02112024)
+sv1 <- param$par
+sv2 <- c(1,1,1,1)
+sv3 <- abs(rnorm(4, 2, 1.5))
+
+true_par <- sv1
+init_par <- sv3
+
+sgd1 <- SGD(par0 = sv1, grad = gradient_rcpp, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 100)
+sgd2 <- SGD(par0 = sv2, grad = gradient_rcpp, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 100)
+sgd3 <- SGD(par0 = sv3, grad = gradient_rcpp, gamma = 0.005, x = x, y = y, true_par = param$par, maxit = 100)
+
+
+p1 <-  ggplot(data = plot_data(sgd1), aes(x = .time, y = H_distance)) +
+    geom_line(aes(color = "c(2, 5, 1, 2)"), size = 1.2) +  # sgd1 with black
+    geom_line(data = plot_data(sgd2), aes(x = .time, y = H_distance, color = "c(1,1,1,1)"), size = 1.2) +  # sgd2 with orange
+    geom_line(data = plot_data(sgd3), aes(x = .time, y = H_distance, color = "c(2.33, 1.09, 2.7, 2.32)"), size = 1.2) +  # sgd3
+    scale_color_manual(values = c("c(2, 5, 1, 2)" = base, 
+                                  "c(1,1,1,1)" = "coral4", 
+                                  "c(2.33, 1.09, 2.7, 2.32)" = "steelblue4")) +
+    labs(color = "Starting values") +
+    scale_y_log10() + my_theme+ theme(legend.position = "none")
+
+p2 <-  ggplot(data = plot_data(sgd1), aes(x = .time, y = DistToTruepar)) +
+    geom_line(aes(color = "c(2, 5, 1, 2)"), size = 1.2) +  # sgd1 with black
+    geom_line(data = plot_data(sgd2), aes(x = .time, y = DistToTruepar, color = "c(1,1,1,1)"), size = 1.2) +  # sgd2 with orange
+    geom_line(data = plot_data(sgd3), aes(x = .time, y = DistToTruepar, color = "c(2.33, 1.09, 2.7, 2.32)"), size = 1.2) +  # sgd3
+    scale_color_manual(values = c("c(2, 5, 1, 2)" = base, 
+                                  "c(1,1,1,1)" = "coral4", 
+                                  "c(2.33, 1.09, 2.7, 2.32)" = "steelblue4")) +
+    labs(color = "Starting values") +
+    scale_y_log10() + my_theme + theme(legend.position = "none")
+
+legend_plot <- ggplot(data = plot_data(sgd1), aes(x = .time, y = DistToTruepar)) +
+    geom_line(aes(color = "c(2, 5, 1, 2)"), size = 1.2) +  # sgd1 with black
+    geom_line(data = plot_data(sgd2), aes(x = .time, y = DistToTruepar, color = "c(1,1,1,1)"), size = 1.2) +  # sgd2 with orange
+    geom_line(data = plot_data(sgd3), aes(x = .time, y = DistToTruepar, color = "c(2.33, 1.09, 2.7, 2.32)"), size = 1.2) +  # sgd3
+    scale_color_manual(values = c("c(2, 5, 1, 2)" = base, 
+                                  "c(1,1,1,1)" = "coral4", 
+                                  "c(2.33, 1.09, 2.7, 2.32)" = "steelblue4")) +
+    labs(color = "Starting values") +
+    scale_y_log10() + my_theme
+
+leg <- cowplot::get_legend(legend_plot)
+
+grid.arrange(p1, p2, leg, nrow = 1, widths = c(2, 2, 1))
+```
+
+
+```{r, fig.width=3, fig.height=2, fig.align='center', echo = FALSE}
+diff_start_vals_sgd <- tibble(
+  "Par" = c("\u03B1 (2)", "\u03B2 (5)", "\u03B3 (1)", "\u03C1 (2)"),
+  "True vals" = sgd1$est,
+  "(1, 1, 1, 1)" = sgd2$est,
+   "Random vals" = sgd3$est)
+
+diff_start_vals_sgd %>% kable()
+```
+
+---
+###Profiling the algorithm
+```{r, echo = FALSE}
+profvis::profvis({
+f <- function(x, par){
+  alpha <- par[1]
+  beta <- par[2]
+  gamma <- par[3]
+  rho <- par[4]
+  
+  return(gamma + (rho - gamma) / (1 + exp(beta * log(x) - alpha)))
+}
+
+
+
+gradient <- function(par, x, y,...){
+  alpha <- par[[1]]
+  beta <- par[[2]]
+  gamma <- par[[3]]
+  rho <- par[[4]]
+
+  
+  expbetalogxalpha <- exp(beta * log(x) - alpha)
+  
+  identical_part <- - 2 * (y - f(x = x, par = par))
+  
+  grad_alpha <- mean(identical_part * (rho - gamma) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
+  grad_beta <- - mean(identical_part * (rho - gamma) * log(x) * expbetalogxalpha / (1 + expbetalogxalpha)^2)
+  grad_gamma <- mean(identical_part * (1 - 1 / (1 + expbetalogxalpha)))
+  grad_rho <- mean(identical_part / (1 + expbetalogxalpha))
+  
+  return(c(grad_alpha, grad_beta, grad_gamma, grad_rho))
+}
+
+vanilla <- function(
+    par,
+    samp,
+    gamma,
+    grad,
+    x,
+    y,
+    ...){
+  N <- length(x)
+  for (j in 1:N) {
+    i <- samp[j]
+    par <- par - gamma * grad(par, x = x[i], y = y[i], ...)
+  }
+  return(par)
+}
+
+sgd <- function(
+    par0,
+    x,
+    y,
+    grad,
+    gamma, # Decay schedule or a fixed learning rate
+    epoch = vanilla,
+    maxiter = 100, # Max epoch iterations
+    sampler = sample, # How data is resampled. Default is a random permutation
+    cb = NULL,
+    ...) {
+  
+  if (is.function(gamma)) gamma <- gamma(1:maxiter)
+  gamma <- rep_len(gamma, maxiter)
+  
+  N <- length(x)
+  par <- par0
+  
+  for (n in 1:maxiter) {
+    
+    if (!is.null(cb)) cb$tracer()
+    samp <- sampler(N)
+    par <- epoch(par = par, samp = samp, gamma = gamma[n], 
+                 grad = grad, x = x, y = y, ...)
+  }
+  return(par)
+}
+
+sgd(c(3,3,3,3), grad = gradient, gamma = 0.01, x = x, y = y)
+})
+```
+
+---
+
+###Implementing the gradient function in RCPP
+```{r}
+library(Rcpp)
+
+cppFunction('
+NumericVector gradient_rcpp(NumericVector par, NumericVector x, NumericVector y) {
+  // Extract parameters
+  double alpha = par[0];
+  double beta = par[1];
+  double gamma = par[2];
+  double rho = par[3];
+  
+  // Initialize gradients
+  double grad_alpha = 0.0;
+  double grad_beta = 0.0;
+  double grad_gamma = 0.0;
+  double grad_rho = 0.0;
+  
+  int n = x.size(); // Number of observations
+  
+  // Loop over the indices
+  for (int i = 0; i < n; ++i) {
+    
+    // Get individual data point
+    double x_i = x[i];
+    double y_i = y[i];
+    
+    // Calculating f(x_i, par)
+    double f_x_i = gamma + (rho - gamma) / (1 + exp(beta * log(x_i) - alpha));
+    
+    // Exponential term
+    double expbetalogxalpha = exp(beta * log(x_i) - alpha);
+    
+    // Identical part used in gradients
+    double identical_part = -2 * (y_i - f_x_i);
+    
+    // Accumulate gradients for all indices
+    grad_alpha += (identical_part * (rho - gamma) * expbetalogxalpha) 
+      / pow(1 + expbetalogxalpha, 2);
+    grad_beta += -(identical_part * (rho - gamma) * log(x_i) * expbetalogxalpha) 
+      / pow(1 + expbetalogxalpha, 2);
+    grad_gamma += identical_part * (1 - 1 / (1 + expbetalogxalpha));
+    grad_rho += identical_part / (1 + expbetalogxalpha);
+  }
+  
+  // Return the mean of accumulated gradients
+  return NumericVector::create(grad_alpha / n, grad_beta / n, grad_gamma / n, grad_rho / n);
+}
+')
+
+```
+
+```{r}
+gradient(param$par, x, y)
+gradient_rcpp(param$par, x, y)
+```
+
+
+---
+
+###Benchmarking
+
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=14, fig.height=5, fig.align='center'}
+sim1_b <- data[1:100,]
+
+bench_results1 <- bench::mark(
+    R = sgd(c(3,3,3,3), grad = gradient, gamma = 0.01, x = sim1_b$x, y = sim1_b$y),
+    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, gamma = 0.01, x = sim1_b$x, y = sim1_b$y),
+    iterations = 100,
+    check = F
+)
+p1 <- plot(bench_results1) + ggtitle("n = 100")
+
+sim2_b <- data[1:1000,]
+
+bench_results2 <- bench::mark(
+    R = sgd(c(3,3,3,3), grad = gradient, gamma = 0.01, x = sim2_b$x, y = sim2_b$y),
+    Rcpp = sgd(c(3,3,3,3), grad = gradient_rcpp, gamma = 0.01, x = sim2_b$x, y = sim2_b$y),
+    iterations = 10,
+    check = F
+)
+p2 <- plot(bench_results2) + ggtitle("n = 1000")
+
+grid.arrange(p1, p2, nrow = 1)
+```  
+<br>
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+knitr::kable(data.frame(expression = c('R', 'Rcpp'), bench_results2[,2:9]))
+```
+---
+###Profiling Again:
+```{r, echo = FALSE}
+profvis::profvis({
+  
+vanilla <- function(
+    par,
+    samp,
+    gamma,
+    grad,
+    x,
+    y,
+    ...){
+  N <- length(x)
+  for (j in 1:N) {
+    i <- samp[j]
+    par <- par - gamma * grad(par, x = x[i], y = y[i], ...)
+  }
+  return(par)
+}
+
+sgd <- function(
+    par0,
+    x,
+    y,
+    grad,
+    gamma, # Decay schedule or a fixed learning rate
+    epoch = vanilla,
+    maxiter = 100, # Max epoch iterations
+    sampler = sample, # How data is resampled. Default is a random permutation
+    cb = NULL,
+    ...) {
+  
+  if (is.function(gamma)) gamma <- gamma(1:maxiter)
+  gamma <- rep_len(gamma, maxiter)
+  
+  N <- length(x)
+  par <- par0
+  
+  for (n in 1:maxiter) {
+    
+    if (!is.null(cb)) cb$tracer()
+    samp <- sampler(N)
+    par <- epoch(par = par, samp = samp, gamma = gamma[n], 
+                 grad = grad, x = x, y = y, ...)
+  }
+  return(par)
+}
+
+sgd(c(3,3,3,3), grad = gradient_rcpp, gamma = 0.01, x = x, y = y)
+})
+```
+
+---
+
+### Decay Schedule
+
+We implement a three-parameter power law family of decay schedules
+
+$$
+\gamma_n = \frac{\gamma_0 K}{K + n^{a}}
+$$
+We implement two ways of specification.
+- Specify $a$, $K$ and $\gamma_0$.
+- Specify $a$, $n_1$, $\gamma_1$ and $\gamma_0$ to obtain specific $\gamma_n$ at iteration $n_1$, which we have set to $150$.
+
+We try the two decay schedulers. We set $\gamma_0 = 1$ for them all and then try one variation of $K$ and two variations of $a$. The starting paramters are the random starting parameters `init_par`. Based on this we will use the decayscheduler with $a = 1$ and $\gamma_1 = 0.01$
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/Stochastic gradient descent.R", local = knitr::knit_global())
+set.seed(05112024)
+decay1 <- decay_scheduler(gamma0 = 1, a = 1, K = 0.4)
+decay2 <- decay_scheduler(gamma0 = 1, a = 1, n1 = 150, gamma1 = 0.01)
+decay3 <- decay_scheduler(gamma0 = 1, a = 2, n1 = 150, gamma1 = 0.01)
+
+
+sgd_decay1 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay1, x = x, y = y, true_par = param$par)
+sgd_decay2 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, x = x, y = y, true_par = param$par)
+sgd_decay3 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, x = x, y = y, true_par = param$par)
+```
+
+```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE, fig.width=14, fig.height=3, fig.align='center'}
+decay_plot1 <- ggplot() +
+  geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+                y = plot_data(sgd_decay1)$loss, color = "a = 1, K = 0.4"), size = 1.2)+
+  geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+                y = plot_data(sgd_decay2)$loss, color = "a = 1, gamma1 = 0.01"), size = 1.2) +
+  geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+                y = plot_data(sgd_decay3)$loss, color = "a = 2, gamma1 = 0.01"), size = 1.2) +
+  scale_y_log10() +
+  labs(title = "Loss vs Time", x = "Time", y = "Loss")+
+  scale_color_manual(values = c("a = 1, K = 0.4" = base, 
+                                "a = 1, gamma1 = 0.01" = "coral4", 
+                                "a = 2, gamma1 = 0.01" = "steelblue4"),
+                         labels = c(
+      expression(a == 1 ~ ", " ~ K == 0.4), 
+      expression(a == 1 ~ ", " ~ gamma[1] == 0.01), 
+      expression(a == 2 ~ ", " ~ gamma[1] == 0.01)))+
+  labs(color = "Parameter values")+ my_theme + theme(legend.position = "none")
+
+decay_plot2 <- ggplot() +
+  geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+                y = plot_data(sgd_decay1)$DistToTruepar, color = "a = 1, K = 0.4"), size = 1.2)+
+  geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+                y = plot_data(sgd_decay2)$DistToTruepar, color = "a = 1, gamma1 = 0.01"), size = 1.2) +
+  geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+                y = plot_data(sgd_decay3)$DistToTruepar, color = "a = 2, gamma1 = 0.01"), size = 1.2) +
+  scale_y_log10() +
+  labs(title = "Distance to True Parameter vs Time", x = "Time", y = "Distance to True Parameter")+
+  scale_color_manual(values = c("a = 1, K = 0.4" = base, 
+                                "a = 1, gamma1 = 0.01" = "coral4", 
+                                "a = 2, gamma1 = 0.01" = "steelblue4"),
+                         labels = c(
+      expression(a == 1 ~ ", " ~ K == 0.4), 
+      expression(a == 1 ~ ", " ~ gamma[1] == 0.01), 
+      expression(a == 2 ~ ", " ~ gamma[1] == 0.01)))+
+  labs(color = "Parameter values") + my_theme + theme(legend.position = "none")
+
+legend_plot <- ggplot() +
+  geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+                y = plot_data(sgd_decay1)$DistToTruepar, color = "a = 1, K = 0.4"))+
+  geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+                y = plot_data(sgd_decay2)$DistToTruepar, color = "a = 1, gamma1 = 0.01")) +
+  geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+                y = plot_data(sgd_decay3)$DistToTruepar, color = "a = 2, gamma1 = 0.01")) +
+  scale_y_log10() +
+  labs(title = "Distance to True Parameter vs Time", x = "Time", y = "Distance to True Parameter")+
+  scale_color_manual(values = c("a = 1, K = 0.4" = base, 
+                                "a = 1, gamma1 = 0.01" = "coral4", 
+                                "a = 2, gamma1 = 0.01" = "steelblue4"),
+                         labels = c(
+      expression(a == 1 ~ ", " ~ K == 0.4), 
+      expression(a == 1 ~ ", " ~ gamma[1] == 0.01), 
+      expression(a == 2 ~ ", " ~ gamma[1] == 0.01)))+
+  labs(color = "Parameter values")
+
+leg <- cowplot::get_legend(legend_plot)
+
+grid.arrange(decay_plot1, decay_plot2, leg, nrow = 1, widths = c(2,2,1))
+```
+
+```{r, hide = TRUE, warning = FALSE, message = FALSE, echo = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+# ggplot() +
+#   geom_line(aes(x = plot_data(sgd_decay1)$.time, 
+#                 y = plot_data(sgd_decay1)$DistToTruepar, color = "a = 1, K = 0.4"))+
+#   geom_line(aes(x = plot_data(sgd_decay2)$.time, 
+#                 y = plot_data(sgd_decay2)$DistToTruepar, color = "a = 2, gamma1 = 0.1")) +
+#   geom_line(aes(x = plot_data(sgd_decay3)$.time, 
+#                 y = plot_data(sgd_decay3)$DistToTruepar, color = "a = 2, gamma1 = 0.01")) +
+#   scale_y_log10() +
+#   labs(title = "Abs. dist. to par vs Time", x = "Time", y = "Abs. dist. to par")+
+#   scale_color_manual(values = c("a = 1, K = 0.4" = "red", 
+#                                 "a = 2, gamma1 = 0.1" = "orange", 
+#                                 "a = 2, gamma1 = 0.01" = "black"),
+#                          labels = c(
+#       expression(a == 1 ~ ", " ~ K == 0.4), 
+#       expression(a == 2 ~ ", " ~ gamma[1] == 0.1), 
+#       expression(a == 2 ~ ", " ~ gamma[1] == 0.01)
+#     ))+
+#   labs(color = "Parameter values")
+
+```
+
+
+---
+
+###Mini-batch stochastic gradient descent
+The idea is to calculate the gradient in a _batch_ of data points and update the parameters:
+
++ Sample $m$ indices, $I_n = \{i_1, ...,i_m \}$ from $\{1, ..., N\}$.
++ Compute $\rho_n = \frac{1}{m} \sum_{i \in I_n} \nabla L_\theta(x_i, y_i, \theta_n)$
++ Update $\theta_{n+1} = \theta_n - \gamma_n \rho_n$
+
+We sample a partition of $I_1 \cup I_2 \cup ... \cup I_{M} \subseteq \{1, ..., N\}$ for $M = \lfloor N/m \rfloor$.
+
+```{r}
+batch <- function(par, samp, gamma, grad, x, y, m = 50, ...){
+  M <- floor(length(samp) / m) 
+  for (j in 0:(M - 1)) {
+    i <- samp[(j * m + 1):(j * m + m)]
+    par <- par - gamma * grad(par, x = x[i], y = y[i], ...)
+  }
+  return(par)
+}
+```
+
+
+```{r,echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=4, fig.align='center'}
+# iterations <- 100
+# 
+# m1 <- 20
+# m2 <- 50
+# m3 <- 250
+# m_values <- list(m1, m2, m3)
+# 
+# gamma1 <- 1e-1
+# gamma2 <- 1e-2
+# gamma3 <- 1e-5
+# 
+# rate1 <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = gamma1, n1 = iterations)
+# rate2 <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = gamma2, n1 = iterations)
+# rate3 <- decay_scheduler(gamma0 = 1, a = 1, gamma1 = gamma3, n1 = iterations)
+# rate_values <- list(rate1, rate2, rate3)
+# 
+# true_par <- c(2, 5, 1, 2)
+# init_par <- abs(rnorm(4, mean = 2, sd = 1.5))
+# 
+# # Function to create the plots dynamically
+# create_SGD_plot <- function(SGD_obj, plot_num) {
+#   plot(SGD_obj, plot_num) + 
+#     theme(axis.title.x = element_blank(), 
+#           axis.title.y = element_blank(), 
+#           plot.title = element_blank(),
+#           plot.margin = margin(10, 10, 20, 20))
+# }
+
+```
+
+```{r echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+# batch_SGD_objects <- vector("list", length = length(m_values) * length(rate_values))
+# 
+# index <- 0
+# for (i in seq_along(m_values)){
+#   for (j in seq_along(rate_values)){
+#     
+#     index <- index + 1
+#     
+#     batch_SGD_objects[[index]] <- SGD(par0 = init_par, grad = gradient, gamma = rate_values[[j]],
+#                        N = N, epoch = batch, m = m_values[[i]], maxiter = iterations, sampler = sample,
+#                        cb = SGD_tracer, x = x, y = y,
+#                        true_par = true_par)
+#   }
+# }
+# batch_SGD_plots <- lapply(batch_SGD_objects, create_SGD_plot, plot_num = 1)
+# 
+# # Arrange the plots in a grid
+# batch_grid <- grid.arrange(
+#   grobs = batch_SGD_plots,
+#   ncol = 3, nrow = 3,
+#   widths = c(0.5, 0.5, 0.5),
+#   heights = c(0.5, 0.5, 0.5),
+#   top = textGrob("Loss vs Time for batch algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+# )
+# 
+# grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# 
+# # Add y-axis labels for gamma-values (next to the left column)
+# grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+# grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+# grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+```{r, echo=F, warning  = FALSE, message = FALSE, fig.width=10, fig.height=8, fig.align='center', include = F}
+# # Store all plots in a list
+# batch_SGD_plots <- lapply(batch_SGD_objects, create_SGD_plot, plot_num = 3)
+# 
+# # Arrange the plots in a grid
+# batch_grid <- grid.arrange(
+#   grobs = batch_SGD_plots,
+#   ncol = 3, nrow = 3,
+#   widths = c(0.5, 0.5, 0.5),
+#   heights = c(0.5, 0.5, 0.5),
+#   top = textGrob("Distance to true parameters vs Time for batch algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+# )
+# 
+# grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# 
+# # Add y-axis labels for gamma-values (next to the left column)
+# grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+# grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+# grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+---
+
+###Momentum
+Version of batch gradient descent where we add _momentum_ to the gradient through a convex combination of the current gradient and the previous gradient. Given $\theta_n$ and a batch $I_n$ with $|I_n| = m$ we
+
+ - Compute $g_n = \frac{1}{m} \sum_{i \in I_n} \nabla_\theta L(y_i, x_i, \theta_n)$
+ -  Compute $\rho_n = \beta \rho_{n-1} + (1 - \beta) g_n$
+ - Update $\theta_{n+1} = \theta_n - \gamma_n \rho_n$
+
+$\beta$ determines the gradient memory. Default is set to $0.9$. Note that $\beta = 0$ corresponds is just batch SGD.
+
+```{r}
+momentum <- function() {
+  rho <- 0
+  function(par, samp, gamma, grad, x, y, m = 50, beta = 0.9, ...  ){
+    M <- floor(length(samp) / m) 
+    for (j in 0:(M - 1)) {
+      i <- samp[(j * m + 1):(j * m + m)]
+      rho <<- beta * rho + (1 - beta) * grad(par = par, x = x[i], y = y[i], ...)
+      par <- par - gamma * rho
+    }
+    par
+  } 
+}
+```
+
+
+```{r, echo=FALSE, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center'}
+# momentum_SGD_objects <- vector("list", length = length(m_values) * length(rate_values))
+# 
+# index <- 0
+# for (i in seq_along(m_values)){
+#   for (j in seq_along(rate_values)){
+#     
+#     index <- index + 1
+#     
+#     momentum_SGD_objects[[index]] <- SGD(par0 = init_par, grad = gradient, gamma = rate_values[[j]],
+#                        N = N, epoch = batch, m = m_values[[i]], maxiter = iterations, sampler = sample,
+#                        cb = SGD_tracer, x = x, y = y,
+#                        true_par = true_par)
+#   }
+# }
+# momentum_SGD_plots <- lapply(momentum_SGD_objects, create_SGD_plot, plot_num = 1)
+# 
+# # Arrange the plots in a grid
+# momentum_grid <- grid.arrange(
+#   grobs = momentum_SGD_plots,
+#   ncol = 3, nrow = 3,
+#   widths = c(0.5, 0.5, 0.5),
+#   heights = c(0.5, 0.5, 0.5),
+#   top = textGrob("Loss vs Time for momentum algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+# )
+# 
+# grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# 
+# # Add y-axis labels for gamma-values (next to the left column)
+# grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+# grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+# grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+```{r, echo=FALSE, warning  = FALSE, message = FALSE, fig.width=14, fig.height=7, fig.align='center', include = T}
+# # Store all plots in a list
+# momentum_SGD_plots <- lapply(momentum_SGD_objects, create_SGD_plot, plot_num = 3)
+# 
+# # Arrange the plots in a grid
+# momentum_grid <- grid.arrange(
+#   grobs = momentum_SGD_plots,
+#   ncol = 3, nrow = 3,
+#   widths = c(0.5, 0.5, 0.5),
+#   heights = c(0.5, 0.5, 0.5),
+#   top = textGrob("Distance to true parameters vs Time for momentum algorithm", gp = gpar(fontsize = 20, fontface = "bold"))
+# )
+# 
+# grid.text(paste0("m = ", m1), x = unit(0.17, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# grid.text(paste0("m = ", m2), x = unit(0.5, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# grid.text(paste0("m = ", m3), x = unit(0.83, "npc"), y = unit(0.01, "npc"), gp = gpar(fontsize = 12))
+# 
+# # Add y-axis labels for gamma-values (next to the left column)
+# grid.text(bquote(gamma[1] == .(gamma1)), x = unit(0.01, "npc"), y = unit(0.85, "npc"), rot = 90, gp = gpar(fontsize = 12))
+# grid.text(bquote(gamma[1] == .(gamma2)), x = unit(0.01, "npc"), y = unit(0.5, "npc"), rot = 90, gp = gpar(fontsize = 12))
+# grid.text(bquote(gamma[1] == .(gamma3)), x = unit(0.01, "npc"), y = unit(0.15, "npc"), rot = 90, gp = gpar(fontsize = 12))
+```
+
+
+---
+
+###Adaptive learning rates
+To mitigate tuning issues, we introduce adam algorithm, an adaptive learning rate algorithm. The idea is to combine momemtum with a standardiziation of each coordinate direction of the descent direction. This is in practice done by dividing the learning rate by a running average of magnitude of previous gradients:
+$$v_n = \beta_2 v_{n-1} + (1 - \beta_2) g_n \odot g_n$$
+where we denote $\beta_2$ the forgetting factor. The complete algorithm is as follows:
+
+ - Initialize $\theta_0$, $\rho_0 = 0$, $v_0 = 0$
+ - Compute $g_n = \frac{1}{m} \sum_{i \in I_n} \nabla_\theta L(y_i, x_i, \theta_n)$
+ - Compute $\rho_n = \beta_1 \rho_{n-1} + (1 - \beta_1) g_n$
+ - Compute $v_n = \beta_2 v_{n-1} + (1 - \beta_2) g_n \odot g_n$
+ - Update $\theta_{n+1} = \theta_n - \gamma_n \frac{\rho_n}{\sqrt{v_n} + \epsilon}$
+
+where we add $\epsilon$ to avoid division by zero (default is $\epsilon = 10^{-8}$). The interpretation of $\beta_1$ is the same as in the momentum algorithm.
+
+---
+###Batchsize
+
+We have then looked at the convergence for the different versions of SGD, for different batch-sizes.
+```{r echo = FALSE}
+#Plot theming
+my_color_scale_1 <- scale_color_manual(
+   name = "Optimization Methods",
+  values = c("MiniBatch" = base, "Momentum" = "coral4", "Adam" = "steelblue4", "Standard" = base, "Standard_SGD" = "hotpink4", "Clipping+Momentum" = "darkorange")
+)
+
+my_theme1 <-   theme(
+    text = element_text(size = 16),  # Change the base text size
+    plot.title = element_text(size = 18),  # Title size
+    axis.title = element_text(size = 16),  # Axis titles size
+    axis.text = element_text(size = 14),  # Axis text size
+    legend.title = element_text(size = 18),  # Legend title size
+    legend.text = element_text(size = 16),  # Legend text size # Keep the legend hidden
+      theme_bw()
+  )
+```
+
+
+```{r, echo=FALSE, warning  = FALSE, message = FALSE}
+source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment4_SGD/Adaptive learning rate.R", local = knitr::knit_global())
+#Trying to run the algorithm for the diff epochs
+maxiter <- 100
+#minibatch
+mb_50 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = batch, 
+           m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+mb_100 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = batch,
+            m = 100, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+mb_250 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = batch,
+            m = 250, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+#Momentum
+momentum_50 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = momentum(),
+                 m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+momentum_100 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = momentum(),
+                  m = 100, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+momentum_250 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = momentum(),
+                  m = 250, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+#Adam
+adam_50 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = adam(),
+             m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+adam_100 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = adam(),
+              m = 100, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+adam_250 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = adam(),
+              m = 250, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+```
+
+
+```{r echo = FALSE, warning = FALSE}
+#best_vanilla <- vanilla_tuning(tuning_rounds = 50, iterations = 100)
+#best_batch <- batch_tuning(tuning_rounds = 50, iterations = 100)
+#best_momentum <- momentum_tuning(tuning_rounds = 50, iterations = 100)
+#best_adam <- adam_tuning(tuning_rounds = 50, iterations = 100)
+```
+
+```{r, echo=FALSE, warning  = FALSE, message = FALSE, fig.width=14, fig.height=6.5, fig.align='center'}
+#Plotting the results
+p50 <- ggplot() +
+  geom_line(data = plot_data(mb_50), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_50), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_50), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_50), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_50), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_50), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Distance to True Parameters") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p100 <- ggplot() +
+  geom_line(data = plot_data(mb_100), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_100), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_100), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_100), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_100), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_100), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Distance to True Parameters") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p250 <- ggplot() +
+  geom_line(data = plot_data(mb_250), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_250), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_250), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_250), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_250), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_250), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Distance to True Parameters") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p50_H_dist <- ggplot() +
+  geom_line(data = plot_data(mb_50), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_50), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_50), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_50), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_50), aes(x = .time, y = H_distance, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_50), aes(x = .time, y = H_distance, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p100_H_dist <- ggplot() +
+  geom_line(data = plot_data(mb_100), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_100), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_100), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_100), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_100), aes(x = .time, y = H_distance, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_100), aes(x = .time, y = H_distance, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p250_H_dist <- ggplot() +
+  geom_line(data = plot_data(mb_250), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_250), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_250), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_250), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_250), aes(x = .time, y = H_distance, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_250), aes(x = .time, y = H_distance, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+legend_plot <- ggplot() +
+  geom_line(data = plot_data(mb_250), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_250), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_250), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_250), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_250), aes(x = .time, y = H_distance, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_250), aes(x = .time, y = H_distance, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+    theme(
+    legend.title = element_text(size = 10),     # Adjust legend title size
+    legend.text = element_text(size = 8)     # Adjust plot title size if you have one
+  )
+
+leg <- cowplot::get_legend(legend_plot)
+
+title1 <- textGrob("Batch 50", gp = gpar(fontsize = 14, fontface = "bold"))
+title2 <- textGrob("Batch 100", gp = gpar(fontsize = 14, fontface = "bold"))
+title3 <- textGrob("Batch 250", gp = gpar(fontsize = 14, fontface = "bold"))
+
+grid.arrange(title1, title2, title3, nullGrob(), p50, p100, p250, leg, p50_H_dist, p100_H_dist, p250_H_dist, leg, ncol = 4, nrow = 3, widths = c(0.3,0.3,0.3,0.1), heights = c(0.08, 0.46, 0.46))
+  
+```
+
+
+---
+###Different decay schedules
+
+Now looking at the convergence for the three different types of decay schedulers. The "illegal" one with $a=2$ actually seems to be good for momentum and minibatch.
+```{r, echo=FALSE, warning  = FALSE, message = FALSE, fig.align='center', fig.width=14, fig.height=7}
+mb_d1 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay1, epoch = batch, 
+           m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+mb_d2 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = batch,
+            m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+mb_d3 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = batch,
+            m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+
+momentum_d1 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay1, epoch = momentum(),
+                 m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+momentum_d2 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = momentum(),
+                  m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+momentum_d3 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = momentum(),
+                  m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+
+adam_d1 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay1, epoch = adam(),
+             m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+adam_d2 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = adam(),
+              m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+adam_d3 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = adam(),
+              m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+```
+
+```{r , echo=FALSE, warning  = FALSE, message = FALSE, fig.width=14, fig.height=6.5, fig.align='center'}
+#Plotting the results
+p1 <- ggplot() +
+  geom_line(data = plot_data(mb_d1), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_d1), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_d1), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_d1), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_d1), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_d1), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Distance to True Parameters") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p2 <- ggplot() +
+  geom_line(data = plot_data(mb_d2), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_d2), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_d2), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_d2), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_d2), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_d2), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Distance to True Parameters") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p3 <- ggplot() +
+  geom_line(data = plot_data(mb_d3), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_d3), aes(x = .time, y = DistToTruepar, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_d3), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_d3), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_d3), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_d3), aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Distance to True Parameters") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p1_H_dist <- ggplot() +
+  geom_line(data = plot_data(mb_d1), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_d1), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_d1), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_d1), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_d1), aes(x = .time, y = H_distance, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_d1), aes(x = .time, y = H_distance, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p2_H_dist <- ggplot() +
+  geom_line(data = plot_data(mb_d2), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_d2), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_d2), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_d2), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_d2), aes(x = .time, y = H_distance, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_d2), aes(x = .time, y = H_distance, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p3_H_dist <- ggplot() +
+  geom_line(data = plot_data(mb_d3), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_d3), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_d3), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_d3), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_d3), aes(x = .time, y = H_distance, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_d3), aes(x = .time, y = H_distance, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+legend_plot <- ggplot() +
+  geom_line(data = plot_data(mb_d3), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.1) +
+  geom_point(data = plot_data(mb_d3), aes(x = .time, y = H_distance, color = "MiniBatch"), size = 1.2) +
+  geom_line(data = plot_data(momentum_d3), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  geom_point(data = plot_data(momentum_d3), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(adam_d3), aes(x = .time, y = H_distance, color = "Adam"), size = 1.1) +
+  geom_point(data = plot_data(adam_d3), aes(x = .time, y = H_distance, color = "Adam"), size = 1.2) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+    theme(
+    legend.title = element_text(size = 10),     # Adjust legend title size
+    legend.text = element_text(size = 8)     # Adjust plot title size if you have one
+  )
+
+leg <- cowplot::get_legend(legend_plot)
+
+tit1 <- textGrob(expression(a == 1 ~ ", " ~ K == 0.4), gp = gpar(fontsize = 14, fontface = "bold"))
+tit2 <- textGrob(expression(a == 1 ~ ", " ~ gamma[1] == 0.01), gp = gpar(fontsize = 14, fontface = "bold"))
+tit3 <- textGrob(expression(a == 2 ~ ", " ~ gamma[1] == 0.01), gp = gpar(fontsize = 14, fontface = "bold"))
+
+grid.arrange(tit1, tit2, tit3, nullGrob(), p1, p2, p3, leg, p1_H_dist, p2_H_dist, p3_H_dist, leg, ncol = 4, nrow = 3, 
+             widths = c(0.3,0.3,0.3,0.1), heights = c(0.08, 0.46, 0.46))
+```
+
+
+---
+###Gradient Descent
+We implement a standard gradient descent algorithm in an S3 object similar to that of the SGD.
+
+ - Convergence criterion is $||\nabla\theta_n||_2^2 \leq \epsilon = 10^{-9}$. 
+ - Backtracking line search to find step length. 
+ - Also implemented momentum to optimize on speed and avoid getting caught in local minima.
+ - Furthermore implemented gradient clipping - scaling the gradient by a $||\nabla f||^2$ if it exceeds a certain threshold.
+  
+```{r echo = TRUE}
+GD(x, y, par0 = init_par, grad = gradient_rcpp, H = H_rcpp, gamma0 = 1, 
+     epsilon = 1e-9, maxiter = 5000, beta = 0.9, momentum = TRUE, clipping = TRUE)
+```
+
+---
+###Gradient Descent
+We choose the optimal stepsize using crossvalidation. We sample a small grid $(0.1, 0.5, 1, 2, 3, 4)$ of step sizes and choose the one that minimizes the loss function. Here it is minimized in 4.
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+set.seed(123)
+stepsize <- c(0.1, 0.5, 1, 2, 3, 4, 10)
+loss <- rep(0, length(stepsize))
+GD_i <- list()  # Initialize an empty list
+
+for(i in 1:length(stepsize)) {
+  # Store each result as an element in the list using [[i]]
+  GD_i[[i]] <- GD(x = sim1$x, y = sim1$y, par0 = init_par, grad = gradient_rcpp, 
+                  H = H_rcpp, gamma0 = stepsize[i], epsilon = 1e-9, 
+                  maxiter = 5000, beta = 0.9, momentum = TRUE, 
+                  true_par = param$par)
+  
+  # Calculate loss and store it
+  plot_data_i <- plot_data(GD_i[[i]])  # Extract data for this GD_i object
+  loss[i] <- plot_data_i[nrow(plot_data_i), "loss"]  # Access the last row for "loss"
+}
+stepsize[which.min(loss)]
+```
+
+Convergence of the standard implementation, with momentum and with momentum and gradient clipping.
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=16, fig.height=4.5, fig.align='center'}
+set.seed(02112024)
+GD_momentum <- GD(x = sim1$x, y = sim1$y, par0 = init_par, grad = gradient_rcpp, H = H_rcpp, gamma0 = 4, 
+     epsilon = 1e-9, maxiter = 5000, beta = 0.7, momentum = TRUE, true_par = param$par)
+GD_no_momentum <- GD(x = sim1$x, y = sim1$y, par0 = init_par, grad = gradient_rcpp, H = H_rcpp, gamma0 = 4,
+     epsilon = 1e-9, maxiter = 5000, beta = 0.7, momentum = FALSE, true_par = param$par)
+GD_clipping_mom <- GD(x = sim1$x, y = sim1$y, par0 = init_par, grad = gradient_rcpp, H = H_rcpp, gamma0 = 4, 
+     epsilon = 1e-9, maxiter = 5000, beta = 0.7, momentum = TRUE, true_par = param$par, clipping = TRUE, threshold = 5)
+
+p1 <- ggplot() +
+  geom_line(data = plot_data(GD_momentum), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  #geom_point(data = plot_data(GD_momentum), aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(GD_no_momentum), aes(x = .time, y = DistToTruepar, color = "Standard"), size = 1.1) +
+  #geom_point(data = plot_data(GD_no_momentum), aes(x = .time, y = DistToTruepar, color = "Standard"), size = 1.2) +
+  geom_line(data = plot_data(GD_clipping_mom), aes(x = .time, y = DistToTruepar, color = "Clipping+Momentum"), size = 1.1) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Distance to True Parameters") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p2 <- ggplot() +
+  geom_line(data = plot_data(GD_momentum), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.1) +
+  #geom_point(data = plot_data(GD_momentum), aes(x = .time, y = H_distance, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(GD_no_momentum), aes(x = .time, y = H_distance, color = "Standard"), size = 1.1) +
+  #geom_point(data = plot_data(GD_no_momentum), aes(x = .time, y = H_distance, color = "Standard"), size = 1.2) +
+  geom_line(data = plot_data(GD_clipping_mom), aes(x = .time, y = H_distance, color = "Clipping+Momentum"), size = 1.1) +
+  scale_y_log10() +
+  labs(x = "Time", y = "H_distance") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none")
+
+p3 <- ggplot() +
+  geom_line(data = plot_data(GD_momentum), aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  #geom_point(data = plot_data(GD_momentum), aes(x = .time, y = loss, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(GD_no_momentum), aes(x = .time, y = loss, color = "Standard"), size = 1.1) +
+  #geom_point(data = plot_data(GD_no_momentum), aes(x = .time, y = loss, color = "Standard"), size = 1.2) +
+  geom_line(data = plot_data(GD_clipping_mom), aes(x = .time, y = loss, color = "Clipping+Momentum"), size = 1.1) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Loss") + my_color_scale_1 + my_theme1 +
+  theme(legend.position = "none") +
+  xlim(0,2)
+  
+
+legend_plot <- ggplot() +
+  geom_line(data = plot_data(GD_momentum), aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  #geom_point(data = plot_data(GD_momentum), aes(x = .time, y = loss, color = "Momentum"), size = 1.2) +
+  geom_line(data = plot_data(GD_no_momentum), aes(x = .time, y = loss, color = "Standard"), size = 1.1) +
+  #geom_point(data = plot_data(GD_no_momentum), aes(x = .time, y = loss, color = "Standard"), size = 1.2) +
+  geom_line(data = plot_data(GD_clipping_mom), aes(x = .time, y = loss, color = "Clipping+Momentum"), size = 1.1) +
+  scale_y_log10() +
+  labs(x = "Time", y = "Loss") + my_color_scale_1 + my_theme1 +
+      theme(
+    legend.title = element_text(size = 10),     # Adjust legend title size
+    legend.text = element_text(size = 8)     # Adjust plot title size if you have one
+  )
+
+getl <- cowplot::get_legend(legend_plot)
+
+grid.arrange(p1, p2, p3, getl, ncol = 4, widths = c(0.3,0.3,0.3,0.1))
+
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(06112024)
+sim2 <- simulate(param, 50000)
+sim3 <- simulate(param, 25000)
+sim1 <- simulate(param, 10000)
+
+#GD
+GD1 <- GD(x = sim1$x, y = sim1$y, par0 = init_par, grad = gradient_rcpp, H = H_rcpp, gamma0 = 4, 
+     epsilon = 1e-9, maxiter = 5000, beta = 0.9, momentum = TRUE, true_par = param$par, clipping = TRUE, threshold = 3)
+GD2 <- GD(x = sim2$x, y = sim2$y, par0 = init_par, grad = gradient_rcpp, H = H_rcpp, gamma0 = 4,
+     epsilon = 1e-9, maxiter = 5000, beta = 0.9, momentum = TRUE, true_par = param$par, clipping = TRUE, threshold = 3)
+GD3 <- GD(x = sim3$x, y = sim3$y, par0 = init_par, grad = gradient_rcpp, H = H_rcpp, gamma0 = 4,
+     epsilon = 1e-9, maxiter = 5000, beta = 0.9, momentum = TRUE, true_par = param$par, clipping = TRUE, threshold = 3)
+d_gd1 <- plot_data(GD1)
+d_gd2 <- plot_data(GD2)
+d_gd3 <- plot_data(GD3)
+
+plot_data(GD2)
+#SGD
+SGD1 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = batch, 
+           m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+SGD2 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = batch,
+            m = 50, x = sim2$x, y = sim2$y, true_par = param$par, maxiter = maxiter)
+SGD3 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = batch,
+            m = 50, x = sim3$x, y = sim3$y, true_par = param$par, maxiter = maxiter)
+d_sgd1 <- plot_data(SGD1)
+d_sgd2 <- plot_data(SGD2)
+d_sgd3 <- plot_data(SGD3)
+
+
+#MB
+MB1 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = batch, 
+           m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+MB2 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = batch,
+            m = 50, x = sim2$x, y = sim2$y, true_par = param$par, maxiter = maxiter)
+MB3 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = batch,
+            m = 50, x = sim3$x, y = sim3$y, true_par = param$par, maxiter = maxiter)
+d_mb1 <- plot_data(MB1)
+d_mb2 <- plot_data(MB2)
+d_mb3 <- plot_data(MB3)
+
+#Momentum
+MOM1 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = momentum(),
+                 m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+MOM2 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = momentum(),
+                  m = 50, x = sim2$x, y = sim2$y, true_par = param$par, maxiter = maxiter)
+MOM3 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay3, epoch = momentum(),
+                  m = 50, x = sim3$x, y = sim3$y, true_par = param$par, maxiter = maxiter)
+d_mom1 <- plot_data(MOM1)
+d_mom2 <- plot_data(MOM2)
+d_mom3 <- plot_data(MOM3)
+
+
+#Adam
+ADAM1 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = adam(),
+             m = 50, x = sim1$x, y = sim1$y, true_par = param$par, maxiter = maxiter)
+ADAM2 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = adam(),
+              m = 50, x = sim2$x, y = sim2$y, true_par = param$par, maxiter = maxiter)
+ADAM3 <- SGD(par0 = init_par, grad = gradient_rcpp, gamma = decay2, epoch = adam(),
+              m = 50, x = sim3$x, y = sim3$y, true_par = param$par, maxiter = maxiter)
+d_adam1 <- plot_data(ADAM1)
+d_adam2 <- plot_data(ADAM2)
+d_adam3 <- plot_data(ADAM3)
+```
+
+```{r, echo=FALSE, warning = FALSE, message = FALSE}
+my_color_scale_2 <- scale_color_manual(values = c("GD" = base, "SGD" = "coral4", "MB" = "hotpink4", "Momentum" = "steelblue4", "Adam" = "darkorange"))
+```
+
+
+---
+###Increasing N
+Convergence of the loss function
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=16, fig.height=6.5, fig.align='center'}
+p1 <- ggplot() +
+  geom_line(data = d_gd1, aes(x = .time, y = loss, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd1, aes(x = .time, y = loss, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb1, aes(x = .time, y = loss, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom1, aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam1, aes(x = .time, y = loss, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 10.000",x = "Time", y = "Loss") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none") 
+
+p2 <- ggplot() +
+  geom_line(data = d_gd2, aes(x = .time, y = loss, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd2, aes(x = .time, y = loss, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb2, aes(x = .time, y = loss, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom2, aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam2, aes(x = .time, y = loss, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 25.000", x = "Time", y = "Loss") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none") 
+
+p3 <- ggplot() +
+  geom_line(data = d_gd3, aes(x = .time, y = loss, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd3, aes(x = .time, y = loss, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb3, aes(x = .time, y = loss, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom3, aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam3, aes(x = .time, y = loss, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 50.000",x = "Time", y = "Loss") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none")
+
+legend_plot <- ggplot() +
+  geom_line(data = d_gd3, aes(x = .time, y = loss, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd3, aes(x = .time, y = loss, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb3, aes(x = .time, y = loss, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom3, aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam3, aes(x = .time, y = loss, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 25.000",x = "Time", y = "Loss") + my_color_scale_2 + my_theme1 +
+      theme(
+    legend.title = element_text(size = 10),     # Adjust legend title size
+    legend.text = element_text(size = 8)     # Adjust plot title size if you have one
+  ) +
+  xlim(0,4)
+
+getl <- cowplot::get_legend(legend_plot)
+
+grid.arrange(p1, p2, p3, getl, ncol = 4, widths = c(0.3,0.3,0.3,0.1))
+```
+---
+###Increasing N
+Plotting on a smaller scale
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.width=16, fig.height=6.5, fig.align='center'}
+p1 <- ggplot() +
+  geom_line(data = d_gd1, aes(x = .time, y = loss, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd1, aes(x = .time, y = loss, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb1, aes(x = .time, y = loss, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom1, aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam1, aes(x = .time, y = loss, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 10.000",x = "Time", y = "Loss") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none") +
+  xlim(0,0.02)
+
+p2 <- ggplot() +
+  geom_line(data = d_gd2, aes(x = .time, y = loss, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd2, aes(x = .time, y = loss, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb2, aes(x = .time, y = loss, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom2, aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam2, aes(x = .time, y = loss, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 25.000", x = "Time", y = "Loss") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none") +
+  xlim(0, 0.08)
+
+p3 <- ggplot() +
+  geom_line(data = d_gd3, aes(x = .time, y = loss, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd3, aes(x = .time, y = loss, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb3, aes(x = .time, y = loss, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom3, aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam3, aes(x = .time, y = loss, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 50.000",x = "Time", y = "Loss") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none")+
+  xlim(0,0.08)
+
+legend_plot <- ggplot() +
+  geom_line(data = d_gd3, aes(x = .time, y = loss, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd3, aes(x = .time, y = loss, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb3, aes(x = .time, y = loss, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom3, aes(x = .time, y = loss, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam3, aes(x = .time, y = loss, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 25.000",x = "Time", y = "Loss") + my_color_scale_2 + my_theme1 +
+      theme(
+    legend.title = element_text(size = 10),     # Adjust legend title size
+    legend.text = element_text(size = 8)     # Adjust plot title size if you have one
+  ) +
+  xlim(0,4)
+
+getl <- cowplot::get_legend(legend_plot)
+
+grid.arrange(p1, p2, p3, getl, ncol = 4, widths = c(0.3,0.3,0.3,0.1))
+```
+---
+###Increasing N
+Plotting the distance to the true parameters.
+
+```{r, echo=FALSE, warning = FALSE, message = FALSE, fig.width=16, fig.height=6.5, fig.align='center'}
+p1 <- ggplot() +
+  geom_line(data = d_gd1, aes(x = .time, y = DistToTruepar, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd1, aes(x = .time, y = DistToTruepar, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb1, aes(x = .time, y = DistToTruepar, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom1, aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam1, aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 5.000",x = "Time", y = "DistToTruepar") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none") 
+
+p2 <- ggplot() +
+  geom_line(data = d_gd2, aes(x = .time, y = DistToTruepar, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd2, aes(x = .time, y = DistToTruepar, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb2, aes(x = .time, y = DistToTruepar, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom2, aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam2, aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 10.000", x = "Time", y = "DistToTruepar") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none") 
+
+
+p3 <- ggplot() +
+  geom_line(data = d_gd3, aes(x = .time, y = DistToTruepar, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd3, aes(x = .time, y = DistToTruepar, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb3, aes(x = .time, y = DistToTruepar, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom3, aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam3, aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 25.000",x = "Time", y = "DistToTruepar") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, getl, ncol = 4, widths = c(0.3,0.3,0.3,0.1))
+```
+
+---
+###Increasing N
+Plotting the distance to the true parameters on a smaller scale.
+```{r, echo=FALSE, warning = FALSE, message = FALSE, fig.width=16, fig.height=6.5, fig.align='center'}
+p1 <- ggplot() +
+  geom_line(data = d_gd1, aes(x = .time, y = DistToTruepar, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd1, aes(x = .time, y = DistToTruepar, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb1, aes(x = .time, y = DistToTruepar, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom1, aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam1, aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 5.000",x = "Time", y = "DistToTruepar") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none") +
+  xlim(0,0.2)
+
+p2 <- ggplot() +
+  geom_line(data = d_gd2, aes(x = .time, y = DistToTruepar, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd2, aes(x = .time, y = DistToTruepar, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb2, aes(x = .time, y = DistToTruepar, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom2, aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam2, aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 10.000", x = "Time", y = "DistToTruepar") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none") +
+  xlim(0, 0.5)
+
+p3 <- ggplot() +
+  geom_line(data = d_gd3, aes(x = .time, y = DistToTruepar, color = "GD"), size = 1.1) +
+  geom_line(data = d_sgd3, aes(x = .time, y = DistToTruepar, color = "SGD"), size = 1.1) +
+  geom_line(data = d_mb3, aes(x = .time, y = DistToTruepar, color = "MB"), size = 1.1) +
+  geom_line(data = d_mom3, aes(x = .time, y = DistToTruepar, color = "Momentum"), size = 1.1) +
+  geom_line(data = d_adam3, aes(x = .time, y = DistToTruepar, color = "Adam"), size = 1.1) +
+  scale_y_log10() +
+  labs(title = "N = 25.000",x = "Time", y = "DistToTruepar") + my_color_scale_2 + my_theme1 +
+  theme(legend.position = "none")+
+  xlim(0,1)
+
+
+grid.arrange(p1, p2, p3, getl, ncol = 4, widths = c(0.3,0.3,0.3,0.1))
+```
+
+---
+###Further Possible Optimization
+
+####Exploiting a grid-structure
+Assuming we only sample the $x$-values from fixed grid, we could possibly optimize our implementations further.
+
+ - However, even when the x's are sampled from a grid, we have and added noise variable on our $Y$-values.
+ 
+ - This could possibly be mitigated by a form of binning. I.e binning all the $Y$'s associated to a specific $X$-value and then taking the mean of the $Y$'s in the bin.
+ 
+ - I have not pursued the implementation of it. But it could be a possible extension to the project.
+ 
+####Full Rcpp-implementation
+One coul possibly make the implementation even faster, by implementing the entire algorithm in Rcpp.
+ 
+ 

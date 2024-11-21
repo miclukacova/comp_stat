@@ -70,7 +70,7 @@ theme_set(
 #Themes and colors:
 my_color_scale <- scale_color_manual(
    name = "Density estimator",
-  values = c("R_density" = "coral4", "bin_kern_dens" = "#4f7942", "AMISE" = "hotpink4", "CV" = "#4f7942")
+  values = c("R_density" = "coral4", "bin_kern_dens" = "#4f7942", "AMISE" = "steelblue4", "CV" = "#4f7942")
 )
 
 my_theme <-   theme(
@@ -92,10 +92,10 @@ Objective is to implement a kernel density estimator using the Epanechnikov kern
 $$
 K(x) = \frac{3}{4}(1-x^2)1_{\left[-1,1\right]}(x)
 $$
-And implement two different methods for bandwidth selection:
+And implement two different methods for bandwidth selection. As the selection of the bandwidth is highly important for the performance of the kernel density estimator:
  - AMISE
  - Cross-validation
-As the selection of the bandwidth is highly important for the performance of the kernel density estimator.
+
 ---
 ###Kernel Density Estimation
 The starting point for kernel density estimation is
@@ -106,7 +106,15 @@ Where $x = x_1,...x_N$ are the observations.
 <br>
 Instead of a naive average we can apply a Kernel function to smooth the estimator, yielding the kernel density estimator
 $$\hat{f}_h(x) = \frac{1}{2Nh}\sum_{i=1}^N K\left(\frac{x-x_i}{h}\right)$$
-where $K$ is the kernel function.
+where $K$ is the kernel function. So here $K(x) = \frac{3}{4}(1-x^2)1_{\left[-1,1\right]}(x)$
+
+---
+###Binned Kernel Density Estimator
+I have only implemented a binned kernel density estimator, as this is the fastest and the uncertainty induced is fairly low, when the number of bins is set high enough. The idea behind the binned kernel density estimator is to bin the data and then apply the kernel density estimator to each bin and weight it with the number of observations in each bin.
+
+The binned kernel density estimator is then given by:
+$$\hat{f}_h(x) = \frac{1}{2Nh}\sum_{i=1}^B n_i K\left(\frac{x-x_i}{h}\right)$$
+Where $n_i$ is the number of observations in bin $i$. The kernel function is the same as before.
 
 ---
 class: reduce-spacing
@@ -237,11 +245,21 @@ class: reduce-spacing
 Based on minimizing the MISE asymptotically. The MISE is given as
 $$MISE_h(x)=\int E\left(\hat{f}_h(x)-f_0(x)\right)^2dx=\int V\left(\hat{f}_h(x) \right)dx + \int bias\left(\hat{f}_h(x) \right)^2dx$$
 Illustratetes that there is a tradeoff between the bias and the variance. The asymptotic MISE - the AMISE is given by:
-$$AMISE(h)=\frac{h^4}{36}||f_0''||_2^2+\frac{1}{2Nh}$$
-Differentiating and setting equal to 0 yields the optimal bandwidth. (Works well as AMISE goes to $\infty$ for $h\rightarrow 0$ and $h\rightarrow \infty$):
-$$h_{N}=\left(\frac{9}{2||f_0''||_2^2}\right)^{1/5}N^{-1/5}$$
+$$AMISE(h)=\frac{h^4\sigma_K^4}{4}||f_0''||_2^2+\frac{||K||^2_2}{2Nh}$$
+For this to be weel defined, we need: $f_0$ twice differentiable, $f_0''$ and $K$ need to be square integrable and $\sigma_K$ needs to be finite. Differentiating and setting equal to 0 yields the optimal bandwidth. (Works well as AMISE goes to $\infty$ for $h\rightarrow 0$ and $h\rightarrow \infty$):
+$$h_{N}=\left(\frac{||K||_2^2}{||f_0''||_2^2\sigma_K^2}\right)^{1/5}N^{-1/5}$$
 But we need an estimate for $||f_0''||_2^2$ - this is done using a pilot estimate $\tilde{f}$. This however, depends in the bandwidth. But here we will just find a pilot bandwidth for r using Silverman's rule of thumb.
 $$||\tilde{f}''||_2^2=\frac{1}{n^2r^6}\sum_{i=1}^N\sum_{j=1}^N\int H''\left(\frac{x-x_j}{r}\right)H''\left(\frac{x-x_i}{r}\right)$$
+---
+###AMISE
+To implement the AMISE we will derive some analytical results to make implementation faster. From exercise classes we have:
+$$||K||_2^2 = \int K^2(x)dx = \int \left(\frac{3}{4}(1-x^2)1_{\left[-1,1\right]}(x)\right)^2dx = \frac{3}{5}$$
+That the variance is:
+$$\sigma_K^4 = (\sigma^2_K)^2=\frac{1}{25}$$
+
+And that the estimate for $||f_0''||^2_2$
+$$||\tilde{f}''||^2_2=\frac{1}{n^2r^6}\sum_{i=1}^N\sum_{j=1}^N\int K''\left(\frac{x-x_j}{r}\right)K''\left(\frac{x-x_i}{r}\right)dx\\
+= \frac{1}{n^2r^6} \sum_{i=1}^N\sum_{j=1}^N\int\left(\frac{-3}{2}\right)^21_{\left| \frac{x-x_j}{r}\right|\leq 1}(x)1_{\left| \frac{x-x_i}{r}\right|\leq 1}(x)dx= \frac{9}{4}\frac{1}{n^2r^6} \sum_{i=1}^N\sum_{j=1}^N\max\{0, \min\{x_j,x_i\} - \max\{x_j,x_i\} + 2r\}$$
 ---
 ###Cross-validation
 The cross-validation method is based on k-fold cross-validation. I have chosen to maximize the loglikelihood, to compare the AMISE to a bandwidth selection that is completely different. 
@@ -252,6 +270,45 @@ $$l_{CV}(h) = \sum_{i=1}^k\hat{f}_h^{-i}$$
 And thus the optimal bandwidth is chosen to be:
 $$\hat{h}_{CV} = \arg\max_h l_{CV}(h)$$
 In practice we are only examining a grid of $h$-values. Furthermore, the indices for the $I$-partition are sampled randomly with replacement. 
+---
+###Implementation
+```{r, eval=FALSE, warning=FALSE, message=FALSE}
+cv_bw_M <- function(x, k = 10, h = seq(0.03, 10, by = 0.01)){
+  #Partition
+  n <-length(x)
+  groups <- sample(rep(1:k, length.out = n))
+  
+  #Number of observations in each group:
+  N <- sapply(seq(1,k), function(x) sum (groups == x), simplify = T)
+  
+  #bandwidth log likelihoods:
+  bw_l <- numeric(length(h))
+  
+  for (j in seq_along(h)) {
+    #kernel density estimates:
+    f_hat_i <- numeric(length(x))
+    
+    #Calculating CV density estimates
+    for (i in seq_along(x)) {
+      k <- groups[i]
+      x_m_i <- x[groups != k]
+      condition <- abs((x[i] - x_m_i)/h[j]) <= 1
+      f_hat_i[i] <- 3 / (N[k] * 4 * h[j]) * sum((1-(x[i] - x_m_i)^2/h[j]^2) * condition)
+      #if(any(f_hat_i < 0 )) {print(f_hat_i)} #Check for negative values of f_hat
+    }
+    
+    #Calculating log likelihood
+    bw_l[j] <- sum(log(f_hat_i))
+    #print(c(bw_l[j], h[j]))
+    
+  }
+  
+  #returning max likelihood:
+  return(h[which.max(bw_l)])
+}
+```
+
+
 
 ---
 class: reduce-spacing
@@ -266,7 +323,7 @@ class: reduce-spacing
 
 - The object has a `plot` method that plots the density estimator, and a `print` method.
 
-```{r, echo=F, warning = FALSE}
+```{r, echo=F, warning = FALSE, message=FALSE}
 source("~/comp_stat/Dina/Assignment 1 - Smoothing/Source_code.R", local = FALSE)
 ```
 
@@ -295,8 +352,8 @@ k2
 ]
 ---
 ###Testing our bw selection methods
-We test our kernel estimators on the simulated data from $\mathcal{N}(0.25,2.4)$ and compare them with the `density()` function in base `R`.
-```{r, echo=F, fig.align='center', fig.width=8, fig.height=5}
+We test our kernel estimators on the simulated data from $\mathcal{N}(0.25,2.4)$  and the $t$-distribution with 3 degrees of freedom. A compare them with the `density()` function in base `R`.
+```{r, echo=F, fig.align='center', fig.width=14, fig.height=5, warning = FALSE, message = FALSE}
 x_norm <- rnorm(1000, 0.25, 2.4)
 
 norm_am <- kernel_density(x = x_norm, h = "AMISE", B = 1000, m = 512, k = 10)
@@ -314,11 +371,47 @@ w <- ggplot() +
   geom_line(data = plot_am_n, aes(x = x, y = y, color = "AMISE"), size = 1) +
   geom_line(data = plot_R_n, aes(x = x, y = y, color = "R_density"), size = 1) +
   geom_line(data = plot_cv_n, aes(x = x, y = y, color = "CV"), size = 1) +
-  labs(title = "Waiting time",
-       x = "x", y = "Density") +
+  labs(x = "x", y = "Density") +
   my_color_scale +
   my_theme
-w
+
+#for bimdal data 
+set.seed(123)  # For reproducibility
+
+# Parameters for the two modes            # Total number of data points
+mean1 <- 5             # Mean of the first mode
+mean2 <- 15            # Mean of the second mode
+sd1 <- 1               # Standard deviation of the first mode (small variance)
+sd2 <- 1.5               # Standard deviation of the second mode (small variance)
+weight1 <- 0.5         # Proportion of data points in the first mode
+weight2 <- 0.5         # Proportion of data points in the second mode
+
+# Generate data points for each mode
+data1 <- rnorm(1000 * weight1, mean = mean1, sd = sd1)
+data2 <- rnorm(1000 * weight2, mean = mean2, sd = sd2)
+
+# Combine the two distributions into one bimodal distribution
+bimodal_data <- c(data1, data2)
+
+bim_am <- kernel_density(x = y, h = "AMISE", B = 1000, m = 512, k = 10)
+bim_cv <- kernel_density(x = y, h = "CV", B = 1000, m = 512, k = 10)
+bim_R <- density(y, bw = "nrd0", n = 512, kernel = "epanechnikov")
+
+plot_am_b <- plot_data(bim_am)
+plot_cv_b <- plot_data(bim_cv)
+plot_R_b <- data.frame(x = bim_R$x, y = bim_R$y)
+
+#Plotting the results
+g <- ggplot() +
+  geom_histogram(data = data.frame(x = y), aes(x = x, y = ..density..), fill = "coral", color = "coral1", alpha = 0.2, bins = 40) +
+  geom_line(data = plot_am_b, aes(x = x, y = y, color = "AMISE"), size = 1) +
+  geom_line(data = plot_R_b, aes(x = x, y = y, color = "R_density"), size = 1) +
+  geom_line(data = plot_cv_b, aes(x = x, y = y, color = "CV"), size = 1) +
+  labs(x = "x", y = "Density") +
+  my_color_scale +
+  my_theme + xlim(-7,7)
+
+grid.arrange(w, g, ncol = 2)
 ```
 
 
@@ -328,11 +421,18 @@ library(knitr)
 
 # Original data frame
 h_values <- data.frame(
-  method = c( "AMISE", "CV"),
-  h = c(norm_am$density$h, norm_cv$density$h)
+  dataset = c("N(0.25, 2.4)", "N(0.25, 2.4)", "t-3", "t-3"),
+  method = c("AMISE", "CV", "AMISE", "CV"),
+  h = c(norm_am$density$h, norm_cv$density$h, bim_am$density$h, bim_cv$density$h)
 )
 
-knitr::kable(h_values)
+# Reshape the data so methods are columns
+h_values_wide <- pivot_wider(h_values, names_from = method, values_from = h)
+
+# Display the table with knitr::kable
+knitr::kable(h_values_wide,
+             col.names = c("Dataset", "AMISE", "CV"),
+             align = c("l", "c", "c"))
 
 ```
 
@@ -463,8 +563,7 @@ profvis({
 class: reduce-spacing
 
 ###Optimizing
-- Vectorizing
-Vectorizing the inner `for_loop` in the `cv_bw_M` function. We can do this by creating a matrix of the $\frac{(x- x_i)}{h}$ values, then applying the kernel function to the entire matrix and using the fast `colSums`. This is done as follows
+- Vectorizing the inner `for_loop` in the `cv_bw_M` function. We can do this by creating a matrix of the $\frac{(x- x_i)}{h}$ values, then applying the kernel function to the entire matrix and using the fast `colSums`. This is done as follows
 ```{r, eval = FALSE}
     for (i in 1:k) {
       # Number of indices not in group i
@@ -481,12 +580,10 @@ Vectorizing the inner `for_loop` in the `cv_bw_M` function. We can do this by cr
 ```
 
 
- - Implementing in Rcpp
-Another approach is to carry out the calculations in C++ using `Rcpp`. I have chosen to implement the two inner loops along with the kernel function in C++. I have used the Armadillo package, as we are dealing with vectorized operations. 
+ - Another approach is to carry out the calculations in C++ using `Rcpp`. I have chosen to implement the two inner loops along with the kernel function in C++. I have used the Armadillo package, as we are dealing with vectorized operations. 
 
 
-- Parallelizing 
-A last approach is to parallelize the for loop over `h` in the `bw_cv_vec` function. This is done using the `foreach` and `doParallel` packages for Windows. 
+-  A last approach is to parallelize the for loop over `h` in the `bw_cv_vec` function. This is done using the `foreach` and `doParallel` packages for Windows. 
 
 ---
 class: reduce-spacing
@@ -515,9 +612,9 @@ knitr::kable(data.frame(expression = c('Naive', 'Vectorized', 'Rcpp', 'Parallale
 ###Comparing Performance
 Further investigating performance by using the `bench` package to see how the functions perform for larger sample sizes. They are tested on $(2^3,...,2^{10})$ with 5 iterations for each sample size.
 
-```{r, echo = FALSE, message = FALSE, warning=FALSE, fig.align='center', fig.width=11, fig.height=7}
+```{r, echo = FALSE, message = FALSE, warning=FALSE, fig.align='center', fig.width=11, fig.height=6}
 #Doing it using bench::press to see what happens with values of n from 2^3 to 2^10
-n_values <- 2^(3:10)
+n_values <- c(2^(3:10), 1200)
 
 bm_l <- bench::press(
   n = n_values,
@@ -543,8 +640,8 @@ plot_data <- bm_l %>%
 
 # Create the plot
 ggplot(plot_data, aes(x = n, y = median, color = expr)) +
-  geom_point() +
-  geom_line() +
+  geom_point(size = 2) +
+  geom_line(size = 1.2) +
   scale_y_log10() +  # Log scale for better readability
   scale_color_manual(
     values = c("Naive" = "#4f7942", "Vectorized" = "coral3", 
