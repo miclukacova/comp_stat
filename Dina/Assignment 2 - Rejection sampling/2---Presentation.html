@@ -85,7 +85,7 @@ We have target density `\(f(y)\)` and want to sample from it using a proposal de
 &lt;br&gt;
 Let `\(Y_1,Y_2,...\)` be iid samples from the proposal density and let `\(U_1,U_2,...\)` be iid uniformly distributed on `\((0,1)\)` and independent of the `\(Y_n\)`'s. Define:
 &lt;br&gt;
-`$$\sigma = \inf\{ n\geq 1|U_n\leq \alpha f(X_n)/g(X_n) \} \quad  \alpha \in (0,1]$$`
+`$$\sigma = \inf\{ n\geq 1|U_n\leq \alpha f(Y_n)/g(Y_n) \} \quad  \alpha \in (0,1]$$`
 It can be shown that the distribution of `\(Y_\sigma\)` has density `\(f(y)\)`, which is why rejections sampling works.
 &lt;br&gt;
 &lt;br&gt;
@@ -96,7 +96,7 @@ The trick is to find a good proposal distribution.
 
 ---
 ###Gaussian Envelope
-We need to find `\((\mu,\sigma)\)` such that `\(\mathcal{N}(\mu,\sigma)\)` approximates `\(f(y)\)` as well as possible.
+We need to find `\((\mu,\sigma^2)\)` such that `\(\mathcal{N}(\mu,\sigma^2)\)` approximates `\(f(y)\)` as well as possible.
 &lt;br&gt;
 &lt;br&gt;
 As we saw that `\(f(y)\)` appears to be fairly symmetrical, we will choose the mean of the Gaussian envelope to be `\(\mu = \max_y f(y)\)`. We find it using `optim`.
@@ -118,11 +118,11 @@ mu_opt
 class: reduce-spacing
 
 ###Gaussian Envelope
-We now want to find `\(\alpha'\)` so that `\(\alpha' \leq f(y)/g(y)\)`. This ensures that our envelope fulfills its requirements. We do not need to take normalizing constants into account - these are simply included in `\(\alpha'\)`. 
+We now want to find `\(\alpha'\)` so that `\(\alpha' \leq g(y)/f(y)\)`. This ensures that our envelope fulfills its requirements. We do not need to take normalizing constants into account - these are simply included in `\(\alpha'\)`. 
 &lt;br&gt;
 &lt;br&gt;
 The optimal value for `\(\alpha'\)` can be found by minimizing over the ratio between our target and our proposal density. Since we want to optimize `\(\sigma^2\)` over these values we find `\(\sigma^2\)` by:
-`$$\arg\max_{\sigma^2}(\min_{y} \log f(y)/g(y))$$`
+`$$\arg\max_{\sigma^2}(\min_{y} \log g(y)/f(y))$$`
 &lt;br&gt;
 We find `\(\sigma^2\)` as follows:
 &lt;br&gt;
@@ -147,23 +147,22 @@ sigma_opt
 
 ---
 ###Visualizing
-Sanity check - is `\(\alpha'f(y)\leq g(y)\)`?
-&lt;br&gt;
+Sanity check - is `\(\alpha'f(y)\leq g(y)\)`? Tolerance is needed because we find `\(\alpha '\)` taking the minimum over a finite sequences.
 
 
 
 ``` r
-values &lt;- data.frame(y = test_y, 
-              values = dnorm(test_y, mean = mu_opt, sd = sigma_opt)- tar_dens(test_y) * alpha_s)
-values$values[values$values &lt; 0][1:5]
+testthat::test_that("Check if alpha * f(y) &lt;= g(y) with tolerance", {
+  g_y &lt;- dnorm(test_y, mean = mu_opt, sd = sigma_opt)
+  f_y &lt;- tar_dens(test_y) * alpha_s
+  tolerance &lt;- 1e-4
+  testthat::expect_true(all(f_y &lt;= g_y + tolerance))
+})
 ```
 
 ```
-## [1] -1.030931e-05 -2.654067e-05 -3.592862e-05 -3.845880e-05 -3.411709e-05
+## Test passed 😀
 ```
-
-
-This is because we find `\(\alpha '\)` by taking the minimum over a finite sequence of y's.
 
 &lt;img src="2---Presentation_files/figure-html/unnamed-chunk-11-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
@@ -186,7 +185,7 @@ rej_sample_slow &lt;- function(n, mu, sigma, alpha, dens) {
       reject &lt;- u &gt; 1/(sqrt(2*pi*sigma)) * alpha * dens(y0) / 
         dnorm(y0, mean = mu, sd = sigma)
       
-      #Counting no of rejections 
+#Counting no of rejections 
       if (reject) {
         rejection_count &lt;- rejection_count + 1  
         total &lt;- total + 1
@@ -210,7 +209,7 @@ y1 &lt;- rej_sample_slow(100000, mu_opt, sigma_opt, alpha_s, tar_dens)
 ```
 
 ```
-## [1] 0.9897266
+## [1] 0.9895601
 ```
 
 And visualize how a sample from our rejection sampler compares to the target density:
@@ -233,7 +232,7 @@ The distribution function for `\(g\)` is given by
 We can sample from this distribution by inverting it and evaluate the inverse in a uniform random variable `\(u \sim U(0,1)\)`. Computing the inverse of `\(G(x)\)` is not that hard, but requires us to keep our wits about.
 
 ---
-###Implementation
+###Log-concavity
 We have that
 `$$\log f(y)  \propto \log \prod_{i=1}^{100} \exp(yx_iz_i - \exp(yx_i))=y\sum_{i=1}^{100} x_i z_i-\sum_{i=1}^{100}\exp(yx_i)$$`
 We can then differentiate to see:
@@ -251,7 +250,7 @@ As the `\(x_i\)` values are all positive and `\(\exp(yx_i)\geq 0\)` for all `\(y
 ###Implementation
 Four our target density we see that
 `$$\frac{d f(y)}{dy} =\exp\left( \sum_{i=1}^{100}(x_iz_iy-\exp(x_iy))\right)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right) =f(y)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right)$$`
-This means that we simply get `\(a_j =  \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy_j))\)`.
+This means that we simply get `\(a_j = \frac{d \log(f(y))}{dy} = \frac{f'(y)}{f(y)}= \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy_j))\)`.
 
 And `\(b\)` is simply defined to be `\(b_j = \log f(y_j) - a\cdot y_j\)`. 
 
@@ -270,17 +269,16 @@ c(y2$alpha, y3$alpha)
 ```
 
 ```
-## [1] 0.7762238 0.9790210
+## [1] 0.7822178 0.9730270
 ```
 
 &lt;img src="2---Presentation_files/figure-html/unnamed-chunk-17-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
 
 ---
+
 ###Structuring
-Computationally expensive to sample `\(U_n\)` every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time.
- 
-Furthermore we implement S3-object for each sampler.
+Computationally expensive to sample `\(U_n\)` every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time. Furthermore we implement S3-object for each sampler.
 
  - Chooses the Gaussian envelope numerically every time - employing the same method we did.
  
@@ -302,10 +300,10 @@ sampler_laffine(1000, tar_dens, range = c(0, 0.35), bp = 10)
 ## mu = 0.24, sigma = 0.06, alpha = 8.68e+40 
 ## 
 ## Rejection rate:
-## [1] 0.987013
+## [1] 0.99001
 ## 
 ## Samples:
-## [1] 0.35 0.20 0.21 0.23 0.14 0.14
+## [1] 0.23 0.17 0.19 0.33 0.19 0.24
 ```
 
 ]
@@ -319,10 +317,10 @@ sampler_laffine(1000, tar_dens, range = c(0, 0.35), bp = 10)
 ## 0, 0.04, 0.08, ... 
 ## 
 ## Rejection rate:
-## [1] 0.98
+## [1] 0.99
 ## 
 ## Samples:
-## [1] 0.32 0.21 0.22 0.26 0.23 0.26
+## [1] 0.21 0.25 0.23 0.26 0.19 0.19
 ```
 
 ]
@@ -333,36 +331,36 @@ sampler_laffine(1000, tar_dens, range = c(0, 0.35), bp = 10)
 We saw earlier, that the log-affine envelope did not seem to perform that well. Idea is to increase the number of breakpoints, so that it can better approximate the target density. However, there will most likely be a tradeoff between rejection rate and how fast the sampler is. 
 &lt;br&gt;
 &lt;br&gt;
-We will test this by sampling 1000 values from the target density using the affine envelope, with breakpoints between 0 and 0.35 and the number of breakpoints ranging from 1 to 30.
+We will test this by sampling 1000 values from the target density using the affine envelope, with breakpoints between 0 and 0.35 and the number of breakpoints ranging from 1 to 40.
 &lt;br&gt;
 &lt;img src="2---Presentation_files/figure-html/unnamed-chunk-21-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
 ---
-###Comparison
-We can now compare the two samplers against eachother using `bench::press`.
+  ###Comparison
+  We can now compare the two samplers against eachother using `bench::press`.
 
 &lt;img src="2---Presentation_files/figure-html/unnamed-chunk-22-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
 
 |expression |     min|  median|   itr.sec| mem_alloc|   gc.sec| n_itr| n_gc| total_time|
 |:----------|-------:|-------:|---------:|---------:|--------:|-----:|----:|----------:|
-|Gaussian   |  5.13ms|  5.57ms| 177.74366|  945.12KB| 3.627422|    98|    2|   551.36ms|
-|log_affine | 22.21ms| 23.73ms|  42.22631|    1.49MB| 8.648761|    83|   17|      1.97s|
+|Gaussian   |  5.08ms|  5.55ms| 179.47173|  945.12KB| 3.662688|    98|    2|   546.05ms|
+|log_affine | 22.62ms| 24.22ms|  40.44452|    1.49MB| 6.583992|    86|   14|      2.13s|
 
 
 ---
-###Optimization
-Most interesting for log-affine. We will start out by profiling to identify any bottlenecks.
+  ###Optimization
+  Most interesting for log-affine. We will start out by profiling to identify any bottlenecks.
 
 <div class="profvis html-widget html-fill-item" id="htmlwidget-6857488e883cf993cf6a" style="width:100%;height:600px;"></div>
-<script type="application/json" data-for="htmlwidget-6857488e883cf993cf6a">{"x":{"message":{"prof":{"time":[1,1,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,5,5,5,5,5,6,6,6,6,6,7,7,7,7,7,8,8,8,9,9,9,9,10,10,10,10,11,11,11,11,11,11,12,12,12,13,13,13,13,14,14,14,14,14,15,15,15,15,15,16,16,16,16,17,17,17,18,18,18,18,18,18],"depth":[2,1,1,45,44,43,42,41,40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,2,1,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,3,2,1,4,3,2,1,4,3,2,1,6,5,4,3,2,1,3,2,1,4,3,2,1,5,4,3,2,1,5,4,3,2,1,4,3,2,1,3,2,1,6,5,4,3,2,1],"label":["Rprof","profvis","list","$","findCenvVar","getInlineInfo","tryInline","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpPrim1","h","tryInline","cmpCall","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpForBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","I[i, j] <- (u0[i] > Q[j]) && (u0[i] <= Q[j + 1])","piece_lin_rejec_samp_s","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","sapply","tar_dens","piece_lin_rejec_samp_s","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","sapply","tar_dens","piece_lin_rejec_samp_s","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","sapply","tar_dens","piece_lin_rejec_samp_s","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s"],"filenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,1,1,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,1,1,null,null,1,1,null,null,1,1,null,null,null,null,1,1,null,1,1,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,null,1,1,null,1,1,null,null,null,null,1,1],"linenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,67,40,67,null,null,null,56,67,null,null,null,56,67,null,null,null,56,67,null,56,67,null,null,56,67,null,null,56,67,null,null,null,null,56,67,null,56,67,null,null,56,67,null,null,null,56,67,null,null,null,56,67,null,null,56,67,null,56,67,null,null,null,null,56,67],"memalloc":[105.5465240478516,105.5465240478516,105.938606262207,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,106.3346252441406,107.2832489013672,107.2832489013672,108.0545043945312,108.0545043945312,108.0545043945312,108.0545043945312,108.0545043945312,109.1510467529297,109.1510467529297,109.1510467529297,109.1510467529297,109.1510467529297,110.2367477416992,110.2367477416992,110.2367477416992,110.2367477416992,110.2367477416992,111.2054901123047,111.2054901123047,111.2054901123047,112.0453872680664,112.0453872680664,112.0453872680664,112.0453872680664,113.0186538696289,113.0186538696289,113.0186538696289,113.0186538696289,106.4337768554688,106.4337768554688,106.4337768554688,106.4337768554688,106.4337768554688,106.4337768554688,107.4633636474609,107.4633636474609,107.4633636474609,108.4790802001953,108.4790802001953,108.4790802001953,108.4790802001953,109.5829925537109,109.5829925537109,109.5829925537109,109.5829925537109,109.5829925537109,110.5826034545898,110.5826034545898,110.5826034545898,110.5826034545898,110.5826034545898,111.6832733154297,111.6832733154297,111.6832733154297,111.6832733154297,112.715705871582,112.715705871582,112.715705871582,113.6676864624023,113.6676864624023,113.6676864624023,113.6676864624023,113.6676864624023,113.6676864624023],"meminc":[0,0,0.3920822143554688,0.3960189819335938,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.9486236572265625,0,0.7712554931640625,0,0,0,0,1.096542358398438,0,0,0,0,1.085700988769531,0,0,0,0,0.9687423706054688,0,0,0.8398971557617188,0,0,0,0.9732666015625,0,0,0,-6.584877014160156,0,0,0,0,0,1.029586791992188,0,0,1.015716552734375,0,0,0,1.103912353515625,0,0,0,0,0.9996109008789062,0,0,0,0,1.100669860839844,0,0,0,1.032432556152344,0,0,0.9519805908203125,0,0,0,0,0],"filename":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>","<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null,"<expr>","<expr>",null,null,null,null,"<expr>","<expr>"]},"interval":10,"files":[{"filename":"<expr>","content":"profvis({\n  # Slopes\na_i <- function(x_i) tar_dens_log_difference(x_i) \n\n# Intercepts\nb_i <- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i\n\n# Interval points\nz_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)\n\n# R_i's\nr_i <- function(as, bs, zs, n) {\n  1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))\n}\n\npiece_lin_rejec_samp_s <- function(N, ys) {\n  \n  # Calculating a's, b's, z's\n  as <- sapply(ys, a_i, simplify = TRUE)\n  bs <- mapply(FUN = b_i, ys, as)\n  n <- length(bs)\n  zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)\n  \n  # Bookkeeping\n  # I_i integrals\n  R <- r_i(as, bs, zs, n)\n  \n  # Distribution function (ish)\n  Q <- c(0, cumsum(R))\n  \n  # Drawing from piecewise linear density and uniform\n  u0 <- Q[n + 1] * runif(N)\n  u <- runif(N)\n  \n  # Determine the interval that each point belongs to\n  I <- matrix(FALSE, nrow = N, ncol = n)\n  \n  for (i in 1:N) {\n    for (j in 1:n) {\n      I[i, j] <- (u0[i] > Q[j]) && (u0[i] <= Q[j + 1])\n    }\n  }\n  \n  x <- numeric(N)\n  accept <- logical(N)\n  \n  for (i in 1:N) {\n    # Finding the interval x_i belongs to\n    int <- which(I[i,] == TRUE)\n    \n    # Taking the inverse cdf\n    if (length(int) > 0) {  # Check if the interval is found\n      x[i] <- log((u0[i] - Q[int]) * as[int] * exp(-bs[int]) + exp(as[int] * zs[int])) / as[int]\n      \n      # Acceptance step\n      tar_dens_x <- tar_dens(x[i])\n      div_term <- exp(as[int] * x[i] + bs[int])\n      accept[i] <- u[i] <= tar_dens_x / div_term\n    } else {\n      x[i] <- NA  # Set to NA if no interval found\n      accept[i] <- FALSE\n    }\n  }\n  \n  return(x[accept])\n}\n  piece_lin_rejec_samp_s(10000, seq(0, 0.35, length.out = 10))\n})","normpath":"<expr>"}],"prof_output":"C:\\Users\\birgi\\AppData\\Local\\Temp\\RtmpwJtUe0\\file1f2c5f974f00.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
+<script type="application/json" data-for="htmlwidget-6857488e883cf993cf6a">{"x":{"message":{"prof":{"time":[1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,5,5,6,6,6,7,7,7,7,7,7,8,8,8,8,9,9,10,10,10,10,11,11,11,12,12,13,14,14,14,14,14,15,15,15,15,15,16,16,16,16,16,17,17,17,17,17,18,18,18,18,19],"depth":[2,1,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,2,1,2,1,3,2,1,6,5,4,3,2,1,4,3,2,1,2,1,4,3,2,1,3,2,1,2,1,1,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,5,4,3,2,1,4,3,2,1,1],"label":["Rprof","profvis","$","findCenvVar","findFunDef","cmpCall","cmp","cmpPrim2","h","tryInline","cmpCall","cmp","cmpSymbolAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","cb$restorecurloc","cmp","cmpIndices","cmpSubassignDispatch","h","trySetterInline","cmpSetterCall","cmpComplexAssign","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","cmpForBody","h","tryInline","cmpCall","cmp","h","tryInline","cmpCall","cmp","genCode","cmpfun","compiler:::tryCmpfun","for (j in 1:n) {","piece_lin_rejec_samp_s","accept[i] <- u[i] <= tar_dens_x / div_term","piece_lin_rejec_samp_s","int <- which(I[i,] == TRUE)","which","piece_lin_rejec_samp_s","$","FUN","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","tar_dens","piece_lin_rejec_samp_s","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","isTRUE","which","piece_lin_rejec_samp_s","tar_dens","piece_lin_rejec_samp_s","length","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","unique","simplify2array","sapply","tar_dens","piece_lin_rejec_samp_s","match.fun","lapply","sapply","tar_dens","piece_lin_rejec_samp_s","isFALSE","sapply","tar_dens","piece_lin_rejec_samp_s","c"],"filenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,1,1,1,1,1,1,1,1,null,null,null,null,1,1,null,null,1,1,1,1,null,null,1,1,null,1,1,1,1,null,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,null,null,1,1,null,null,1,1,null],"linenum":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,67,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,67,39,67,58,67,49,49,67,null,null,null,null,56,67,null,null,56,67,56,67,null,null,56,67,null,49,67,56,67,null,null,null,null,56,67,null,null,null,56,67,null,null,null,56,67,null,null,null,56,67,null,null,56,67,null],"memalloc":[106.6556396484375,106.6556396484375,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.0182952880859,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,107.4883499145508,108.4311370849609,108.4311370849609,109.0872497558594,109.0872497558594,110.0160369873047,110.0160369873047,110.0160369873047,111.0282211303711,111.0282211303711,111.0282211303711,111.0282211303711,111.0282211303711,111.0282211303711,111.992317199707,111.992317199707,111.992317199707,111.992317199707,112.9824066162109,112.9824066162109,113.9230422973633,113.9230422973633,113.9230422973633,113.9230422973633,114.9708023071289,114.9708023071289,114.9708023071289,115.9158477783203,115.9158477783203,107.4739456176758,108.0953826904297,108.0953826904297,108.0953826904297,108.0953826904297,108.0953826904297,109.1537704467773,109.1537704467773,109.1537704467773,109.1537704467773,109.1537704467773,110.0687408447266,110.0687408447266,110.0687408447266,110.0687408447266,110.0687408447266,110.9513854980469,110.9513854980469,110.9513854980469,110.9513854980469,110.9513854980469,111.5750274658203,111.5750274658203,111.5750274658203,111.5750274658203,112.8670120239258],"meminc":[0,0,0.3626556396484375,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.4700546264648438,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.9427871704101562,0,0.6561126708984375,0,0.9287872314453125,0,0,1.012184143066406,0,0,0,0,0,0.9640960693359375,0,0,0,0.9900894165039062,0,0.9406356811523438,0,0,0,1.047760009765625,0,0,0.9450454711914062,0,-8.441902160644531,0.6214370727539062,0,0,0,0,1.058387756347656,0,0,0,0,0.9149703979492188,0,0,0,0,0.8826446533203125,0,0,0,0,0.6236419677734375,0,0,0,1.291984558105469],"filename":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,null,"<expr>","<expr>","<expr>","<expr>",null,null,"<expr>","<expr>",null,"<expr>","<expr>","<expr>","<expr>",null,null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,null,"<expr>","<expr>",null,null,"<expr>","<expr>",null]},"interval":10,"files":[{"filename":"<expr>","content":"profvis({\n  # Slopes\n  a_i <- function(x_i) tar_dens_log_difference(x_i) \n  \n  # Intercepts\n  b_i <- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i\n  \n  # Interval points\n  z_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)\n  \n  # R_i's\n  r_i <- function(as, bs, zs, n) {\n    1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))\n  }\n  \n  piece_lin_rejec_samp_s <- function(N, ys) {\n    \n    # Calculating a's, b's, z's\n    as <- sapply(ys, a_i, simplify = TRUE)\n    bs <- mapply(FUN = b_i, ys, as)\n    n <- length(bs)\n    zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)\n    \n    # Bookkeeping\n    # I_i integrals\n    R <- r_i(as, bs, zs, n)\n    \n    # Distribution function (ish)\n    Q <- c(0, cumsum(R))\n    \n    # Drawing from piecewise linear density and uniform\n    u0 <- Q[n + 1] * runif(N)\n    u <- runif(N)\n    \n    # Determine the interval that each point belongs to\n    I <- matrix(FALSE, nrow = N, ncol = n)\n    \n    for (i in 1:N) {\n      for (j in 1:n) {\n        I[i, j] <- (u0[i] > Q[j]) && (u0[i] <= Q[j + 1])\n      }\n    }\n    \n    x <- numeric(N)\n    accept <- logical(N)\n    \n    for (i in 1:N) {\n      # Finding the interval x_i belongs to\n      int <- which(I[i,] == TRUE)\n      \n      # Taking the inverse cdf\n      if (length(int) > 0) {  # Check if the interval is found\n        x[i] <- log((u0[i] - Q[int]) * as[int] * exp(-bs[int]) + exp(as[int] * zs[int])) / as[int]\n        \n        # Acceptance step\n        tar_dens_x <- tar_dens(x[i])\n        div_term <- exp(as[int] * x[i] + bs[int])\n        accept[i] <- u[i] <= tar_dens_x / div_term\n      } else {\n        x[i] <- NA  # Set to NA if no interval found\n        accept[i] <- FALSE\n      }\n    }\n    \n    return(x[accept])\n  }\n  piece_lin_rejec_samp_s(10000, seq(0, 0.35, length.out = 10))\n})","normpath":"<expr>"}],"prof_output":"C:\\Users\\birgi\\AppData\\Local\\Temp\\Rtmp6N4OxK\\file863c4b0541ac.prof","highlight":{"output":["^output\\$"],"gc":["^<GC>$"],"stacktrace":["^\\.\\.stacktraceo(n|ff)\\.\\.$"]},"split":"h"}},"evals":[],"jsHooks":[]}</script>
 
 
 ---
-###Optimization
-Based on the profiling, we can see that we spend some time on finding the correct interval and in the loop N - here the calculation of the target density appears to be one of the heavier places. Three different approaches:
-
-- Vectorization
+  ###Optimization
+  Based on the profiling, we can see that we spend some time on finding the correct interval and in the loop N - here the calculation of the target density appears to be one of the heavier places. Three different approaches:
+  
+  - Vectorization
 First of all, it is possible to use vectorize the double for loop, that places each sample in the correct interval. This can be done by using `outer` to create a matrix of logicals, which we can then use to find the correct interval for each sample.
 
 - Parallelization
@@ -372,11 +370,19 @@ Seeing as we are performing independent operations, another is to parallelize th
 Seeing as the calculation of the target density is fairly heavy, another approach is to optimize this operation. I have done that by implementing it in `Rcpp`.
 
 ---
-###Optimization
-
+  ###Optimization
+  Implementing the target density in `Rcpp` seems to have had a decent effect. The overhead from parallelization is quite large.
 &lt;img src="2---Presentation_files/figure-html/unnamed-chunk-25-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
+---
+###Comparing against the Gaussian envelope
+&lt;img src="2---Presentation_files/figure-html/unnamed-chunk-26-1.png" width="1152" style="display: block; margin: auto;" /&gt;
 
+
+|expression      |    min|  median|   itr.sec| mem_alloc|    gc.sec| n_itr| n_gc| total_time|
+|:---------------|------:|-------:|---------:|---------:|---------:|-----:|----:|----------:|
+|Gaussian        | 5.11ms|  6.29ms| 162.93577|     945KB| 1.6458158|    99|    1|    607.6ms|
+|log_affine_Rcpp | 9.93ms| 10.83ms|  92.01842|     607KB| 0.9294789|    99|    1|      1.08s|
 
     </textarea>
 <style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>

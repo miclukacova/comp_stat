@@ -138,7 +138,7 @@ We have target density $f(y)$ and want to sample from it using a proposal densit
 <br>
 Let $Y_1,Y_2,...$ be iid samples from the proposal density and let $U_1,U_2,...$ be iid uniformly distributed on $(0,1)$ and independent of the $Y_n$'s. Define:
 <br>
-$$\sigma = \inf\{ n\geq 1|U_n\leq \alpha f(X_n)/g(X_n) \} \quad  \alpha \in (0,1]$$
+$$\sigma = \inf\{ n\geq 1|U_n\leq \alpha f(Y_n)/g(Y_n) \} \quad  \alpha \in (0,1]$$
 It can be shown that the distribution of $Y_\sigma$ has density $f(y)$, which is why rejections sampling works.
 <br>
 <br>
@@ -149,7 +149,7 @@ The trick is to find a good proposal distribution.
 
 ---
 ###Gaussian Envelope
-We need to find $(\mu,\sigma)$ such that $\mathcal{N}(\mu,\sigma)$ approximates $f(y)$ as well as possible.
+We need to find $(\mu,\sigma^2)$ such that $\mathcal{N}(\mu,\sigma^2)$ approximates $f(y)$ as well as possible.
 <br>
 <br>
 As we saw that $f(y)$ appears to be fairly symmetrical, we will choose the mean of the Gaussian envelope to be $\mu = \max_y f(y)$. We find it using `optim`.
@@ -166,11 +166,11 @@ mu_opt
 class: reduce-spacing
 
 ###Gaussian Envelope
-We now want to find $\alpha'$ so that $\alpha' \leq f(y)/g(y)$. This ensures that our envelope fulfills its requirements. We do not need to take normalizing constants into account - these are simply included in $\alpha'$. 
+We now want to find $\alpha'$ so that $\alpha' \leq g(y)/f(y)$. This ensures that our envelope fulfills its requirements. We do not need to take normalizing constants into account - these are simply included in $\alpha'$. 
 <br>
 <br>
 The optimal value for $\alpha'$ can be found by minimizing over the ratio between our target and our proposal density. Since we want to optimize $\sigma^2$ over these values we find $\sigma^2$ by:
-$$\arg\max_{\sigma^2}(\min_{y} \log f(y)/g(y))$$
+$$\arg\max_{\sigma^2}(\min_{y} \log g(y)/f(y))$$
 <br>
 We find $\sigma^2$ as follows:
 <br>
@@ -195,24 +195,26 @@ alpha_s <- -optimize(sigma, c(0,1))$objective
 
 ---
 ###Visualizing
-Sanity check - is $\alpha'f(y)\leq g(y)$?
-<br>
+Sanity check - is $\alpha'f(y)\leq g(y)$? Tolerance is needed because we find $\alpha '$ taking the minimum over a finite sequences.
 ```{r, echo = FALSE, warning=FALSE, message=FALSE}
 test_y <- seq(0, 1, length.out = 6999)
 ```
 
 ```{r, warning=FALSE, message=FALSE}
-values <- data.frame(y = test_y, 
-              values = dnorm(test_y, mean = mu_opt, sd = sigma_opt)- tar_dens(test_y) * alpha_s)
-values$values[values$values < 0][1:5]
+testthat::test_that("Check if alpha * f(y) <= g(y) with tolerance", {
+  g_y <- dnorm(test_y, mean = mu_opt, sd = sigma_opt)
+  f_y <- tar_dens(test_y) * alpha_s
+  tolerance <- 1e-4
+  testthat::expect_true(all(f_y <= g_y + tolerance))
+})
 ```
-
-
-This is because we find $\alpha '$ by taking the minimum over a finite sequence of y's.
 
 ```{r, echo = FALSE, fig.align='center', fig.width= 16, fig.height=4.5}
 # Calculate tar_dens for each y in y_seq
 tar_density <- alpha_s * tar_dens(y_seq)  
+
+values <- data.frame(y = test_y, 
+              values = dnorm(test_y, mean = mu_opt, sd = sigma_opt)- tar_dens(test_y) * alpha_s)
 
 # Calculate the standard normal density for each y in y_seq
 normal_density <- dnorm(y_seq, mean = mu_opt, sd = sigma_opt)
@@ -227,11 +229,11 @@ density_data <- data.frame(
 # Plot using ggplot2
 p1 <- ggplot(density_data, aes(x = y)) +
   geom_line(aes(y = tar_density, color = "Target Density"), size = 1.2) +  # Tar density
-  geom_line(aes(y = normal_density, color = "Standard Normal"), linetype = "dashed", size = 1.2) +  # Standard normal density
+  geom_line(aes(y = normal_density, color = "Gaussian Envelope"), linetype = "dashed", size = 1.2) +  # Standard normal density
   labs(title = expression(paste("Target Density vs ", N(mu, sigma^2))),
        x = "y",
        y = "Density") +
-  scale_color_manual(values = c("Target Density" = "coral3", "Standard Normal" = base)) +  # Color settings
+  scale_color_manual(values = c("Target Density" = "coral3", "Gaussian Envelope" = base)) +  # Color settings
   theme_bw() +
   theme(legend.title = element_blank()) +
   my_theme
@@ -317,7 +319,7 @@ $$G(x) = \int_{z_0}^x g(y) dy = \frac{1}{d} \int_{z_0}^x \exp(V(y)) dy$$
 We can sample from this distribution by inverting it and evaluate the inverse in a uniform random variable $u \sim U(0,1)$. Computing the inverse of $G(x)$ is not that hard, but requires us to keep our wits about.
 
 ---
-###Implementation
+###Log-concavity
 We have that
 $$\log f(y)  \propto \log \prod_{i=1}^{100} \exp(yx_iz_i - \exp(yx_i))=y\sum_{i=1}^{100} x_i z_i-\sum_{i=1}^{100}\exp(yx_i)$$
 We can then differentiate to see:
@@ -335,7 +337,7 @@ As the $x_i$ values are all positive and $\exp(yx_i)\geq 0$ for all $y$, we see 
 ###Implementation
 Four our target density we see that
 $$\frac{d f(y)}{dy} =\exp\left( \sum_{i=1}^{100}(x_iz_iy-\exp(x_iy))\right)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right) =f(y)\cdot\left( \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy)) \right)$$
-This means that we simply get $a_j =  \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy_j))$.
+This means that we simply get $a_j = \frac{d \log(f(y))}{dy} = \frac{f'(y)}{f(y)}= \sum_{i=1}^{100}(x_iz_i-x_i\exp(x_iy_j))$.
 
 And $b$ is simply defined to be $b_j = \log f(y_j) - a\cdot y_j$. 
 
@@ -435,12 +437,9 @@ grid.arrange(c1, c2, ncol = 2)
 
 
 ---
-class: reduce-spacing
 
 ###Structuring
-Computationally expensive to sample $U_n$ every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time.
- 
-Furthermore we implement S3-object for each sampler.
+Computationally expensive to sample $U_n$ every time. Using the function factory from the lectures we implement both samplers so that we calculate a large sample at a time. Furthermore we implement S3-object for each sampler.
 
  - Chooses the Gaussian envelope numerically every time - employing the same method we did.
  
@@ -476,7 +475,7 @@ k2
 We saw earlier, that the log-affine envelope did not seem to perform that well. Idea is to increase the number of breakpoints, so that it can better approximate the target density. However, there will most likely be a tradeoff between rejection rate and how fast the sampler is. 
 <br>
 <br>
-We will test this by sampling 1000 values from the target density using the affine envelope, with breakpoints between 0 and 0.35 and the number of breakpoints ranging from 1 to 30.
+We will test this by sampling 1000 values from the target density using the affine envelope, with breakpoints between 0 and 0.35 and the number of breakpoints ranging from 1 to 40.
 <br>
 ```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.width= 16, fig.height=5}
 # Initialize as list for breakpoints and numeric vector for alpha values
@@ -518,8 +517,8 @@ grid.arrange(d1, d2, ncol = 2)
 ```
 
 ---
-###Comparison
-We can now compare the two samplers against eachother using `bench::press`.
+  ###Comparison
+  We can now compare the two samplers against eachother using `bench::press`.
 
 ```{r, echo = FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.width= 16, fig.height=5}
 # Define the number of samples
@@ -548,10 +547,10 @@ bm_l <- bench::press(
 
 
 bm <- bench::mark(
-      Gaussian = gaus_rej_f(1000, mu_opt, sigma_opt, alpha_s, tar_dens),
-      log_affine = aff_rej_n(1000, n_breakpoints),
-      iterations = 100,
-      check = FALSE
+  Gaussian = gaus_rej_f(1000, mu_opt, sigma_opt, alpha_s, tar_dens),
+  log_affine = aff_rej_n(1000, n_breakpoints),
+  iterations = 100,
+  check = FALSE
 )
 
 plot_bm <- plot(bm) + scale_color_manual(values = c("none" = "#4f7942", "level0" = "coral2", "level1" = "steelblue", "level2" = "hotpink3")) + my_theme + ggtitle("Comparison for n = 1000")
@@ -585,86 +584,86 @@ knitr::kable(data.frame(expression = c('Gaussian', 'log_affine'), bm[,2:9]))
 
 
 ---
-###Optimization
-Most interesting for log-affine. We will start out by profiling to identify any bottlenecks.
+  ###Optimization
+  Most interesting for log-affine. We will start out by profiling to identify any bottlenecks.
 
 ```{r, echo=FALSE, warning=FALSE, message=FALSE}
 profvis({
   # Slopes
-a_i <- function(x_i) tar_dens_log_difference(x_i) 
-
-# Intercepts
-b_i <- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i
-
-# Interval points
-z_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)
-
-# R_i's
-r_i <- function(as, bs, zs, n) {
-  1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
-}
-
-piece_lin_rejec_samp_s <- function(N, ys) {
+  a_i <- function(x_i) tar_dens_log_difference(x_i) 
   
-  # Calculating a's, b's, z's
-  as <- sapply(ys, a_i, simplify = TRUE)
-  bs <- mapply(FUN = b_i, ys, as)
-  n <- length(bs)
-  zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)
+  # Intercepts
+  b_i <- function(x_i, a_i) log(tar_dens(x_i)) - a_i * x_i
   
-  # Bookkeeping
-  # I_i integrals
-  R <- r_i(as, bs, zs, n)
+  # Interval points
+  z_i <- function(a1, a2, b1, b2) (b2 - b1) / (a1 - a2)
   
-  # Distribution function (ish)
-  Q <- c(0, cumsum(R))
-  
-  # Drawing from piecewise linear density and uniform
-  u0 <- Q[n + 1] * runif(N)
-  u <- runif(N)
-  
-  # Determine the interval that each point belongs to
-  I <- matrix(FALSE, nrow = N, ncol = n)
-  
-  for (i in 1:N) {
-    for (j in 1:n) {
-      I[i, j] <- (u0[i] > Q[j]) && (u0[i] <= Q[j + 1])
-    }
+  # R_i's
+  r_i <- function(as, bs, zs, n) {
+    1 / as * exp(bs) * (exp(as * zs[2:(n+1)]) - exp(as * zs[1:n]))
   }
   
-  x <- numeric(N)
-  accept <- logical(N)
-  
-  for (i in 1:N) {
-    # Finding the interval x_i belongs to
-    int <- which(I[i,] == TRUE)
+  piece_lin_rejec_samp_s <- function(N, ys) {
     
-    # Taking the inverse cdf
-    if (length(int) > 0) {  # Check if the interval is found
-      x[i] <- log((u0[i] - Q[int]) * as[int] * exp(-bs[int]) + exp(as[int] * zs[int])) / as[int]
-      
-      # Acceptance step
-      tar_dens_x <- tar_dens(x[i])
-      div_term <- exp(as[int] * x[i] + bs[int])
-      accept[i] <- u[i] <= tar_dens_x / div_term
-    } else {
-      x[i] <- NA  # Set to NA if no interval found
-      accept[i] <- FALSE
+    # Calculating a's, b's, z's
+    as <- sapply(ys, a_i, simplify = TRUE)
+    bs <- mapply(FUN = b_i, ys, as)
+    n <- length(bs)
+    zs <- c(-Inf, mapply(FUN = z_i, as[1:(n-1)], as[2:n], bs[1:(n-1)], bs[2:n]), Inf)
+    
+    # Bookkeeping
+    # I_i integrals
+    R <- r_i(as, bs, zs, n)
+    
+    # Distribution function (ish)
+    Q <- c(0, cumsum(R))
+    
+    # Drawing from piecewise linear density and uniform
+    u0 <- Q[n + 1] * runif(N)
+    u <- runif(N)
+    
+    # Determine the interval that each point belongs to
+    I <- matrix(FALSE, nrow = N, ncol = n)
+    
+    for (i in 1:N) {
+      for (j in 1:n) {
+        I[i, j] <- (u0[i] > Q[j]) && (u0[i] <= Q[j + 1])
+      }
     }
+    
+    x <- numeric(N)
+    accept <- logical(N)
+    
+    for (i in 1:N) {
+      # Finding the interval x_i belongs to
+      int <- which(I[i,] == TRUE)
+      
+      # Taking the inverse cdf
+      if (length(int) > 0) {  # Check if the interval is found
+        x[i] <- log((u0[i] - Q[int]) * as[int] * exp(-bs[int]) + exp(as[int] * zs[int])) / as[int]
+        
+        # Acceptance step
+        tar_dens_x <- tar_dens(x[i])
+        div_term <- exp(as[int] * x[i] + bs[int])
+        accept[i] <- u[i] <= tar_dens_x / div_term
+      } else {
+        x[i] <- NA  # Set to NA if no interval found
+        accept[i] <- FALSE
+      }
+    }
+    
+    return(x[accept])
   }
-  
-  return(x[accept])
-}
   piece_lin_rejec_samp_s(10000, seq(0, 0.35, length.out = 10))
 })
 ```
 
 
 ---
-###Optimization
-Based on the profiling, we can see that we spend some time on finding the correct interval and in the loop N - here the calculation of the target density appears to be one of the heavier places. Three different approaches:
-
-- Vectorization
+  ###Optimization
+  Based on the profiling, we can see that we spend some time on finding the correct interval and in the loop N - here the calculation of the target density appears to be one of the heavier places. Three different approaches:
+  
+  - Vectorization
 First of all, it is possible to use vectorize the double for loop, that places each sample in the correct interval. This can be done by using `outer` to create a matrix of logicals, which we can then use to find the correct interval for each sample.
 
 - Parallelization
@@ -674,8 +673,8 @@ Seeing as we are performing independent operations, another is to parallelize th
 Seeing as the calculation of the target density is fairly heavy, another approach is to optimize this operation. I have done that by implementing it in `Rcpp`.
 
 ---
-###Optimization
-Implementing the target density in `Rcpp` seems to have had a decent effect. The overhead from parallelization is quite large.
+  ###Optimization
+  Implementing the target density in `Rcpp` seems to have had a decent effect. The overhead from parallelization is quite large.
 ```{r,echo=F, warning=FALSE, message=FALSE, fig.align='center', fig.width= 16, fig.height=7.5}
 source("C:/Users/birgi/Documents/comp_stat/Dina/Assignment 2 - Rejection sampling/Soure_code.R")
 
@@ -745,5 +744,67 @@ plot_d <- ggplot(plot_data, aes(x = n, y = median, color = expr)) +
 grid.arrange(plot_bm, plot_d, ncol = 2)
 ```
 
+---
+###Comparing against the Gaussian envelope
+```{r, echo = FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.width= 16, fig.height=5}
+# Define the number of samples
+n_samples <- 10^seq(1,5)
 
+# Define the number of breakpoints
+n_breakpoints <- seq(0, 0.3, length.out = 10)
+
+bm_l <- bench::press(
+  n = n_samples,
+  {
+    bench::mark(
+      Gaussian = {
+        set.seed(01112021)
+        gaus_rej_f(n, mu_opt, sigma_opt, alpha_s, tar_dens)
+      },
+      log_affine_Rcpp = {
+        set.seed(01112021)
+        aff_rej_cpp(n, n_breakpoints)
+      },
+      iterations = 10,
+      check = FALSE
+    )
+  }
+)
+
+
+bm <- bench::mark(
+  Gaussian = gaus_rej_f(1000, mu_opt, sigma_opt, alpha_s, tar_dens),
+  log_affine = aff_rej_cpp(1000, n_breakpoints),
+  iterations = 100,
+  check = FALSE
+)
+
+plot_bm <- plot(bm) + scale_color_manual(values = c("none" = "#4f7942", "level0" = "coral2", "level1" = "steelblue", "level2" = "hotpink3")) + my_theme + ggtitle("Comparison for n = 1000")
+
+# Convert to a usable format for ggplot2
+plot_data <- bm_l %>%
+  mutate(
+    expr = as.character(expression),  # Ensure expr is character for color mapping
+    median = as.numeric(median),
+    n = as.numeric(n)  # Convert n for x-axis scale
+  )
+
+# Create the plot
+plot_bp <- ggplot(plot_data, aes(x = n, y = median, color = expr)) +
+  geom_point(size = 2.5) +
+  geom_line(size  = 1.2) +
+  scale_y_log10() +  # Log scale for better readability
+  scale_color_manual(
+    values = c("Gaussian" = "#4f7942", "log_affine_Rcpp" = "coral3")
+  ) +
+  labs(x = "number of samples", y = "Time (ms) - logscale", color = "Method") +
+  theme_bw() +
+  ggtitle("Development for no. of samples") + my_theme
+
+grid.arrange(plot_bm, plot_bp, ncol = 2)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center'}
+knitr::kable(data.frame(expression = c('Gaussian', 'log_affine_Rcpp'), bm[,2:9]))
+```
 
